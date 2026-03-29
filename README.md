@@ -8,6 +8,14 @@
 
 > 若你认同「用自然语言驱动仓库里的读写、提交与迭代」这一范式，并希望有一份**可 fork、可改协议栈与 UI** 的参考实现，本项目即面向这一方向持续演进。
 
+## 主界面预览
+
+以下为 **Electron 桌面端**实际运行效果（三栏：线程与历史、Agent 对话与工具轨迹、工作区与 Monaco 编辑）。
+
+<p align="center">
+  <img src="docs/assets/async-main-screenshot.png" width="920" alt="Async 主界面：对话、代码 diff、文件树与编辑器" />
+</p>
+
 ## 与 Cursor 的相似点（你在找什么）
 
 | 维度 | 说明 |
