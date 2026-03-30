@@ -7726,6 +7726,42 @@ body {
 	padding-left: 16px;
 	padding-right: 16px;
 	box-sizing: border-box;
+	/* 与 .ref-center--chat .ref-messages 一致：仅悬停消息区时滚动条渐显，移到输入区等区域时渐隐 */
+	scrollbar-color: rgba(58, 58, 66, 0) transparent;
+	transition: scrollbar-color 0.35s var(--void-ease-out-expo);
+}
+
+.ref-right--editor-chat .ref-messages:hover {
+	scrollbar-color: var(--void-scrollbar-thumb) transparent;
+}
+
+.ref-right--editor-chat .ref-messages::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.ref-right--editor-chat .ref-messages::-webkit-scrollbar-thumb {
+	background: transparent;
+	border: 2px solid transparent;
+	background-clip: padding-box;
+	transition:
+		background 0.35s var(--void-ease-out-expo),
+		border-color 0.35s var(--void-ease-out-expo);
+}
+
+.ref-right--editor-chat .ref-messages:hover::-webkit-scrollbar-thumb {
+	background: var(--void-scrollbar-thumb);
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}
+
+.ref-right--editor-chat .ref-messages:hover::-webkit-scrollbar-thumb:hover {
+	background: var(--void-scrollbar-thumb-hover);
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}
+
+.ref-right--editor-chat .ref-messages:hover::-webkit-scrollbar-thumb:active {
+	background: var(--void-scrollbar-thumb-active);
 }
 
 /* Editor 布局右侧：对话区与中间列「有对话时」同样占满并贴底输入 */
