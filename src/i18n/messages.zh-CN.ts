@@ -262,6 +262,7 @@ export const messagesZhCN: Record<string, string> = {
 	'agent.activity.cmdFailed': '命令失败：{{cmd}}',
 	'agent.activity.running': '正在运行 `{{cmd}}`',
 	'agent.activity.ran': '已运行 `{{cmd}}`',
+	'agent.command.run': '在终端中运行',
 	'agent.summary.readLines': '{{count}} 行',
 	'agent.summary.emptyDir': '空目录',
 	'agent.summary.dirEntries': '{{count}} 项',

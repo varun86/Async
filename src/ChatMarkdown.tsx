@@ -3,7 +3,12 @@ import remarkGfm from 'remark-gfm';
 import { AgentCommandCard } from './AgentCommandCard';
 import { AgentDiffCard } from './AgentDiffCard';
 import { AgentEditCard } from './AgentEditCard';
-import { segmentAssistantContent, type AssistantSegment } from './agentChatSegments';
+import {
+	buildStreamingToolSegments,
+	segmentAssistantContent,
+	type AssistantSegment,
+	type StreamingToolPreview,
+} from './agentChatSegments';
 import { useI18n } from './i18n';
 
 type Props = {
@@ -12,6 +17,7 @@ type Props = {
 	workspaceRoot?: string | null;
 	onOpenAgentFile?: (relPath: string, revealLine?: number) => void;
 	onRunCommand?: (cmd: string) => void;
+	streamingToolPreview?: StreamingToolPreview | null;
 	showAgentWorking?: boolean;
 };
 
@@ -21,6 +27,7 @@ export function ChatMarkdown({
 	workspaceRoot,
 	onOpenAgentFile,
 	onRunCommand,
+	streamingToolPreview,
 	showAgentWorking = false,
 }: Props) {
 	const { t } = useI18n();
@@ -33,7 +40,10 @@ export function ChatMarkdown({
 	}
 
 	const segments = segmentAssistantContent(content, { t });
-	const renderSegments: AssistantSegment[] = [...segments];
+	const renderSegments: AssistantSegment[] = [
+		...segments,
+		...buildStreamingToolSegments(streamingToolPreview, { t }),
+	];
 	const lastSeg = renderSegments[renderSegments.length - 1];
 	const hasPendingTail = lastSeg?.type === 'activity' && lastSeg.status === 'pending';
 	if (showAgentWorking && !hasPendingTail) {

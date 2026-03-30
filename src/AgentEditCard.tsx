@@ -37,11 +37,12 @@ function buildPreviewLines(edit: FileEditSegment): PreviewLine[] {
 
 export function AgentEditCard({ edit, onOpenFile }: Props) {
 	const { t } = useI18n();
-	const name = basename(edit.path);
+	const name = basename(edit.path) || t('agent.review.unknownPath');
 	const previewLines = useMemo(() => buildPreviewLines(edit), [edit]);
 	const [expanded, setExpanded] = useState(false);
 	const canExpand = previewLines.length > COLLAPSED_PREVIEW_LINES;
 	const visibleLines = expanded ? previewLines : previewLines.slice(0, COLLAPSED_PREVIEW_LINES);
+	const canOpenFile = edit.path.trim().length > 0;
 
 	return (
 		<div className={`ref-edit-card ${edit.isStreaming ? 'ref-edit-card--streaming' : ''}`}>
@@ -49,7 +50,12 @@ export function AgentEditCard({ edit, onOpenFile }: Props) {
 				type="button"
 				className="ref-edit-card-file"
 				title={edit.path}
-				onClick={() => onOpenFile?.(edit.path, edit.startLine)}
+				onClick={() => {
+					if (canOpenFile) {
+						onOpenFile?.(edit.path, edit.startLine);
+					}
+				}}
+				disabled={!canOpenFile}
 			>
 				<FileTypeIcon
 					fileName={name}
@@ -58,7 +64,10 @@ export function AgentEditCard({ edit, onOpenFile }: Props) {
 				/>
 				<span className="ref-edit-card-name">{name}</span>
 				{edit.isStreaming ? (
-					<span className="ref-edit-card-streaming-pulse" title="Writing..." />
+					<span
+						className="ref-edit-card-streaming-pulse"
+						title={edit.isNew ? t('agent.activity.writing', { path: name }) : t('agent.activity.editing', { path: name })}
+					/>
 				) : (
 					<span className="ref-edit-card-stats">
 						{edit.additions > 0 && (

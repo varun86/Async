@@ -14,6 +14,8 @@ function IconTerminal({ className }: { className?: string }) {
 /** 短命令块（npm run / 验证构建等），参考 Cursor 侧栏命令行条目 */
 export function AgentCommandCard({ lang, body, onRun }: Props) {
 	const { t } = useI18n();
+	const runLabelRaw = t('agent.command.run');
+	const runLabel = runLabelRaw === 'agent.command.run' ? 'Run in Terminal' : runLabelRaw;
 	return (
 		<div className="ref-agent-command-card" role="note" aria-label="命令">
 			<span className="ref-agent-command-ico" aria-hidden>
@@ -24,7 +26,13 @@ export function AgentCommandCard({ lang, body, onRun }: Props) {
 				<pre className="ref-agent-command-pre">{body}</pre>
 			</div>
 			{onRun ? (
-				<button type="button" className="ref-agent-command-run" onClick={onRun} title={t('agent.command.run', 'Run in Terminal')}>
+				<button
+					type="button"
+					className="ref-agent-command-run"
+					onClick={onRun}
+					title={runLabel}
+					aria-label={runLabel}
+				>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
 						<polygon points="5 3 19 12 5 21 5 3" fill="currentColor" />
 					</svg>

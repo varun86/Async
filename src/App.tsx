@@ -478,6 +478,12 @@ export default function App() {
 	const [defaultModel, setDefaultModel] = useState(AUTO_MODEL_ID);
 	const [thinkingByModelId, setThinkingByModelId] = useState<Record<string, ThinkingLevel>>({});
 	const [streamingThinking, setStreamingThinking] = useState('');
+	const [streamingToolPreview, setStreamingToolPreview] = useState<{
+		name: string;
+		partialJson: string;
+		index: number;
+	} | null>(null);
+	const streamingToolPreviewClearTimerRef = useRef<number | null>(null);
 	const [modelEntries, setModelEntries] = useState<UserModelEntry[]>([]);
 	const [enabledModelIds, setEnabledModelIds] = useState<string[]>([]);
 	const [agentCustomization, setAgentCustomization] = useState<AgentCustomization>(() => defaultAgentCustomization());
@@ -515,6 +521,32 @@ export default function App() {
 	type ComposerAnchorSlot = 'hero' | 'bottom' | 'inline';
 	const [plusMenuAnchorSlot, setPlusMenuAnchorSlot] = useState<ComposerAnchorSlot>('bottom');
 	const [modelPickerAnchorSlot, setModelPickerAnchorSlot] = useState<ComposerAnchorSlot>('bottom');
+
+	const clearStreamingToolPreviewNow = useCallback(() => {
+		if (streamingToolPreviewClearTimerRef.current !== null) {
+			window.clearTimeout(streamingToolPreviewClearTimerRef.current);
+			streamingToolPreviewClearTimerRef.current = null;
+		}
+		setStreamingToolPreview(null);
+	}, []);
+
+	const clearStreamingToolPreviewSoon = useCallback((delayMs = 120) => {
+		if (streamingToolPreviewClearTimerRef.current !== null) {
+			window.clearTimeout(streamingToolPreviewClearTimerRef.current);
+		}
+		streamingToolPreviewClearTimerRef.current = window.setTimeout(() => {
+			streamingToolPreviewClearTimerRef.current = null;
+			setStreamingToolPreview(null);
+		}, delayMs);
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			if (streamingToolPreviewClearTimerRef.current !== null) {
+				window.clearTimeout(streamingToolPreviewClearTimerRef.current);
+			}
+		};
+	}, []);
 
 	const setComposerModePersist = useCallback((m: ComposerMode) => {
 		setComposerMode(m);
@@ -748,14 +780,10 @@ export default function App() {
 				};
 				setLocale(normalizeLocale(st.language));
 				const sl = st.ui?.sidebarLayout;
-				const hasDiskLayout =
-					sl &&
-					typeof sl.left === 'number' &&
-					typeof sl.right === 'number' &&
-					Number.isFinite(sl.left) &&
-					Number.isFinite(sl.right);
-				if (hasDiskLayout && sl) {
-					const rw = clampSidebarLayout(sl.left, sl.right);
+				const left = typeof sl?.left === 'number' && Number.isFinite(sl.left) ? sl.left : null;
+				const right = typeof sl?.right === 'number' && Number.isFinite(sl.right) ? sl.right : null;
+				if (left !== null && right !== null) {
+					const rw = clampSidebarLayout(left, right);
 					setRailWidths(rw);
 					try {
 						localStorage.setItem(SIDEBAR_LAYOUT_KEY, JSON.stringify(rw));
@@ -819,9 +847,28 @@ export default function App() {
 					}
 					return s + payload.text;
 				});
+			} else if (payload.type === 'tool_input_delta') {
+				if (streamingToolPreviewClearTimerRef.current !== null) {
+					window.clearTimeout(streamingToolPreviewClearTimerRef.current);
+					streamingToolPreviewClearTimerRef.current = null;
+				}
+				setStreamingToolPreview({
+					name: payload.name,
+					partialJson: payload.partialJson,
+					index: payload.index,
+				});
 			} else if (payload.type === 'thinking_delta') {
 				setStreamingThinking((s) => s + payload.text);
 			} else if (payload.type === 'tool_call') {
+				if (streamingToolPreviewClearTimerRef.current !== null) {
+					window.clearTimeout(streamingToolPreviewClearTimerRef.current);
+					streamingToolPreviewClearTimerRef.current = null;
+				}
+				setStreamingToolPreview((prev) => ({
+					name: payload.name,
+					partialJson: payload.args,
+					index: prev?.name === payload.name ? prev.index : 0,
+				}));
 				const marker = `\n<tool_call tool="${payload.name}">${payload.args}</tool_call>\n`;
 				setStreaming((s) => s + marker);
 			} else if (payload.type === 'tool_result') {
@@ -848,6 +895,7 @@ export default function App() {
 				setAwaitingReply(false);
 				setStreaming('');
 				setStreamingThinking('');
+				clearStreamingToolPreviewSoon();
 				setFileChangesDismissed(false);
 				setDismissedFiles(new Set());
 				if (payload.pendingAgentPatches && payload.pendingAgentPatches.length > 0) {
@@ -902,6 +950,7 @@ export default function App() {
 				setAwaitingReply(false);
 				setStreaming('');
 				setStreamingThinking('');
+				clearStreamingToolPreviewSoon();
 				setMessages((m) => [
 					...m,
 					{ role: 'assistant', content: t('app.errorPrefix', { message: translateChatError(payload.message, t) }) },
@@ -910,7 +959,7 @@ export default function App() {
 			}
 		});
 		return () => unsub();
-	}, [shell, loadMessages, refreshThreads]);
+	}, [shell, loadMessages, refreshThreads, clearStreamingToolPreviewSoon]);
 
 	useEffect(() => {
 		if (!workspace || !shell) {
@@ -982,6 +1031,9 @@ export default function App() {
 		setCurrentId(r.id);
 		setWorkedSeconds(null);
 		setAwaitingReply(false);
+		setStreaming('');
+		setStreamingThinking('');
+		clearStreamingToolPreviewNow();
 		streamStartedAtRef.current = null;
 		firstTokenAtRef.current = null;
 		await loadMessages(r.id);
@@ -1012,6 +1064,9 @@ export default function App() {
 		setCurrentId(id);
 		setWorkedSeconds(null);
 		setAwaitingReply(false);
+		setStreaming('');
+		setStreamingThinking('');
+		clearStreamingToolPreviewNow();
 		streamStartedAtRef.current = null;
 		firstTokenAtRef.current = null;
 		setResendFromUserIndex(null);
@@ -1082,6 +1137,8 @@ export default function App() {
 				await shell.invoke('chat:abort', id);
 				setAwaitingReply(false);
 				setStreaming('');
+				setStreamingThinking('');
+				clearStreamingToolPreviewNow();
 				streamStartedAtRef.current = null;
 				firstTokenAtRef.current = null;
 			}
@@ -1096,7 +1153,7 @@ export default function App() {
 			await shell.invoke('threads:delete', id);
 			await refreshThreads();
 		},
-		[shell, currentId, awaitingReply, refreshThreads, confirmDeleteId]
+		[shell, currentId, awaitingReply, refreshThreads, confirmDeleteId, clearStreamingToolPreviewNow]
 	);
 
 	useLayoutEffect(() => {
@@ -1131,6 +1188,7 @@ export default function App() {
 		}
 		setStreaming('');
 		setStreamingThinking('');
+		clearStreamingToolPreviewNow();
 		setWorkedSeconds(null);
 		firstTokenAtRef.current = null;
 		streamStartedAtRef.current = Date.now();
@@ -1173,6 +1231,7 @@ export default function App() {
 		}
 		await shell.invoke('chat:abort', currentId);
 		// Let the 'done' event from backend finalize the state
+		clearStreamingToolPreviewNow();
 		setAwaitingReply(false);
 	};
 
@@ -1514,11 +1573,11 @@ export default function App() {
 	};
 
 	const displayMessages = useMemo(() => {
-		if (!awaitingReply && streaming === '') {
+		if (!awaitingReply && streaming === '' && streamingToolPreview == null) {
 			return messages;
 		}
 		return [...messages, { role: 'assistant' as const, content: streaming }];
-	}, [messages, streaming, awaitingReply]);
+	}, [messages, streaming, awaitingReply, streamingToolPreview]);
 
 	/** 中间消息区滚动时，最后一条用户消息 sticky 在视口顶部（参考 Cursor） */
 	const lastUserMessageIndex = useMemo(() => {
@@ -2244,7 +2303,11 @@ export default function App() {
 								}
 
 								const pendingEmptyAssistant =
-									m.role === 'assistant' && m.content.trim() === '' && awaitingReply && isLast;
+									m.role === 'assistant' &&
+									m.content.trim() === '' &&
+									awaitingReply &&
+									isLast &&
+									streamingToolPreview == null;
 
 								const userMessageIndex = i < messages.length && m.role === 'user' ? i : -1;
 								const isEditingThisUser = userMessageIndex >= 0 && resendFromUserIndex === userMessageIndex;
@@ -2334,8 +2397,12 @@ export default function App() {
 													onOpenAgentFile={(rel, line) => void onExplorerOpenFile(rel, line)}
 													onRunCommand={(cmd) => {
 														shell?.invoke('terminal:execLine', cmd).catch(console.error);
-														// Optionally switch tab to terminal if needed, but here we just run it
 													}}
+													streamingToolPreview={
+														composerMode === 'agent' && awaitingReply && isLast
+															? streamingToolPreview
+															: null
+													}
 													showAgentWorking={composerMode === 'agent' && isLast && awaitingReply}
 												/>
 											)}

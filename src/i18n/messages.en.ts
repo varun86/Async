@@ -252,6 +252,7 @@ export const messagesEn: Record<string, string> = {
 	'agent.activity.cmdFailed': 'Command failed: {{cmd}}',
 	'agent.activity.running': 'Running `{{cmd}}`',
 	'agent.activity.ran': 'Ran `{{cmd}}`',
+	'agent.command.run': 'Run in Terminal',
 	'agent.summary.readLines': '{{count}} lines',
 	'agent.summary.emptyDir': 'empty',
 	'agent.summary.dirEntries': '{{count}} entries',

@@ -49,6 +49,12 @@ export type PlanTodoSegment = {
 	todos: Array<{ id: string; content: string; status: 'pending' | 'completed' }>;
 };
 
+export type StreamingToolPreview = {
+	name: string;
+	partialJson: string;
+	index: number;
+};
+
 export type AssistantSegment =
 	| { type: 'markdown'; text: string }
 	| { type: 'diff'; diff: string }
@@ -316,7 +322,24 @@ function findAllToolResultBlocks(
 
 /** 助手气泡是否含本应用序列化的 Agent 工具协议（用于从历史记录恢复时仍渲染工具卡片）。 */
 export function assistantMessageUsesAgentToolProtocol(content: string): boolean {
-	return content.includes(TOOL_CALL_OPEN) || content.includes('<tool_result tool="');
+	return (
+		content.includes(TOOL_CALL_OPEN) ||
+		content.includes('<tool_result tool="') ||
+		content.includes(PLAN_OPEN_1) ||
+		content.includes(PLAN_OPEN_2)
+	);
+}
+
+function tryParseToolArgs(rawJson: string): Record<string, unknown> {
+	try {
+		const parsed: unknown = JSON.parse(rawJson);
+		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+			return parsed as Record<string, unknown>;
+		}
+	} catch {
+		// Keep partial-json fallback behavior.
+	}
+	return {};
 }
 
 function extractResultSummary(name: string, result: string | undefined, t: TFunction): string | undefined {
@@ -459,6 +482,68 @@ function clipPreviewText(text: string, maxChars = 8000): string | undefined {
 	return text.length > maxChars ? text.slice(0, maxChars) : text;
 }
 
+function buildStreamingFileEditSegment(mk: ParsedMarker): FileEditSegment | null {
+	if (!mk.rawJson || !WRITE_TOOLS.has(mk.name)) {
+		return null;
+	}
+
+	const pathGuess = tailAfterKey(mk.rawJson, 'path') ?? String(mk.args.path ?? '');
+	if (mk.name === 'str_replace') {
+		const oldStr = tailAfterKey(mk.rawJson, 'old_str') ?? String(mk.args.old_str ?? '');
+		const newStr = tailAfterKey(mk.rawJson, 'new_str') ?? String(mk.args.new_str ?? '');
+		if (!pathGuess && !oldStr && !newStr) {
+			return null;
+		}
+		return {
+			type: 'file_edit',
+			path: pathGuess,
+			additions: countLines(newStr),
+			deletions: countLines(oldStr),
+			oldStr: clipPreviewText(oldStr),
+			newStr: clipPreviewText(newStr),
+			isStreaming: true,
+		};
+	}
+
+	const content = tailAfterKey(mk.rawJson, 'content') ?? String(mk.args.content ?? '');
+	if (!pathGuess && !content) {
+		return null;
+	}
+	return {
+		type: 'file_edit',
+		path: pathGuess,
+		additions: countLines(content),
+		deletions: 0,
+		newStr: clipPreviewText(content),
+		isNew: true,
+		isStreaming: true,
+	};
+}
+
+export function buildStreamingToolSegments(
+	preview: StreamingToolPreview | null | undefined,
+	options?: SegmentAssistantOptions
+): AssistantSegment[] {
+	if (!preview) {
+		return [];
+	}
+	const t = options?.t ?? defaultT;
+	const mk: ParsedMarker = {
+		start: 0,
+		end: 0,
+		name: preview.name,
+		args: tryParseToolArgs(preview.partialJson),
+		isStreaming: true,
+		rawJson: preview.partialJson,
+	};
+	const activity = summarizeToolActivity(mk, t);
+	if (!WRITE_TOOLS.has(preview.name)) {
+		return [activity];
+	}
+	const edit = buildStreamingFileEditSegment(mk);
+	return edit ? [activity, edit] : [activity];
+}
+
 function extractToolSegments(content: string, t: TFunction): { segments: AssistantSegment[]; hasTools: boolean } {
 	const markers = findAllToolCallMarkers(content);
 	if (markers.length === 0) {
@@ -540,36 +625,21 @@ function extractToolSegments(content: string, t: TFunction): { segments: Assista
 						isNew: true,
 					});
 				}
-			} else if (mk.isStreaming && mk.rawJson) {
-				segments.push(activity);
-				const pathGuess = tailAfterKey(mk.rawJson, 'path') ?? String(mk.args.path ?? '');
-				if (mk.name === 'str_replace') {
-					const oldStr = tailAfterKey(mk.rawJson, 'old_str') ?? String(mk.args.old_str ?? '');
-					const newStr = tailAfterKey(mk.rawJson, 'new_str') ?? String(mk.args.new_str ?? '');
-					segments.push({
-						type: 'file_edit',
-						path: pathGuess,
-						additions: countLines(newStr),
-						deletions: countLines(oldStr),
-						oldStr: clipPreviewText(oldStr),
-						newStr: clipPreviewText(newStr),
-						isStreaming: true,
-					});
-				} else {
-					const c = tailAfterKey(mk.rawJson, 'content') ?? String(mk.args.content ?? '');
-					segments.push({
-						type: 'file_edit',
-						path: pathGuess,
-						additions: countLines(c),
-						deletions: 0,
-						newStr: clipPreviewText(c),
-						isNew: true,
-						isStreaming: true,
-					});
-				}
-			} else {
-				segments.push(activity);
+		} else if (mk.isStreaming && mk.rawJson) {
+			segments.push(activity);
+			const streamingEdit = buildStreamingFileEditSegment(mk);
+			if (streamingEdit) {
+				segments.push(streamingEdit);
 			}
+		} else if (mk.result === undefined && mk.rawJson) {
+			segments.push(activity);
+			const pendingEdit = buildStreamingFileEditSegment(mk);
+			if (pendingEdit) {
+				segments.push(pendingEdit);
+			}
+		} else {
+			segments.push(activity);
+		}
 		} else {
 			segments.push(activity);
 		}
