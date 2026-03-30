@@ -594,12 +594,26 @@ body {
 	gap: 4px;
 	height: 44px;
 	padding: 0 14px 0 10px;
+	/* 隐藏系统标题栏后：顶栏可拖动窗口；右侧为 Windows 标题栏按钮区留白（Electron titleBarOverlay + CSS env） */
+	-webkit-app-region: drag;
+	padding-right: max(
+		14px,
+		calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px))
+	);
 	border-bottom: 1px solid var(--void-border-soft);
 	background: linear-gradient(180deg, rgba(22, 22, 28, 0.88) 0%, rgba(14, 14, 17, 0.94) 100%);
 	backdrop-filter: blur(16px);
 	-webkit-backdrop-filter: blur(16px);
 	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 40px rgba(0, 0, 0, 0.25);
 	flex-shrink: 0;
+}
+
+.ref-menubar button,
+.ref-menubar input,
+.ref-menubar select,
+.ref-menubar textarea,
+.ref-menubar a {
+	-webkit-app-region: no-drag;
 }
 
 .ref-menu-nav {

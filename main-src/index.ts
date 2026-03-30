@@ -24,6 +24,21 @@ function createWindow(): void {
 	const x = wa.x + Math.round((wa.width - w) / 2);
 	const y = wa.y + Math.round((wa.height - h) / 2);
 
+	/** 去掉厚重系统标题栏，与 VS Code / Cursor 类应用一致；保留系统最小化/最大化/关闭（Windows 用 titleBarOverlay）。 */
+	const titleBarOptions =
+		process.platform === 'darwin'
+			? { titleBarStyle: 'hiddenInset' as const }
+			: process.platform === 'win32'
+				? {
+						titleBarStyle: 'hidden' as const,
+						titleBarOverlay: {
+							color: '#0c0c0e',
+							symbolColor: '#d4d4d8',
+							height: 32,
+						},
+					}
+				: {};
+
 	const win = new BrowserWindow({
 		x,
 		y,
@@ -32,6 +47,7 @@ function createWindow(): void {
 		minWidth: 800,
 		minHeight: 600,
 		backgroundColor: '#0c0c0e',
+		...titleBarOptions,
 		webPreferences: {
 			preload: preloadPath,
 			contextIsolation: true,
