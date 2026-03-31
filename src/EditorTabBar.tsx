@@ -26,25 +26,33 @@ export function EditorTabBar({ tabs, activeTabId, onSelect, onClose }: Props) {
 				return (
 					<div
 						key={tab.id}
-						role="tab"
-						aria-selected={isActive}
 						className={`ref-tab-item ${isActive ? 'is-active' : ''} ${tab.dirty ? 'is-dirty' : ''}`}
-						onClick={() => onSelect(tab.id)}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter') onSelect(tab.id);
-						}}
-						tabIndex={0}
-						title={tab.filePath}
 					>
-						<span className="ref-tab-icon">
-							<FileTypeIcon fileName={basename} isDirectory={false} />
-						</span>
-						<span className="ref-tab-label">{basename}</span>
-						{tab.dirty ? <span className="ref-tab-dot" aria-label="unsaved" /> : null}
+						<div
+							role="tab"
+							aria-selected={isActive}
+							className="ref-tab-main"
+							tabIndex={0}
+							title={tab.filePath}
+							onClick={() => onSelect(tab.id)}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									onSelect(tab.id);
+								}
+							}}
+						>
+							<span className="ref-tab-icon">
+								<FileTypeIcon fileName={basename} isDirectory={false} />
+							</span>
+							<span className="ref-tab-label">{basename}</span>
+							{tab.dirty ? <span className="ref-tab-dot" aria-label="unsaved" /> : null}
+						</div>
 						<button
 							type="button"
 							className="ref-tab-close"
 							onClick={(e) => {
+								e.preventDefault();
 								e.stopPropagation();
 								onClose(tab.id);
 							}}

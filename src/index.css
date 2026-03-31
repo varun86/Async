@@ -7762,19 +7762,38 @@ body {
 
 .ref-tab-item {
 	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 0 12px;
+	align-items: stretch;
 	min-width: 0;
 	max-width: 210px;
 	border-right: 1px solid var(--void-border-soft);
-	cursor: pointer;
 	font-size: 12px;
 	color: var(--void-fg-3);
 	position: relative;
 	flex-shrink: 0;
 	transition: background 0.1s ease, color 0.1s ease;
 	user-select: none;
+}
+
+/* 仅标题区触发切换标签；关闭钮独立，避免首击落在整行 div 上只激活不关 */
+.ref-tab-main {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 4px 0 12px;
+	cursor: pointer;
+	height: 100%;
+	box-sizing: border-box;
+}
+
+.ref-tab-main:focus {
+	outline: none;
+}
+
+.ref-tab-main:focus-visible {
+	outline: 2px solid var(--void-ring);
+	outline-offset: -2px;
 }
 
 .ref-tab-item:hover {
@@ -7814,6 +7833,7 @@ body {
 	justify-content: center;
 	width: 18px;
 	height: 18px;
+	margin: auto 8px auto 0;
 	border: none;
 	border-radius: 4px;
 	background: transparent;
@@ -7821,7 +7841,8 @@ body {
 	cursor: pointer;
 	flex-shrink: 0;
 	padding: 0;
-	opacity: 0;
+	/* 非当前标签也保留弱可见命中区，避免首击误落到「仅激活」路径 */
+	opacity: 0.4;
 	transition: opacity 0.1s ease, background 0.1s ease;
 }
 
