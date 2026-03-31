@@ -276,6 +276,38 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 						<span className="ref-settings-toggle-knob" />
 					</button>
 				</div>
+				<div className="ref-settings-agent-card-row" style={{ marginTop: 12 }}>
+					<div>
+						<div className="ref-settings-agent-card-title">{t('agentSettings.mistakeLimitTitle')}</div>
+						<p className="ref-settings-agent-card-desc">{t('agentSettings.mistakeLimitDesc')}</p>
+					</div>
+					<button
+						type="button"
+						className={`ref-settings-toggle ${v.mistakeLimitEnabled !== false ? 'is-on' : ''}`}
+						role="switch"
+						aria-checked={v.mistakeLimitEnabled !== false}
+						onClick={() => patch({ mistakeLimitEnabled: v.mistakeLimitEnabled === false })}
+					>
+						<span className="ref-settings-toggle-knob" />
+					</button>
+				</div>
+				<div className="ref-settings-agent-card-row" style={{ marginTop: 12, alignItems: 'center' }}>
+					<div>
+						<div className="ref-settings-agent-card-title">{t('agentSettings.maxMistakesLabel')}</div>
+					</div>
+					<input
+						type="number"
+						min={2}
+						max={30}
+						className="ref-settings-agent-number"
+						value={v.maxConsecutiveMistakes ?? 5}
+						onChange={(e) => {
+							const n = parseInt(e.target.value, 10);
+							if (!Number.isFinite(n)) return;
+							patch({ maxConsecutiveMistakes: Math.min(30, Math.max(2, n)) });
+						}}
+					/>
+				</div>
 			</div>
 
 			{/* ─── Rules ─── */}

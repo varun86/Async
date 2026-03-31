@@ -52,6 +52,10 @@ export type AgentCustomization = {
 	confirmWritesBeforeExecute?: boolean;
 	/** 低风险 shell 命令跳过确认，默认 true */
 	skipSafeShellCommandsConfirm?: boolean;
+	/** 连续工具失败多少次后暂停询问（默认 5） */
+	maxConsecutiveMistakes?: number;
+	/** 是否启用连续失败暂停，默认 true */
+	mistakeLimitEnabled?: boolean;
 };
 
 export const defaultAgentCustomization = (): AgentCustomization => ({
@@ -60,4 +64,6 @@ export const defaultAgentCustomization = (): AgentCustomization => ({
 	skills: [],
 	subagents: [],
 	commands: [],
+	maxConsecutiveMistakes: 5,
+	mistakeLimitEnabled: true,
 });

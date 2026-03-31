@@ -20,14 +20,26 @@ import {
 	anthropicThinkingBudget,
 	openAIReasoningEffort,
 } from '../llm/thinkingLevel.js';
-import { AGENT_TOOLS, toOpenAITools, toAnthropicTools, type ToolCall } from './agentTools.js';
+import type { ComposerMode } from '../llm/composerMode.js';
+import {
+	AGENT_TOOLS,
+	agentToolsForComposerMode,
+	isReadOnlyAgentTool,
+	toOpenAITools,
+	toAnthropicTools,
+	type ToolCall,
+} from './agentTools.js';
 
 /** 执行工具前闸门；返回 proceed:false 时不调用 executeTool，结果写入对话为失败 tool_result */
 export type BeforeExecuteToolResult = { proceed: true } | { proceed: false; rejectionMessage: string };
 import { executeTool, type ToolExecutionHooks } from './toolExecutor.js';
+import type { MistakeLimitContext, MistakeLimitDecision } from './mistakeLimitGate.js';
+
+export type { MistakeLimitContext, MistakeLimitDecision } from './mistakeLimitGate.js';
 
 const MAX_ROUNDS = 25;
 const AGENT_MAX_TOKENS = 16384;
+const DEFAULT_MAX_CONSECUTIVE_MISTAKES = 5;
 
 export type ToolInputDeltaPayload = { name: string; partialJson: string; index: number };
 
@@ -47,11 +59,18 @@ export type AgentLoopOptions = {
 	requestModelId: string;
 	paradigm: ModelRequestParadigm;
 	signal: AbortSignal;
+	/** 与主界面 Composer 模式一致；Plan 仅注册只读工具 */
+	composerMode: ComposerMode;
 	agentSystemAppend?: string;
 	toolHooks?: ToolExecutionHooks;
 	/** 在 executeTool 之前调用；用于 shell 写入等需用户确认的闸门 */
 	beforeExecuteTool?: (call: ToolCall) => Promise<BeforeExecuteToolResult>;
 	thinkingLevel?: ThinkingLevel;
+	/** 连续工具失败（含用户拒绝执行）达到阈值时回调；未设置则达到阈值后仅重置计数并继续 */
+	onMistakeLimitReached?: (ctx: MistakeLimitContext) => Promise<MistakeLimitDecision>;
+	maxConsecutiveMistakes?: number;
+	/** 默认 true */
+	mistakeLimitEnabled?: boolean;
 };
 
 /**
@@ -152,19 +171,131 @@ async function runOpenAILoop(
 
 	const client = new OpenAI({ apiKey: key, baseURL, httpAgent, dangerouslyAllowBrowser: false });
 	const storedSystem = threadMessages.find((m) => m.role === 'system');
-	const systemContent = composeSystem(storedSystem?.content, 'agent', options.agentSystemAppend);
-	const temperature = temperatureForMode('agent');
+	const systemContent = composeSystem(storedSystem?.content, options.composerMode, options.agentSystemAppend);
+	const temperature = temperatureForMode(options.composerMode);
+
+	const toolMode = options.composerMode === 'plan' ? 'plan' : 'agent';
+	const tools = toOpenAITools(agentToolsForComposerMode(toolMode));
 
 	const conversation: OAIMsg[] = threadToOpenAI(threadMessages, systemContent);
-	const tools = toOpenAITools(AGENT_TOOLS);
 	let fullContent = '';
 	const effort = openAIReasoningEffort(options.thinkingLevel ?? 'off');
+
+	const mistakeLimitEnabled = options.mistakeLimitEnabled !== false;
+	const threshold = options.maxConsecutiveMistakes ?? DEFAULT_MAX_CONSECUTIVE_MISTAKES;
+	let consecutiveToolFailures = 0;
+
+	type TurnTc = { id: string; name: string; arguments: string };
+
+	async function handleMistakeLimitBeforeRound(): Promise<boolean> {
+		if (!mistakeLimitEnabled || consecutiveToolFailures < threshold) {
+			return false;
+		}
+		if (options.onMistakeLimitReached) {
+			const d = await options.onMistakeLimitReached({
+				consecutiveFailures: consecutiveToolFailures,
+				threshold,
+			});
+			if (d.action === 'stop') {
+				handlers.onDone(fullContent);
+				return true;
+			}
+			if (d.action === 'continue') {
+				consecutiveToolFailures = 0;
+			} else if (d.action === 'hint') {
+				consecutiveToolFailures = 0;
+				conversation.push({
+					role: 'user',
+					content: `[User feedback after repeated tool failures]\n${d.userText}`,
+				});
+			}
+			return false;
+		}
+		consecutiveToolFailures = 0;
+		return false;
+	}
+
+	async function runOneOpenAITool(tc: TurnTc): Promise<OpenAI.Chat.ChatCompletionToolMessageParam> {
+		let args: Record<string, unknown> = {};
+		try {
+			args = JSON.parse(tc.arguments || '{}');
+		} catch {
+			/* use empty */
+		}
+
+		const toolCall: ToolCall = { id: tc.id, name: tc.name, arguments: args };
+
+		fullContent += toolCallMarker(tc.name, args);
+		handlers.onToolCall(tc.name, args);
+		await new Promise<void>((r) => setTimeout(r, 0));
+
+		let gate: BeforeExecuteToolResult = { proceed: true };
+		if (options.beforeExecuteTool) {
+			try {
+				gate = await options.beforeExecuteTool(toolCall);
+			} catch (e) {
+				gate = {
+					proceed: false,
+					rejectionMessage: e instanceof Error ? e.message : String(e),
+				};
+			}
+		}
+		if (!gate.proceed) {
+			const msg = gate.rejectionMessage;
+			if (mistakeLimitEnabled) consecutiveToolFailures++;
+			fullContent += toolResultMarker(tc.name, msg, false);
+			handlers.onToolResult(tc.name, msg, false);
+			return { role: 'tool', tool_call_id: tc.id, content: msg };
+		}
+
+		const result = await executeTool(toolCall, options.toolHooks);
+		if (mistakeLimitEnabled) {
+			if (result.isError) {
+				consecutiveToolFailures++;
+			} else {
+				consecutiveToolFailures = 0;
+			}
+		}
+
+		fullContent += toolResultMarker(tc.name, result.content, !result.isError);
+		handlers.onToolResult(tc.name, result.content, !result.isError);
+
+		return { role: 'tool', tool_call_id: tc.id, content: result.content };
+	}
+
+	async function flushOpenAIToolsInOrder(turnToolCalls: TurnTc[]): Promise<void> {
+		const withNames = turnToolCalls.filter((tc) => tc.name);
+		let i = 0;
+		while (i < withNames.length) {
+			const cur = withNames[i]!;
+			if (isReadOnlyAgentTool(cur.name)) {
+				let j = i;
+				while (j < withNames.length && isReadOnlyAgentTool(withNames[j]!.name)) {
+					j++;
+				}
+				const batch = withNames.slice(i, j);
+				const outs = await Promise.all(batch.map((b) => runOneOpenAITool(b)));
+				for (const msg of outs) {
+					conversation.push(msg);
+				}
+				i = j;
+			} else {
+				const msg = await runOneOpenAITool(cur);
+				conversation.push(msg);
+				i++;
+			}
+		}
+	}
 
 	for (let round = 0; round < MAX_ROUNDS; round++) {
 		if (options.signal.aborted) break;
 
+		if (await handleMistakeLimitBeforeRound()) {
+			return;
+		}
+
 		let turnText = '';
-		const turnToolCalls: { id: string; name: string; arguments: string }[] = [];
+		const turnToolCalls: TurnTc[] = [];
 
 		try {
 			const stream = await client.chat.completions.create(
@@ -236,55 +367,7 @@ async function runOpenAILoop(
 		};
 		conversation.push(assistantMsg);
 
-		for (const tc of turnToolCalls) {
-			if (!tc.name) continue;
-			let args: Record<string, unknown> = {};
-			try { args = JSON.parse(tc.arguments || '{}'); } catch { /* use empty */ }
-
-			const toolCall: ToolCall = { id: tc.id, name: tc.name, arguments: args };
-
-			fullContent += toolCallMarker(tc.name, args);
-			handlers.onToolCall(tc.name, args);
-			// Yield to the event loop so the IPC tool_call message is flushed to the
-			// renderer before we execute the tool and immediately send tool_result.
-			// Without this, synchronous tools (write_to_file, str_replace) cause both
-			// messages to be batched together and the frontend never sees the pending state.
-			await new Promise<void>((r) => setTimeout(r, 0));
-
-			let gate: BeforeExecuteToolResult = { proceed: true };
-			if (options.beforeExecuteTool) {
-				try {
-					gate = await options.beforeExecuteTool(toolCall);
-				} catch (e) {
-					gate = {
-						proceed: false,
-						rejectionMessage: e instanceof Error ? e.message : String(e),
-					};
-				}
-			}
-			if (!gate.proceed) {
-				const msg = gate.rejectionMessage;
-				fullContent += toolResultMarker(tc.name, msg, false);
-				handlers.onToolResult(tc.name, msg, false);
-				conversation.push({
-					role: 'tool' as const,
-					tool_call_id: tc.id,
-					content: msg,
-				});
-				continue;
-			}
-
-			const result = await executeTool(toolCall, options.toolHooks);
-
-			fullContent += toolResultMarker(tc.name, result.content, !result.isError);
-			handlers.onToolResult(tc.name, result.content, !result.isError);
-
-			conversation.push({
-				role: 'tool' as const,
-				tool_call_id: tc.id,
-				content: result.content,
-			});
-		}
+		await flushOpenAIToolsInOrder(turnToolCalls);
 	}
 
 	handlers.onDone(fullContent);
@@ -323,20 +406,134 @@ async function runAnthropicLoop(
 	const baseURL = settings.anthropic?.baseURL?.trim() || undefined;
 	const client = new Anthropic({ apiKey: key, baseURL: baseURL || undefined });
 	const storedSystem = threadMessages.find((m) => m.role === 'system');
-	const system = composeSystem(storedSystem?.content, 'agent', options.agentSystemAppend);
+	const system = composeSystem(storedSystem?.content, options.composerMode, options.agentSystemAppend);
 	const model = options.requestModelId.trim();
 	if (!model) { handlers.onError('模型请求名称为空。'); return; }
-	const temperature = temperatureForMode('agent');
+	const temperature = temperatureForMode(options.composerMode);
 
 	const conversation: MessageParam[] = threadToAnthropic(threadMessages);
 	if (conversation.length === 0) { handlers.onError('没有可发送的对话消息。'); return; }
 
-	const tools = toAnthropicTools(AGENT_TOOLS);
+	const toolMode = options.composerMode === 'plan' ? 'plan' : 'agent';
+	const tools = toAnthropicTools(agentToolsForComposerMode(toolMode));
 	let fullContent = '';
 	const thinkBudget = anthropicThinkingBudget(options.thinkingLevel ?? 'off');
 
+	const mistakeLimitEnabled = options.mistakeLimitEnabled !== false;
+	const threshold = options.maxConsecutiveMistakes ?? DEFAULT_MAX_CONSECUTIVE_MISTAKES;
+	let consecutiveToolFailures = 0;
+
+	type TurnTu = { id: string; name: string; input: string };
+
+	async function handleMistakeLimitBeforeRoundAnthropic(): Promise<boolean> {
+		if (!mistakeLimitEnabled || consecutiveToolFailures < threshold) {
+			return false;
+		}
+		if (options.onMistakeLimitReached) {
+			const d = await options.onMistakeLimitReached({
+				consecutiveFailures: consecutiveToolFailures,
+				threshold,
+			});
+			if (d.action === 'stop') {
+				handlers.onDone(fullContent);
+				return true;
+			}
+			if (d.action === 'continue') {
+				consecutiveToolFailures = 0;
+			} else if (d.action === 'hint') {
+				consecutiveToolFailures = 0;
+				conversation.push({
+					role: 'user',
+					content: `[User feedback after repeated tool failures]\n${d.userText}`,
+				});
+			}
+			return false;
+		}
+		consecutiveToolFailures = 0;
+		return false;
+	}
+
+	async function runOneAnthropicTool(tu: TurnTu): Promise<ToolResultBlockParam> {
+		let args: Record<string, unknown> = {};
+		try {
+			args = JSON.parse(tu.input || '{}');
+		} catch {
+			/* use empty */
+		}
+
+		const toolCall: ToolCall = { id: tu.id, name: tu.name, arguments: args };
+
+		fullContent += toolCallMarker(tu.name, args);
+		handlers.onToolCall(tu.name, args);
+		await new Promise<void>((r) => setTimeout(r, 0));
+
+		let gate: BeforeExecuteToolResult = { proceed: true };
+		if (options.beforeExecuteTool) {
+			try {
+				gate = await options.beforeExecuteTool(toolCall);
+			} catch (e) {
+				gate = {
+					proceed: false,
+					rejectionMessage: e instanceof Error ? e.message : String(e),
+				};
+			}
+		}
+		if (!gate.proceed) {
+			const msg = gate.rejectionMessage;
+			if (mistakeLimitEnabled) consecutiveToolFailures++;
+			fullContent += toolResultMarker(tu.name, msg, false);
+			handlers.onToolResult(tu.name, msg, false);
+			return { type: 'tool_result', tool_use_id: tu.id, content: msg, is_error: true };
+		}
+
+		const result = await executeTool(toolCall, options.toolHooks);
+		if (mistakeLimitEnabled) {
+			if (result.isError) {
+				consecutiveToolFailures++;
+			} else {
+				consecutiveToolFailures = 0;
+			}
+		}
+
+		fullContent += toolResultMarker(tu.name, result.content, !result.isError);
+		handlers.onToolResult(tu.name, result.content, !result.isError);
+
+		return {
+			type: 'tool_result',
+			tool_use_id: tu.id,
+			content: result.content,
+			is_error: result.isError,
+		};
+	}
+
+	async function flushAnthropicToolsInOrder(turnToolUses: TurnTu[]): Promise<ToolResultBlockParam[]> {
+		const out: ToolResultBlockParam[] = [];
+		let i = 0;
+		while (i < turnToolUses.length) {
+			const cur = turnToolUses[i]!;
+			if (isReadOnlyAgentTool(cur.name)) {
+				let j = i;
+				while (j < turnToolUses.length && isReadOnlyAgentTool(turnToolUses[j]!.name)) {
+					j++;
+				}
+				const batch = turnToolUses.slice(i, j);
+				const batchResults = await Promise.all(batch.map((b) => runOneAnthropicTool(b)));
+				out.push(...batchResults);
+				i = j;
+			} else {
+				out.push(await runOneAnthropicTool(cur));
+				i++;
+			}
+		}
+		return out;
+	}
+
 	for (let round = 0; round < MAX_ROUNDS; round++) {
 		if (options.signal.aborted) break;
+
+		if (await handleMistakeLimitBeforeRoundAnthropic()) {
+			return;
+		}
 
 		let turnText = '';
 		let turnThinking = '';
@@ -440,53 +637,7 @@ async function runAnthropicLoop(
 		}
 		conversation.push({ role: 'assistant', content: assistantContent });
 
-		const toolResults: ToolResultBlockParam[] = [];
-		for (const tu of turnToolUses) {
-			let args: Record<string, unknown> = {};
-			try { args = JSON.parse(tu.input || '{}'); } catch { /* use empty */ }
-
-			const toolCall: ToolCall = { id: tu.id, name: tu.name, arguments: args };
-
-			fullContent += toolCallMarker(tu.name, args);
-			handlers.onToolCall(tu.name, args);
-			await new Promise<void>((r) => setTimeout(r, 0));
-
-			let gate: BeforeExecuteToolResult = { proceed: true };
-			if (options.beforeExecuteTool) {
-				try {
-					gate = await options.beforeExecuteTool(toolCall);
-				} catch (e) {
-					gate = {
-						proceed: false,
-						rejectionMessage: e instanceof Error ? e.message : String(e),
-					};
-				}
-			}
-			if (!gate.proceed) {
-				const msg = gate.rejectionMessage;
-				fullContent += toolResultMarker(tu.name, msg, false);
-				handlers.onToolResult(tu.name, msg, false);
-				toolResults.push({
-					type: 'tool_result',
-					tool_use_id: tu.id,
-					content: msg,
-					is_error: true,
-				});
-				continue;
-			}
-
-			const result = await executeTool(toolCall, options.toolHooks);
-
-			fullContent += toolResultMarker(tu.name, result.content, !result.isError);
-			handlers.onToolResult(tu.name, result.content, !result.isError);
-
-			toolResults.push({
-				type: 'tool_result',
-				tool_use_id: tu.id,
-				content: result.content,
-				is_error: result.isError,
-			});
-		}
+		const toolResults = await flushAnthropicToolsInOrder(turnToolUses);
 
 		conversation.push({ role: 'user', content: toolResults });
 	}

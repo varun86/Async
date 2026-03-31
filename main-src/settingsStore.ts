@@ -215,6 +215,14 @@ export function patchSettings(partial: Partial<ShellSettings>): ShellSettings {
 					skills: partial.agent.skills ?? cached.agent?.skills ?? [],
 					subagents: partial.agent.subagents ?? cached.agent?.subagents ?? [],
 					commands: partial.agent.commands ?? cached.agent?.commands ?? [],
+					confirmShellCommands: partial.agent.confirmShellCommands ?? cached.agent?.confirmShellCommands,
+					skipSafeShellCommandsConfirm:
+						partial.agent.skipSafeShellCommandsConfirm ?? cached.agent?.skipSafeShellCommandsConfirm,
+					confirmWritesBeforeExecute:
+						partial.agent.confirmWritesBeforeExecute ?? cached.agent?.confirmWritesBeforeExecute,
+					maxConsecutiveMistakes:
+						partial.agent.maxConsecutiveMistakes ?? cached.agent?.maxConsecutiveMistakes,
+					mistakeLimitEnabled: partial.agent.mistakeLimitEnabled ?? cached.agent?.mistakeLimitEnabled,
 				}
 			: cached.agent;
 

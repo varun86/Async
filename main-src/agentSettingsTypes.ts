@@ -54,4 +54,12 @@ export type AgentCustomization = {
 	 * 对常见只读/低风险命令跳过确认（默认 true），如 `git status`、`npm test`。
 	 */
 	skipSafeShellCommandsConfirm?: boolean;
+	/**
+	 * 连续多少次工具失败（含用户拒绝执行）后暂停并询问用户（默认 5）。
+	 */
+	maxConsecutiveMistakes?: number;
+	/**
+	 * 是否启用「连续失败暂停」交互（默认 true）。
+	 */
+	mistakeLimitEnabled?: boolean;
 };

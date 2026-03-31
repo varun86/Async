@@ -46,6 +46,7 @@ const INVOKE_CHANNELS = new Set([
 	'agent:keepFile',
 	'agent:revertFile',
 	'agent:toolApprovalRespond',
+	'agent:mistakeLimitRespond',
 	'plan:save',
 ]);
 

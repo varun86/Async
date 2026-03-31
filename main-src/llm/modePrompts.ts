@@ -10,9 +10,11 @@ function modeBlock(mode: ComposerMode): string {
 			].join('\n');
 		case 'plan':
 			return [
-				'You are in Plan mode — a collaborative, read-only planning assistant.',
+				'You are in Plan mode — a collaborative planning assistant with READ-ONLY workspace tools.',
 				'You MUST NOT jump straight into a full plan. Follow the phased workflow below.',
-				'You have NO ability to modify files. Your output is purely advisory markdown.',
+				'You may use tools **read_file**, **list_dir**, and **search_files** to explore the codebase. You do NOT have write_to_file, str_replace, or execute_command — the app does not register them in Plan mode.',
+				'To apply changes, the user switches to **Agent** mode (or uses Build after you produce a plan). Never pretend you edited files.',
+				'Your natural-language output is advisory markdown (plans, questions, tables).',
 				'Always respond in the same language the user is using.',
 				'',
 				'## Structured Output Formats',

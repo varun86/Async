@@ -50,6 +50,7 @@ import { ComposerAtMenu } from './ComposerAtMenu';
 import { ComposerRichInput } from './ComposerRichInput';
 import { PlanQuestionDialog } from './PlanQuestionDialog';
 import { ToolApprovalDialog } from './ToolApprovalDialog';
+import { AgentMistakeLimitDialog } from './AgentMistakeLimitDialog';
 import { PlanReviewPanel } from './PlanReviewPanel';
 import {
 	parseQuestions,
@@ -483,6 +484,36 @@ function IconSidebarRight({ className }: { className?: string }) {
 	);
 }
 
+function IconHistory({ className }: { className?: string }) {
+	return (
+		<svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+			<path d="M3 12a9 9 0 1 0 3-6.7" />
+			<path d="M3 4v4h4" />
+			<path d="M12 7v5l3 2" />
+		</svg>
+	);
+}
+
+function IconDotsHorizontal({ className }: { className?: string }) {
+	return (
+		<svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+			<circle cx="5" cy="12" r="1.5" />
+			<circle cx="12" cy="12" r="1.5" />
+			<circle cx="19" cy="12" r="1.5" />
+		</svg>
+	);
+}
+
+function IconImageOutline({ className }: { className?: string }) {
+	return (
+		<svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+			<rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+			<circle cx="8.5" cy="8.5" r="1.5" />
+			<path d="M21 15l-5-5L5 21" />
+		</svg>
+	);
+}
+
 function normalizeThreadRow(t: ThreadInfo): ThreadInfo {
 	return {
 		...t,
@@ -639,6 +670,11 @@ export default function App() {
 		command?: string;
 		path?: string;
 	} | null>(null);
+	const [mistakeLimitRequest, setMistakeLimitRequest] = useState<{
+		recoveryId: string;
+		consecutiveFailures: number;
+		threshold: number;
+	} | null>(null);
 	const [modelEntries, setModelEntries] = useState<UserModelEntry[]>([]);
 	const [enabledModelIds, setEnabledModelIds] = useState<string[]>([]);
 	const [agentCustomization, setAgentCustomization] = useState<AgentCustomization>(() => defaultAgentCustomization());
@@ -672,6 +708,10 @@ export default function App() {
 	const terminalMenuRef = useRef<HTMLDivElement>(null);
 	const [fileMenuOpen, setFileMenuOpen] = useState(false);
 	const fileMenuRef = useRef<HTMLDivElement>(null);
+	const [editorThreadHistoryOpen, setEditorThreadHistoryOpen] = useState(false);
+	const [editorChatMoreOpen, setEditorChatMoreOpen] = useState(false);
+	const editorHistoryMenuRef = useRef<HTMLDivElement>(null);
+	const editorMoreMenuRef = useRef<HTMLDivElement>(null);
 	const [homePath, setHomePath] = useState('');
 	const [railWidths, setRailWidths] = useState(() => {
 		const s = readSidebarLayout();
@@ -726,6 +766,29 @@ export default function App() {
 			}
 		},
 		[shell, toolApprovalRequest]
+	);
+
+	const respondMistakeLimit = useCallback(
+		async (action: 'continue' | 'stop' | 'hint', hint?: string) => {
+			if (!shell) {
+				return;
+			}
+			const req = mistakeLimitRequest;
+			if (!req) {
+				return;
+			}
+			setMistakeLimitRequest(null);
+			try {
+				await shell.invoke('agent:mistakeLimitRespond', {
+					recoveryId: req.recoveryId,
+					action,
+					hint: hint ?? '',
+				});
+			} catch {
+				/* ignore */
+			}
+		},
+		[shell, mistakeLimitRequest]
 	);
 
 	useEffect(() => {
@@ -791,6 +854,14 @@ export default function App() {
 		}
 		return { todayThreads: today, archivedThreads: archived };
 	}, [threads, threadSearch]);
+
+	const threadsChrono = useMemo(
+		() =>
+			[...threads].sort(
+				(a, b) => b.updatedAt - a.updatedAt || (b.createdAt ?? 0) - (a.createdAt ?? 0) || a.title.localeCompare(b.title)
+			),
+		[threads]
+	);
 
 	const hasConversation = messages.length > 0 || !!streaming;
 	const changeCount = gitChangedPaths.length;
@@ -1021,14 +1092,20 @@ export default function App() {
 				setDefaultModel(coerceDefaultModel(st.defaultModel, rawEntries, saneEnabled));
 				setThinkingByModelId(coerceThinkingByModelId(st.models?.thinkingByModelId));
 				const ag = st.agent;
+				const defs = defaultAgentCustomization();
 				setAgentCustomization({
-					...defaultAgentCustomization(),
+					...defs,
 					...(ag ?? {}),
 					importThirdPartyConfigs: ag?.importThirdPartyConfigs ?? false,
 					rules: Array.isArray(ag?.rules) ? ag.rules : [],
 					skills: Array.isArray(ag?.skills) ? ag.skills : [],
 					subagents: Array.isArray(ag?.subagents) ? ag.subagents : [],
 					commands: Array.isArray(ag?.commands) ? ag.commands : [],
+					confirmShellCommands: ag?.confirmShellCommands ?? defs.confirmShellCommands,
+					skipSafeShellCommandsConfirm: ag?.skipSafeShellCommandsConfirm ?? defs.skipSafeShellCommandsConfirm,
+					confirmWritesBeforeExecute: ag?.confirmWritesBeforeExecute ?? defs.confirmWritesBeforeExecute,
+					maxConsecutiveMistakes: ag?.maxConsecutiveMistakes ?? defs.maxConsecutiveMistakes,
+					mistakeLimitEnabled: ag?.mistakeLimitEnabled ?? defs.mistakeLimitEnabled,
 				});
 				if (st.editor) {
 					setEditorSettings({ ...defaultEditorSettings(), ...st.editor });
@@ -1101,6 +1178,12 @@ export default function App() {
 					command: payload.command,
 					path: payload.path,
 				});
+			} else if (payload.type === 'agent_mistake_limit') {
+				setMistakeLimitRequest({
+					recoveryId: payload.recoveryId,
+					consecutiveFailures: payload.consecutiveFailures,
+					threshold: payload.threshold,
+				});
 			} else if (payload.type === 'done') {
 				const start = streamStartedAtRef.current;
 				const ft = firstTokenAtRef.current;
@@ -1121,6 +1204,7 @@ export default function App() {
 				setStreaming('');
 				setStreamingThinking('');
 				setToolApprovalRequest(null);
+				setMistakeLimitRequest(null);
 				clearStreamingToolPreviewNow();
 				setFileChangesDismissed(false);
 				setDismissedFiles(new Set());
@@ -1179,6 +1263,7 @@ export default function App() {
 				setStreaming('');
 				setStreamingThinking('');
 				setToolApprovalRequest(null);
+				setMistakeLimitRequest(null);
 				clearStreamingToolPreviewNow();
 				setMessages((m) => [
 					...m,
@@ -1188,7 +1273,7 @@ export default function App() {
 			}
 		});
 		return () => unsub();
-	}, [shell, loadMessages, refreshThreads, clearStreamingToolPreviewNow]);
+	}, [shell, loadMessages, refreshThreads, clearStreamingToolPreviewNow, t]);
 
 	useEffect(() => {
 		if (!workspace || !shell) {
@@ -1387,6 +1472,7 @@ export default function App() {
 	}, []);
 
 	const onSelectThread = async (id: string) => {
+		setEditorThreadHistoryOpen(false);
 		if (!shell) {
 			return;
 		}
@@ -1561,6 +1647,7 @@ export default function App() {
 		if (!shell || !currentId) {
 			return;
 		}
+		setMistakeLimitRequest(null);
 		await shell.invoke('chat:abort', currentId);
 		// Let the 'done' event from backend finalize the state
 		clearStreamingToolPreviewNow();
@@ -1648,6 +1735,11 @@ export default function App() {
 				skills: agentCustomization.skills ?? [],
 				subagents: agentCustomization.subagents ?? [],
 				commands: agentCustomization.commands ?? [],
+				confirmShellCommands: agentCustomization.confirmShellCommands,
+				skipSafeShellCommandsConfirm: agentCustomization.skipSafeShellCommandsConfirm,
+				confirmWritesBeforeExecute: agentCustomization.confirmWritesBeforeExecute,
+				maxConsecutiveMistakes: agentCustomization.maxConsecutiveMistakes,
+				mistakeLimitEnabled: agentCustomization.mistakeLimitEnabled,
 			},
 			editor: editorSettings,
 			indexing: {
@@ -2680,6 +2772,25 @@ export default function App() {
 		[shell]
 	);
 
+	useEffect(() => {
+		if (!editorThreadHistoryOpen && !editorChatMoreOpen) {
+			return;
+		}
+		const onDoc = (e: MouseEvent) => {
+			const node = e.target as Node;
+			if (editorHistoryMenuRef.current?.contains(node)) {
+				return;
+			}
+			if (editorMoreMenuRef.current?.contains(node)) {
+				return;
+			}
+			setEditorThreadHistoryOpen(false);
+			setEditorChatMoreOpen(false);
+		};
+		document.addEventListener('mousedown', onDoc);
+		return () => document.removeEventListener('mousedown', onDoc);
+	}, [editorThreadHistoryOpen, editorChatMoreOpen]);
+
 	const beginResizeLeft = useCallback(
 		(e: React.MouseEvent) => {
 			e.preventDefault();
@@ -3083,66 +3194,219 @@ export default function App() {
 			);
 		});
 
-	const renderAgentConversationBelowContext = (): ReactNode => (
-		<>
-			{hasConversation ? (
-				<div
-					className="ref-messages"
-					ref={messagesViewportRef}
-					onScroll={onMessagesScroll}
-				>
-					<div className="ref-messages-track" ref={messagesTrackRef}>
-						{renderChatMessageList()}
+	const renderAgentConversationBelowContext = (
+		layout: 'agent-center' | 'editor-rail' = 'agent-center'
+	): ReactNode => {
+		const isEditorRail = layout === 'editor-rail';
+
+		const messagesEl = hasConversation ? (
+			<div className="ref-messages" ref={messagesViewportRef} onScroll={onMessagesScroll}>
+				<div className="ref-messages-track" ref={messagesTrackRef}>
+					{renderChatMessageList()}
+				</div>
+			</div>
+		) : null;
+
+		const editorRailHeroComposer =
+			isEditorRail && !hasConversation ? (
+				<div className="ref-capsule ref-capsule--editor-rail-hero">
+					<div className="ref-composer-hero-body">
+						<ComposerRichInput
+							innerRef={composerRichHeroRef}
+							segments={composerSegments}
+							onSegmentsChange={setComposerSegments}
+							className="ref-capsule-input"
+							placeholder={composerPlaceholder}
+							onFilePreview={(rel) => void onExplorerOpenFile(rel)}
+							onRichInput={(root) => atMention.syncAtFromRich(root, 'hero')}
+							onRichSelect={(root) => atMention.syncAtFromRich(root, 'hero')}
+							onKeyDown={(e) => {
+								if (atMention.handleAtKeyDown(e)) {
+									return;
+								}
+								if (e.key === 'Escape' && resendFromUserIndex !== null) {
+									e.preventDefault();
+									setResendFromUserIndex(null);
+									setInlineResendSegments([]);
+									return;
+								}
+								if (e.key === 'Tab' && e.shiftKey) {
+									e.preventDefault();
+									void onNewThread();
+									return;
+								}
+								if (e.key === 'Enter' && !e.shiftKey) {
+									e.preventDefault();
+									void onSend();
+								}
+							}}
+						/>
+					</div>
+					<div className="ref-capsule-bar ref-capsule-bar--editor-rail">
+						<div className="ref-editor-rail-bar-left">
+							<div className="ref-plus-anchor ref-editor-rail-mode-cluster" ref={plusAnchorHeroRef}>
+								<button
+									type="button"
+									className={`ref-mode-chip ref-mode-chip--${composerMode} ref-mode-chip--opens-menu`}
+									aria-expanded={plusMenuOpen}
+									aria-haspopup="menu"
+									title={t('app.addPlusTitle')}
+									aria-label={t('app.addPlusAria')}
+									onClick={() => {
+										setPlusMenuAnchorSlot('hero');
+										setModelPickerOpen(false);
+										setPlusMenuOpen((o) => !o);
+									}}
+								>
+									<ComposerModeIcon mode={composerMode} className="ref-mode-chip-ico" />
+									<span className="ref-mode-chip-label">{composerModeLabel(composerMode, t)}</span>
+									<IconChevron className="ref-mode-chip-menu-chev" />
+								</button>
+								{composerMode !== 'agent' ? (
+									<button
+										type="button"
+										className="ref-mode-chip-clear"
+										aria-label={t('app.resetAgentModeAria')}
+										onClick={() => setComposerModePersist('agent')}
+									>
+										<IconChipClear className="ref-mode-chip-clear-svg" />
+									</button>
+								) : null}
+							</div>
+							<div className="ref-model-pill-anchor" ref={modelPillHeroRef}>
+								<button
+									type="button"
+									className="ref-model-pill"
+									aria-expanded={modelPickerOpen}
+									aria-haspopup="listbox"
+									onClick={() => {
+										setModelPickerAnchorSlot('hero');
+										setPlusMenuOpen(false);
+										setModelPickerOpen((o) => !o);
+									}}
+								>
+									<span className="ref-model-name">{modelPillLabel}</span>
+									<IconChevron className="ref-model-chev" />
+								</button>
+							</div>
+						</div>
+						<div className="ref-capsule-bar-spacer" />
+						<div className="ref-editor-rail-bar-right">
+							<button
+								type="button"
+								className="ref-mic-btn"
+								disabled
+								title={t('app.comingSoon')}
+								aria-label={t('app.comingSoon')}
+							>
+								<IconImageOutline className="ref-mic-btn-svg" />
+							</button>
+							<button
+								type="button"
+								className="ref-mic-btn"
+								disabled
+								title={t('app.voiceSoonTitle')}
+								aria-label={t('app.voiceSoonAria')}
+							>
+								<IconMic className="ref-mic-btn-svg" />
+							</button>
+							<button
+								type="button"
+								className={`ref-send-btn ${awaitingReply ? 'is-stop' : ''}`}
+								title={awaitingReply ? t('app.stopGeneration') : t('app.send')}
+								aria-label={awaitingReply ? t('app.stopGeneration') : t('app.send')}
+								disabled={!awaitingReply && !canSendComposer}
+								onClick={() => (awaitingReply ? void onAbort() : void onSend())}
+							>
+								{awaitingReply ? <IconStop className="ref-send-icon" /> : <IconArrowUp className="ref-send-icon" />}
+							</button>
+						</div>
 					</div>
 				</div>
-			) : (
-				<div className="ref-hero-spacer" />
-			)}
+			) : null;
 
-			{hasConversation && pendingAgentPatches.length > 0 ? (
-				<AgentReviewPanel
-					patches={pendingAgentPatches}
-					workspaceRoot={workspace}
-					busy={agentReviewBusy}
-					onOpenFile={(rel, line) => void onExplorerOpenFile(rel, line)}
-					onApplyOne={(id) => void onApplyAgentPatchOne(id)}
-					onApplyAll={() => void onApplyAgentPatchesAll()}
-					onDiscard={onDiscardAgentReview}
+		const editorContextStrip = isEditorRail ? (
+			<div className="ref-editor-rail-context-strip">
+				<IconDoc className="ref-context-icon" />
+				<span className="ref-editor-rail-context-local">{t('app.editorChatContextLocal')}</span>
+				<IconChevron className="ref-editor-rail-context-chev" aria-hidden />
+				<span className="ref-editor-rail-context-path" title={workspace ?? undefined}>
+					{workspace ? workspaceBasename : t('app.noWorkspace')}
+				</span>
+			</div>
+		) : null;
+
+		const sharedOverlays = (
+			<>
+				{hasConversation && pendingAgentPatches.length > 0 ? (
+					<AgentReviewPanel
+						patches={pendingAgentPatches}
+						workspaceRoot={workspace}
+						busy={agentReviewBusy}
+						onOpenFile={(rel, line) => void onExplorerOpenFile(rel, line)}
+						onApplyOne={(id) => void onApplyAgentPatchOne(id)}
+						onApplyAll={() => void onApplyAgentPatchesAll()}
+						onDiscard={onDiscardAgentReview}
+					/>
+				) : null}
+
+				{hasConversation && planQuestion && composerMode === 'plan' ? (
+					<PlanQuestionDialog
+						question={planQuestion}
+						onSubmit={onPlanQuestionSubmit}
+						onSkip={onPlanQuestionSkip}
+					/>
+				) : null}
+
+				<ToolApprovalDialog
+					open={toolApprovalRequest !== null}
+					payload={toolApprovalRequest}
+					onAllow={() => void respondToolApproval(true)}
+					onDeny={() => void respondToolApproval(false)}
+					title={
+						toolApprovalRequest?.toolName === 'execute_command'
+							? t('agent.toolApproval.titleShell')
+							: t('agent.toolApproval.titleWrite')
+					}
+					allowLabel={t('agent.toolApproval.allow')}
+					denyLabel={t('agent.toolApproval.deny')}
 				/>
-			) : null}
 
-			{hasConversation && planQuestion && composerMode === 'plan' ? (
-				<PlanQuestionDialog
-					question={planQuestion}
-					onSubmit={onPlanQuestionSubmit}
-					onSkip={onPlanQuestionSkip}
+				<AgentMistakeLimitDialog
+					open={mistakeLimitRequest !== null}
+					payload={mistakeLimitRequest}
+					onContinue={() => void respondMistakeLimit('continue')}
+					onStop={() => void respondMistakeLimit('stop')}
+					onSendHint={(hint) => void respondMistakeLimit('hint', hint)}
+					title={t('agent.mistakeLimit.title')}
+					body={
+						mistakeLimitRequest
+							? t('agent.mistakeLimit.body', {
+									count: mistakeLimitRequest.consecutiveFailures,
+									threshold: mistakeLimitRequest.threshold,
+								})
+							: ''
+					}
+					continueLabel={t('agent.mistakeLimit.continue')}
+					stopLabel={t('agent.mistakeLimit.stop')}
+					hintFieldLabel={t('agent.mistakeLimit.hintField')}
+					sendHintLabel={t('agent.mistakeLimit.sendHint')}
+					hintPlaceholder={t('agent.mistakeLimit.hintPlaceholder')}
 				/>
-			) : null}
 
-			<ToolApprovalDialog
-				open={toolApprovalRequest !== null}
-				payload={toolApprovalRequest}
-				onAllow={() => void respondToolApproval(true)}
-				onDeny={() => void respondToolApproval(false)}
-				title={
-					toolApprovalRequest?.toolName === 'execute_command'
-						? t('agent.toolApproval.titleShell')
-						: t('agent.toolApproval.titleWrite')
-				}
-				allowLabel={t('agent.toolApproval.allow')}
-				denyLabel={t('agent.toolApproval.deny')}
-			/>
+				{hasConversation && parsedPlan && composerMode === 'plan' ? (
+					<PlanReviewPanel
+						plan={parsedPlan}
+						planFilePath={planFilePath}
+						onBuild={onPlanBuild}
+						onClose={onPlanReviewClose}
+						onTodoToggle={onPlanTodoToggle}
+					/>
+				) : null}
+			</>
+		);
 
-			{hasConversation && parsedPlan && composerMode === 'plan' ? (
-				<PlanReviewPanel
-					plan={parsedPlan}
-					planFilePath={planFilePath}
-					onBuild={onPlanBuild}
-					onClose={onPlanReviewClose}
-					onTodoToggle={onPlanTodoToggle}
-				/>
-			) : null}
-
+		const commandStack = (
 			<div className="ref-command-stack">
 				{hasConversation && composerMode === 'agent' && agentFileChanges.length > 0 && !awaitingReply && !fileChangesDismissed ? (
 					<AgentFileChangesPanel
@@ -3160,7 +3424,7 @@ export default function App() {
 						setSegments: setComposerSegments,
 						canSend: canSendComposer,
 					})
-				) : (
+				) : isEditorRail ? null : (
 					<>
 						<div className="ref-capsule">
 							<div className="ref-composer-hero-body">
@@ -3286,8 +3550,40 @@ export default function App() {
 					</>
 				)}
 			</div>
-		</>
-	);
+		);
+
+		if (isEditorRail) {
+			return (
+				<>
+					<div className="ref-editor-chat-body">
+						{!hasConversation ? (
+							<>
+								{editorRailHeroComposer}
+								{editorContextStrip}
+								<div className="ref-editor-rail-message-spring" aria-hidden />
+							</>
+						) : (
+							<>
+								{editorContextStrip}
+								{messagesEl}
+							</>
+						)}
+					</div>
+					{sharedOverlays}
+					{commandStack}
+				</>
+			);
+		}
+
+		return (
+			<>
+				{messagesEl}
+				{!hasConversation ? <div className="ref-hero-spacer" /> : null}
+				{sharedOverlays}
+				{commandStack}
+			</>
+		);
+	};
 
 	const plusMenuAnchorRefForDropdown =
 		plusMenuAnchorSlot === 'hero'
@@ -3500,10 +3796,6 @@ export default function App() {
 					</button>
 				</div>
 				<div className="ref-menubar-right">
-					<button type="button" className="ref-btn-new-agent" onClick={() => void onNewThread()} style={{marginRight: '8px'}}>
-						{t('app.newAgent')}
-						<kbd className="ref-kbd">Ctrl+N</kbd>
-					</button>
 					<div className="ref-layout-toggle-btns">
 						<button
 							type="button"
@@ -4196,25 +4488,160 @@ export default function App() {
 					onKeyDown={onPlanNewIdea}
 				>
 					<div className="ref-editor-chat-panel">
-						<div className="ref-editor-chat-header">
-							<div className="ref-editor-chat-title-stack">
-								<span className="ref-editor-chat-kicker">{t('app.editorAgentChatRail')}</span>
-								<span
-									className="ref-editor-chat-title"
-									title={hasConversation ? currentThreadTitle : workspaceBasename}
+						<div className="ref-editor-chat-tab-rail">
+							<nav
+								className="ref-editor-chat-tabs-scroll"
+								aria-label={t('app.editorChatTabListAria')}
+							>
+								{threadsChrono.map((th) => {
+									const active = th.id === currentId;
+									return (
+										<div
+											key={th.id}
+											className={`ref-editor-chat-tab-shell ${active ? 'is-active' : ''}`}
+										>
+											<button
+												type="button"
+												className="ref-editor-chat-tab-main"
+												aria-current={active ? 'true' : undefined}
+												title={threadRowTitle(t, th)}
+												onClick={() => {
+													setEditorThreadHistoryOpen(false);
+													void onSelectThread(th.id);
+												}}
+											>
+												<span className="ref-editor-chat-tab-label">{threadRowTitle(t, th)}</span>
+											</button>
+											<button
+												type="button"
+												className="ref-editor-chat-tab-close"
+												title={t('common.deleteThread')}
+												aria-label={t('common.deleteThread')}
+												onMouseDown={(e) => e.preventDefault()}
+												onClick={(e) => void onDeleteThread(e, th.id)}
+											>
+												<IconCloseSmall className="ref-editor-chat-tab-close-svg" />
+											</button>
+										</div>
+									);
+								})}
+							</nav>
+							<div className="ref-editor-chat-tab-actions">
+								<button
+									type="button"
+									className="ref-editor-chat-icon-btn"
+									title={t('app.newAgent')}
+									aria-label={t('app.newAgent')}
+									onClick={() => {
+										setEditorThreadHistoryOpen(false);
+										setEditorChatMoreOpen(false);
+										void onNewThread();
+									}}
 								>
-									{hasConversation ? currentThreadTitle : workspaceBasename}
-								</span>
-							</div>
-							<div className="ref-editor-chat-pills" aria-hidden>
-								<span className="ref-editor-chat-pill">{composerModeLabel(composerMode, t)}</span>
-								<span className="ref-editor-chat-pill ref-editor-chat-pill--subtle">{modelPillLabel}</span>
+									<IconPlus className="ref-editor-chat-icon-btn-svg" />
+								</button>
+								<div className="ref-editor-chat-menu-wrap" ref={editorHistoryMenuRef}>
+									<button
+										type="button"
+										className={`ref-editor-chat-icon-btn ${editorThreadHistoryOpen ? 'is-active' : ''}`}
+										title={t('app.editorChatHistoryAria')}
+										aria-label={t('app.editorChatHistoryAria')}
+										aria-expanded={editorThreadHistoryOpen}
+										aria-haspopup="dialog"
+										onClick={() => {
+											setEditorChatMoreOpen(false);
+											setEditorThreadHistoryOpen((o) => !o);
+										}}
+									>
+										<IconHistory className="ref-editor-chat-icon-btn-svg" />
+									</button>
+									{editorThreadHistoryOpen ? (
+										<div className="ref-editor-chat-dropdown ref-editor-chat-dropdown--history" role="dialog">
+											<label className="ref-editor-chat-history-search">
+												<IconSearch className="ref-editor-chat-history-search-ico" aria-hidden />
+												<input
+													type="search"
+													className="ref-editor-chat-history-input"
+													placeholder={t('app.editorChatSearchThreads')}
+													value={threadSearch}
+													onChange={(e) => setThreadSearch(e.target.value)}
+													aria-label={t('app.editorChatSearchThreads')}
+												/>
+											</label>
+											<div className="ref-editor-chat-history-section-label">{t('app.today')}</div>
+											<div className="ref-editor-chat-history-list">
+												{todayThreads.map(renderThreadItem)}
+											</div>
+											{archivedThreads.length > 0 ? (
+												<>
+													<div className="ref-editor-chat-history-section-label ref-editor-chat-history-section-label--arch">
+														{t('app.archived')}
+													</div>
+													<div className="ref-editor-chat-history-list">
+														{archivedThreads.map(renderThreadItem)}
+													</div>
+												</>
+											) : null}
+										</div>
+									) : null}
+								</div>
+								<div className="ref-editor-chat-menu-wrap" ref={editorMoreMenuRef}>
+									<button
+										type="button"
+										className={`ref-editor-chat-icon-btn ${editorChatMoreOpen ? 'is-active' : ''}`}
+										title={t('app.editorChatMoreAria')}
+										aria-label={t('app.editorChatMoreAria')}
+										aria-expanded={editorChatMoreOpen}
+										aria-haspopup="menu"
+										onClick={() => {
+											setEditorThreadHistoryOpen(false);
+											setEditorChatMoreOpen((o) => !o);
+										}}
+									>
+										<IconDotsHorizontal className="ref-editor-chat-icon-btn-svg" />
+									</button>
+									{editorChatMoreOpen ? (
+										<div className="ref-editor-chat-dropdown ref-editor-chat-dropdown--more" role="menu">
+											<button
+												type="button"
+												className="ref-editor-chat-more-item"
+												role="menuitem"
+												onClick={() => {
+													setEditorChatMoreOpen(false);
+													setComposerModePersist('plan');
+													void onNewThread();
+												}}
+											>
+												{t('app.planNewIdea')}
+											</button>
+											<button
+												type="button"
+												className="ref-editor-chat-more-item"
+												role="menuitem"
+												onClick={() => {
+													setEditorChatMoreOpen(false);
+													setWorkspaceToolsOpen(true);
+												}}
+											>
+												{t('app.quickTerminal')}
+											</button>
+											<button
+												type="button"
+												className="ref-editor-chat-more-item"
+												role="menuitem"
+												onClick={() => {
+													setEditorChatMoreOpen(false);
+													openSettingsPage('general');
+												}}
+											>
+												{t('app.settings')}
+											</button>
+										</div>
+									) : null}
+								</div>
 							</div>
 						</div>
-						<div className="ref-editor-chat-subtitle" title={workspace ?? undefined}>
-							{workspace ?? t('app.noWorkspace')}
-						</div>
-						{renderAgentConversationBelowContext()}
+						{renderAgentConversationBelowContext('editor-rail')}
 					</div>
 				</aside>
 				)}

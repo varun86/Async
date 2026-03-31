@@ -39,6 +39,11 @@ import {
 	formatAgentApplyIncremental,
 } from '../agent/applyAgentDiffs.js';
 import { runAgentLoop } from '../agent/agentLoop.js';
+import {
+	createMistakeLimitReachedHandler,
+	resolveMistakeLimitRecovery,
+	type MistakeLimitDecision,
+} from '../agent/mistakeLimitGate.js';
 import { createToolApprovalBeforeExecute, resolveToolApproval } from '../agent/toolApprovalGate.js';
 import { prepareUserTurnForChat } from '../llm/agentMessagePrep.js';
 import { summarizeThreadForSidebar, isTimestampToday } from '../threadListSummary.js';
@@ -65,6 +70,8 @@ const abortByThread = new Map<string, AbortController>();
 const agentRevertSnapshotsByThread = new Map<string, Map<string, string | null>>();
 /** 工具执行前用户确认：approvalId → resolve(allowed) */
 const toolApprovalWaiters = new Map<string, (approved: boolean) => void>();
+/** 连续失败后恢复：recoveryId → resolve(decision) */
+const mistakeLimitWaiters = new Map<string, (d: MistakeLimitDecision) => void>();
 
 function runChatStream(
 	win: BrowserWindow,
@@ -96,7 +103,7 @@ function runChatStream(
 				return;
 			}
 
-			if (mode === 'agent' && resolved.paradigm !== 'gemini') {
+			if ((mode === 'agent' || mode === 'plan') && resolved.paradigm !== 'gemini') {
 				const beforeExecuteTool = createToolApprovalBeforeExecute(
 					send,
 					threadId,
@@ -104,6 +111,13 @@ function runChatStream(
 					() => getSettings().agent,
 					toolApprovalWaiters
 				);
+				const onMistakeLimitReached = createMistakeLimitReachedHandler(
+					send,
+					threadId,
+					ac.signal,
+					mistakeLimitWaiters
+				);
+				const ag = getSettings().agent;
 				await runAgentLoop(
 					settings,
 					messages,
@@ -111,8 +125,12 @@ function runChatStream(
 						requestModelId: resolved.requestModelId,
 						paradigm: resolved.paradigm,
 						signal: ac.signal,
+						composerMode: mode,
 						thinkingLevel,
 						beforeExecuteTool,
+						maxConsecutiveMistakes: ag?.maxConsecutiveMistakes,
+						mistakeLimitEnabled: ag?.mistakeLimitEnabled,
+						onMistakeLimitReached,
 						toolHooks: {
 							beforeWrite: ({ path, previousContent }) => {
 								const snapshots = agentRevertSnapshotsByThread.get(threadId);
@@ -621,6 +639,13 @@ export function registerIpc(): void {
 				fn(false);
 			}
 		}
+		const prefixMl = `ml-${threadId}-`;
+		for (const [id, fn] of [...mistakeLimitWaiters.entries()]) {
+			if (id.startsWith(prefixMl)) {
+				mistakeLimitWaiters.delete(id);
+				fn({ action: 'stop' });
+			}
+		}
 		return { ok: true };
 	});
 
@@ -630,6 +655,33 @@ export function registerIpc(): void {
 			const id = String(payload?.approvalId ?? '');
 			if (!id) return { ok: false as const, error: 'missing id' };
 			resolveToolApproval(toolApprovalWaiters, id, Boolean(payload.approved));
+			return { ok: true as const };
+		}
+	);
+
+	ipcMain.handle(
+		'agent:mistakeLimitRespond',
+		(
+			_e,
+			payload: {
+				recoveryId?: string;
+				action?: string;
+				hint?: string;
+			}
+		) => {
+			const id = String(payload?.recoveryId ?? '');
+			if (!id) return { ok: false as const, error: 'missing id' as const };
+			const act = String(payload?.action ?? 'continue');
+			let decision: MistakeLimitDecision;
+			if (act === 'stop') {
+				decision = { action: 'stop' };
+			} else if (act === 'hint') {
+				const h = String(payload?.hint ?? '').trim();
+				decision = h ? { action: 'hint', userText: h } : { action: 'continue' };
+			} else {
+				decision = { action: 'continue' };
+			}
+			resolveMistakeLimitRecovery(mistakeLimitWaiters, id, decision);
 			return { ok: true as const };
 		}
 	);

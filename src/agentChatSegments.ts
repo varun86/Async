@@ -858,6 +858,21 @@ function extractToolSegments(content: string, t: TFunction): { segments: Assista
 						isNew: true,
 					});
 				}
+			} else if (mk.isStreaming && mk.rawJson) {
+				segments.push(activity);
+				const streamingEdit = buildStreamingFileEditSegment(mk);
+				if (streamingEdit) {
+					segments.push(streamingEdit);
+				}
+			} else if (mk.result === undefined && mk.rawJson && !markerHasSubstantiveTail(content, mk)) {
+				segments.push(activity);
+				const pendingEdit = buildStreamingFileEditSegment(mk);
+				if (pendingEdit) {
+					segments.push(pendingEdit);
+				}
+			} else {
+				segments.push(activity);
+			}
 		} else if (mk.isStreaming && mk.rawJson) {
 			segments.push(activity);
 			const streamingEdit = buildStreamingFileEditSegment(mk);
@@ -870,9 +885,6 @@ function extractToolSegments(content: string, t: TFunction): { segments: Assista
 			if (pendingEdit) {
 				segments.push(pendingEdit);
 			}
-		} else {
-			segments.push(activity);
-		}
 		} else {
 			segments.push(activity);
 		}
