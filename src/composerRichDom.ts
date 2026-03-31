@@ -367,6 +367,18 @@ export function readSegmentsFromRoot(root: HTMLElement): ComposerSegment[] {
 	return mergeAdjacentTextSeg(out);
 }
 
+export function placeCaretAtEndOfRichRoot(root: HTMLElement): void {
+	const sel = window.getSelection();
+	if (!sel) {
+		return;
+	}
+	const r = document.createRange();
+	r.selectNodeContents(root);
+	r.collapse(false);
+	sel.removeAllRanges();
+	sel.addRange(r);
+}
+
 export function writeSegmentsToRoot(
 	root: HTMLElement,
 	segments: import('./composerSegments').ComposerSegment[],

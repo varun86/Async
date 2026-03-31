@@ -1,7 +1,13 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
-import { segmentsToWireText, type ComposerSegment } from './composerSegments';
+import {
+	isSlashCommandDomPendingUpgrade,
+	segmentsContentKey,
+	segmentsToWireText,
+	type ComposerSegment,
+} from './composerSegments';
 import {
 	type FileChipDomHandlers,
+	placeCaretAtEndOfRichRoot,
 	readSegmentsFromRoot,
 	writeSegmentsToRoot,
 } from './composerRichDom';
@@ -75,10 +81,26 @@ export function ComposerRichInput({
 			lastEmittedRef.current = '';
 			return;
 		}
-		if (focusedRef.current) {
+		const domSegs = readSegmentsFromRoot(el);
+		const propKey = segmentsContentKey(segments);
+		const domKey = segmentsContentKey(domSegs);
+		if (propKey === domKey) {
+			lastEmittedRef.current = wire;
 			return;
 		}
-		if (wire === lastEmittedRef.current) {
+		const domWire = segmentsToWireText(domSegs);
+		if (focusedRef.current) {
+			// 菜单回车时往往只打了「/」或半段命令：props 已扩展为完整命令/chip，DOM 仍是前缀，须允许写入
+			const allowSyncWhileFocused =
+				domWire === wire ||
+				isSlashCommandDomPendingUpgrade(segments, domSegs) ||
+				(wire.length > domWire.length && wire.startsWith(domWire));
+			if (!allowSyncWhileFocused) {
+				return;
+			}
+			writeSegmentsToRoot(el, segments, domHandlers);
+			lastEmittedRef.current = wire;
+			placeCaretAtEndOfRichRoot(el);
 			return;
 		}
 		writeSegmentsToRoot(el, segments, domHandlers);

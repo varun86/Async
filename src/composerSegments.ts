@@ -31,6 +31,42 @@ function mergeAdjacentText(segments: ComposerSegment[]): ComposerSegment[] {
 	return out;
 }
 
+const SEG_CONTENT_KEY_SEP = '\u241e';
+
+/** 对比 props 与 DOM 读回是否同一内容（忽略 segment id）；纯文本 `/create-skill` 与 command chip 的 key 不同 */
+export function segmentsContentKey(segments: ComposerSegment[]): string {
+	const norm = mergeAdjacentText(segments);
+	return norm
+		.map((s) => {
+			if (s.kind === 'text') {
+				return `t:${s.text}`;
+			}
+			if (s.kind === 'file') {
+				return `f:${s.path}`;
+			}
+			return `c:${s.command}`;
+		})
+		.join(SEG_CONTENT_KEY_SEP);
+}
+
+/** props 已是 /create-skill chip，DOM 仍为纯文本 `/create-skill…`（含无空格紧贴后缀） */
+export function isSlashCommandDomPendingUpgrade(
+	segments: ComposerSegment[],
+	domSegs: ComposerSegment[]
+): boolean {
+	const norm = mergeAdjacentText(segments);
+	const p0 = norm[0];
+	const d0 = domSegs[0];
+	if (p0?.kind !== 'command' || p0.command !== CREATE_SKILL_SLUG) {
+		return false;
+	}
+	if (d0?.kind !== 'text') {
+		return false;
+	}
+	const tx = d0.text;
+	return tx === CREATE_SKILL_WIRE || tx.startsWith(`${CREATE_SKILL_WIRE}`);
+}
+
 /**
  * 文件引用与紧随其后的正文之间插入 ZWNJ，避免 `@path` 与后续字符被拼成一段后，
  * `wirePlainToSegments` 用最长前缀匹配时把正文吃进路径（例如 `@foo.tshello`）。
