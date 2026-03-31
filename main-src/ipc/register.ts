@@ -63,6 +63,17 @@ import {
 } from '../agent/mistakeLimitGate.js';
 import { createToolApprovalBeforeExecute, resolveToolApproval } from '../agent/toolApprovalGate.js';
 import { prepareUserTurnForChat } from '../llm/agentMessagePrep.js';
+import {
+	buildSkillCreatorSystemAppend,
+	formatSkillCreatorUserBubble,
+	type SkillCreatorScope,
+} from '../skillCreatorPrompt.js';
+import {
+	mergeAgentWithProjectSlice,
+	readWorkspaceAgentProjectSlice,
+	writeWorkspaceAgentProjectSlice,
+	type WorkspaceAgentProjectSlice,
+} from '../workspaceAgentStore.js';
 import { summarizeThreadForSidebar, isTimestampToday } from '../threadListSummary.js';
 import { registerTerminalPtyIpc } from '../terminalPty.js';
 import { TsLspSession } from '../lsp/tsLspSession.js';
@@ -509,6 +520,23 @@ export function registerIpc(): void {
 		return next;
 	});
 
+	ipcMain.handle('workspaceAgent:get', () => {
+		const root = getWorkspaceRoot();
+		if (!root) {
+			return { ok: true as const, slice: { rules: [], skills: [], subagents: [] } satisfies WorkspaceAgentProjectSlice };
+		}
+		return { ok: true as const, slice: readWorkspaceAgentProjectSlice(root) };
+	});
+
+	ipcMain.handle('workspaceAgent:set', (_e, slice: WorkspaceAgentProjectSlice) => {
+		const root = getWorkspaceRoot();
+		if (!root) {
+			return { ok: false as const, error: 'no-workspace' as const };
+		}
+		writeWorkspaceAgentProjectSlice(root, slice);
+		return { ok: true as const };
+	});
+
 	ipcMain.handle('workspace:indexing:stats', () => {
 		const w = getWorkspaceFileIndexLiveStats();
 		const sym = getWorkspaceSymbolIndexStats();
@@ -646,7 +674,16 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'chat:send',
-		async (event, payload: { threadId: string; text: string; mode?: string; modelId?: string }) => {
+		async (
+			event,
+			payload: {
+				threadId: string;
+				text: string;
+				mode?: string;
+				modelId?: string;
+				skillCreator?: { userNote: string; scope: SkillCreatorScope };
+			}
+		) => {
 			const { threadId, text } = payload;
 			const mode = parseComposerMode(payload.mode);
 			const modelSelection = typeof payload.modelId === 'string' ? payload.modelId : 'auto';
@@ -665,7 +702,63 @@ export function registerIpc(): void {
 					workspaceFiles = [];
 				}
 			}
-			const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(text, settings.agent, root, workspaceFiles);
+			const projectAgent = readWorkspaceAgentProjectSlice(root);
+			const agentForTurn = mergeAgentWithProjectSlice(settings.agent, projectAgent);
+
+			const skillIn = payload.skillCreator;
+			if (skillIn && typeof skillIn.userNote === 'string') {
+				const scope: SkillCreatorScope = skillIn.scope === 'project' ? 'project' : 'user';
+				if (scope === 'project' && !root) {
+					return { ok: false as const, error: 'no-workspace' as const };
+				}
+				const prepared = prepareUserTurnForChat(skillIn.userNote, agentForTurn, root, workspaceFiles);
+				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
+				const visible = formatSkillCreatorUserBubble(scope, lang, skillIn.userNote);
+				const skillBlock = buildSkillCreatorSystemAppend(scope, lang, root);
+				let finalSystemAppend = prepared.agentSystemAppend
+					? `${prepared.agentSystemAppend}\n\n---\n\n${skillBlock}`
+					: skillBlock;
+				if (mode === 'plan' && workspaceFiles.length > 0) {
+					const tree = buildWorkspaceTreeSummary(workspaceFiles);
+					if (tree) {
+						finalSystemAppend = finalSystemAppend
+							? `${finalSystemAppend}\n\n---\n${tree}`
+							: tree;
+					}
+				}
+				if (modeExpandsWorkspaceFileContext(mode) && prepared.userText.trim().length > 8) {
+					const recentPaths = Object.keys(getThread(threadId)?.fileStates ?? {});
+					const enrichedQuery = buildEnrichedQuery(
+						prepared.userText,
+						getThread(threadId)?.messages ?? []
+					);
+					const sem = buildSemanticContextBlock(
+						enrichedQuery,
+						6,
+						recentPaths,
+						prepared.atPaths.length > 0 ? prepared.atPaths : undefined
+					);
+					if (sem) {
+						finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${sem}` : sem;
+					}
+				}
+				if (modeExpandsWorkspaceFileContext(mode) && root && settings.indexing?.gitContextEnabled !== false) {
+					const gitBlock = await getGitContextBlock(root);
+					if (gitBlock) {
+						finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${gitBlock}` : gitBlock;
+					}
+				}
+				const t = appendMessage(threadId, { role: 'user', content: visible });
+				runChatStream(win, threadId, t.messages, mode, modelSelection, finalSystemAppend);
+				return { ok: true as const };
+			}
+
+			const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(
+				text,
+				agentForTurn,
+				root,
+				workspaceFiles
+			);
 
 			let finalSystemAppend = agentSystemAppend;
 			if (mode === 'plan' && workspaceFiles.length > 0) {
@@ -677,24 +770,24 @@ export function registerIpc(): void {
 				}
 			}
 
-		if (modeExpandsWorkspaceFileContext(mode) && userText.trim().length > 8) {
-			const recentPaths = Object.keys(getThread(threadId)?.fileStates ?? {});
-			const enrichedQuery = buildEnrichedQuery(userText, getThread(threadId)?.messages ?? []);
-			const sem = buildSemanticContextBlock(enrichedQuery, 6, recentPaths, atPaths.length > 0 ? atPaths : undefined);
-			if (sem) {
-				finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${sem}` : sem;
+			if (modeExpandsWorkspaceFileContext(mode) && userText.trim().length > 8) {
+				const recentPaths = Object.keys(getThread(threadId)?.fileStates ?? {});
+				const enrichedQuery = buildEnrichedQuery(userText, getThread(threadId)?.messages ?? []);
+				const sem = buildSemanticContextBlock(enrichedQuery, 6, recentPaths, atPaths.length > 0 ? atPaths : undefined);
+				if (sem) {
+					finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${sem}` : sem;
+				}
 			}
-		}
 
-		if (modeExpandsWorkspaceFileContext(mode) && root && getSettings().indexing?.gitContextEnabled !== false) {
-			const gitBlock = await getGitContextBlock(root);
-			if (gitBlock) {
-				finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${gitBlock}` : gitBlock;
+			if (modeExpandsWorkspaceFileContext(mode) && root && settings.indexing?.gitContextEnabled !== false) {
+				const gitBlock = await getGitContextBlock(root);
+				if (gitBlock) {
+					finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${gitBlock}` : gitBlock;
+				}
 			}
-		}
 
-		const t = appendMessage(threadId, { role: 'user', content: userText });
-		runChatStream(win, threadId, t.messages, mode, modelSelection, finalSystemAppend);
+			const t = appendMessage(threadId, { role: 'user', content: userText });
+			runChatStream(win, threadId, t.messages, mode, modelSelection, finalSystemAppend);
 
 			return { ok: true as const };
 		}
@@ -731,7 +824,9 @@ export function registerIpc(): void {
 						workspaceFiles = [];
 					}
 				}
-				const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(trimmed, settings.agent, root, workspaceFiles);
+				const projectAgent = readWorkspaceAgentProjectSlice(root);
+				const agentForTurn = mergeAgentWithProjectSlice(settings.agent, projectAgent);
+				const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(trimmed, agentForTurn, root, workspaceFiles);
 
 				let finalSystemAppend = agentSystemAppend;
 				if (mode === 'plan' && workspaceFiles.length > 0) {

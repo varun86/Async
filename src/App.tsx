@@ -48,8 +48,10 @@ import {
 import { ComposerPlusMenu, ComposerModeIcon, composerModeLabel, type ComposerMode } from './ComposerPlusMenu';
 import { ComposerThoughtBlock } from './ComposerThoughtBlock';
 import { ComposerAtMenu } from './ComposerAtMenu';
+import { ComposerSlashMenu } from './ComposerSlashMenu';
 import { ComposerRichInput } from './ComposerRichInput';
 import { PlanQuestionDialog } from './PlanQuestionDialog';
+import { SkillScopeDialog } from './SkillScopeDialog';
 import { ToolApprovalInlineCard } from './ToolApprovalCard';
 import { AgentMistakeLimitDialog } from './AgentMistakeLimitDialog';
 import { PlanReviewPanel } from './PlanReviewPanel';
@@ -63,15 +65,27 @@ import {
 	type ParsedPlan,
 } from './planParser';
 import {
+	CREATE_SKILL_SLUG,
+	isCreateSkillComposerTurn,
+	newSegmentId,
 	segmentsToWireText,
 	segmentsTrimmedEmpty,
 	userMessageToSegments,
 	type ComposerSegment,
 } from './composerSegments';
-import { useComposerAtMention } from './useComposerAtMention';
+import { getAtMentionRange } from './composerAtMention';
+import { textBeforeCaretForAt } from './composerRichDom';
+import { useComposerAtMention, type AtComposerSlot } from './useComposerAtMention';
+import { useComposerSlashCommand } from './useComposerSlashCommand';
 import { UserMessageRich } from './UserMessageRich';
 import { BrandLogo } from './BrandLogo';
-import { defaultAgentCustomization, type AgentCustomization } from './agentSettingsTypes';
+import {
+	defaultAgentCustomization,
+	type AgentCustomization,
+	type AgentRule,
+	type AgentSkill,
+	type AgentSubagent,
+} from './agentSettingsTypes';
 import { normalizeIndexingSettings, type IndexingSettingsState } from './indexingSettingsTypes';
 import { defaultEditorSettings, editorSettingsToMonacoOptions, type EditorSettings } from './EditorSettingsPanel';
 import type { McpServerConfig, McpServerStatus } from './mcpTypes';
@@ -81,6 +95,18 @@ import { QuickOpenPalette, quickOpenPrimaryShortcutLabel, saveShortcutLabel } fr
 import { registerTsLspMonacoOnce } from './tsLspMonaco';
 import { monacoWorkspaceRootRef } from './tsLspWorkspaceRef';
 import { workspaceRelativeFileUrl } from './workspaceUri';
+
+type ProjectAgentSliceState = {
+	rules: AgentRule[];
+	skills: AgentSkill[];
+	subagents: AgentSubagent[];
+};
+
+const EMPTY_PROJECT_AGENT: ProjectAgentSliceState = { rules: [], skills: [], subagents: [] };
+
+function tagProjectOrigin<T extends { origin?: 'user' | 'project' }>(items: T[] | undefined): T[] {
+	return (items ?? []).map((x) => ({ ...x, origin: 'project' as const }));
+}
 
 type LayoutMode = 'agent' | 'editor';
 import { useI18n, translateChatError, normalizeLocale, type AppLocale, type TFunction } from './i18n';
@@ -639,6 +665,11 @@ export default function App() {
 	fileChangesDismissedRef.current = fileChangesDismissed;
 	/** Plan 模式 — 结构化问题弹窗 */
 	const [planQuestion, setPlanQuestion] = useState<PlanQuestion | null>(null);
+	/** /create-skill 发送前：选择 Skill 适用范围 */
+	const [skillScopePending, setSkillScopePending] = useState<{
+		tailSegments: ComposerSegment[];
+		targetThreadId: string;
+	} | null>(null);
 	/** Plan 模式 — 解析出的计划文档 */
 	const [parsedPlan, setParsedPlan] = useState<ParsedPlan | null>(null);
 	/** Plan 文件保存路径 */
@@ -685,6 +716,66 @@ export default function App() {
 	const [modelEntries, setModelEntries] = useState<UserModelEntry[]>([]);
 	const [enabledModelIds, setEnabledModelIds] = useState<string[]>([]);
 	const [agentCustomization, setAgentCustomization] = useState<AgentCustomization>(() => defaultAgentCustomization());
+	/** 当前仓库 `.async/agent.json`（与全局 settings 分离） */
+	const [projectAgentSlice, setProjectAgentSlice] = useState<ProjectAgentSliceState>(EMPTY_PROJECT_AGENT);
+
+	const mergedAgentCustomization = useMemo((): AgentCustomization => {
+		return {
+			...agentCustomization,
+			rules: [...(agentCustomization.rules ?? []), ...projectAgentSlice.rules],
+			skills: [...(agentCustomization.skills ?? []), ...projectAgentSlice.skills],
+			subagents: [...(agentCustomization.subagents ?? []), ...projectAgentSlice.subagents],
+		};
+	}, [agentCustomization, projectAgentSlice]);
+
+	const onChangeMergedAgentCustomization = useCallback(
+		(next: AgentCustomization) => {
+			const ur = next.rules?.filter((r) => (r.origin ?? 'user') !== 'project') ?? [];
+			const pr = next.rules?.filter((r) => r.origin === 'project') ?? [];
+			const us = next.skills?.filter((s) => (s.origin ?? 'user') !== 'project') ?? [];
+			const ps = next.skills?.filter((s) => s.origin === 'project') ?? [];
+			const ua = next.subagents?.filter((s) => (s.origin ?? 'user') !== 'project') ?? [];
+			const pa = next.subagents?.filter((s) => s.origin === 'project') ?? [];
+			setAgentCustomization({
+				...next,
+				rules: ur,
+				skills: us,
+				subagents: ua,
+				commands: next.commands ?? [],
+			});
+			const proj: ProjectAgentSliceState = { rules: pr, skills: ps, subagents: pa };
+			setProjectAgentSlice(proj);
+			if (shell && workspace) {
+				void shell.invoke('workspaceAgent:set', proj);
+			}
+		},
+		[shell, workspace]
+	);
+
+	useEffect(() => {
+		if (!shell || !workspace) {
+			setProjectAgentSlice(EMPTY_PROJECT_AGENT);
+			return;
+		}
+		let cancelled = false;
+		void (async () => {
+			const r = (await shell.invoke('workspaceAgent:get')) as {
+				ok?: boolean;
+				slice?: { rules?: AgentRule[]; skills?: AgentSkill[]; subagents?: AgentSubagent[] };
+			};
+			if (cancelled) return;
+			const sl = r?.slice;
+			setProjectAgentSlice({
+				rules: tagProjectOrigin(sl?.rules),
+				skills: tagProjectOrigin(sl?.skills),
+				subagents: tagProjectOrigin(sl?.subagents),
+			});
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [shell, workspace]);
+
 	const [editorSettings, setEditorSettings] = useState<EditorSettings>(() => defaultEditorSettings());
 	const [indexingSettings, setIndexingSettings] = useState<IndexingSettingsState>(() => normalizeIndexingSettings());
 	const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
@@ -969,6 +1060,66 @@ export default function App() {
 			return next;
 		});
 	}, []);
+
+	const executeSkillCreatorSend = useCallback(
+		async (scope: 'user' | 'project', pending: { tailSegments: ComposerSegment[]; targetThreadId: string }) => {
+			if (!shell) {
+				return;
+			}
+			const { tailSegments, targetThreadId } = pending;
+			const tailWire = segmentsToWireText(tailSegments).trim();
+			const head =
+				scope === 'project' ? t('skillCreator.bubbleHeadProject') : t('skillCreator.bubbleHeadAll');
+			const visible = tailWire ? `${head}\n${tailWire}` : head;
+
+			if (targetThreadId !== currentId) {
+				await shell.invoke('threads:select', targetThreadId);
+				setCurrentId(targetThreadId);
+				await loadMessages(targetThreadId);
+			}
+			clearAgentReviewForThread(targetThreadId);
+			setComposerSegments([]);
+			setStreaming('');
+			setStreamingThinking('');
+			clearStreamingToolPreviewNow();
+			setWorkedSeconds(null);
+			firstTokenAtRef.current = null;
+			streamStartedAtRef.current = Date.now();
+			streamThreadRef.current = targetThreadId;
+			setAwaitingReply(true);
+			setMessages((m) => [...m, { role: 'user', content: visible }]);
+
+			const r = (await shell.invoke('chat:send', {
+				threadId: targetThreadId,
+				text: '',
+				mode: composerMode,
+				modelId: defaultModel,
+				skillCreator: { userNote: tailWire, scope },
+			})) as { ok?: boolean; error?: string };
+
+			if (!r?.ok) {
+				setAwaitingReply(false);
+				streamStartedAtRef.current = null;
+				void loadMessages(targetThreadId);
+				if (r?.error === 'no-workspace') {
+					window.alert(t('skillCreator.sendErrorNoWs'));
+				}
+				return;
+			}
+			void refreshThreads();
+		},
+		[
+			shell,
+			currentId,
+			composerMode,
+			defaultModel,
+			t,
+			loadMessages,
+			clearAgentReviewForThread,
+			clearStreamingToolPreviewNow,
+			refreshThreads,
+		]
+	);
 
 	const onDiscardAgentReview = useCallback(() => {
 		if (currentId) {
@@ -1618,7 +1769,7 @@ export default function App() {
 		}
 	}, [editingThreadId]);
 
-	const onSend = async (textOverride?: string) => {
+	const onSend = async (textOverride?: string, opts?: { threadId?: string }) => {
 		const resendIdx = resendFromUserIndex;
 		const segments = resendIdx !== null ? inlineResendSegments : composerSegments;
 		const fromSegments = segmentsToWireText(segments).trim();
@@ -1626,10 +1777,35 @@ export default function App() {
 			resendIdx === null && typeof textOverride === 'string' && textOverride.trim().length > 0
 				? textOverride.trim()
 				: fromSegments;
-		if (!shell || !currentId || !text) {
+		const targetThreadId = opts?.threadId ?? currentId;
+		if (!shell || !targetThreadId) {
 			return;
 		}
-		clearAgentReviewForThread(currentId);
+
+		if (
+			resendIdx === null &&
+			(typeof textOverride !== 'string' || textOverride.trim().length === 0) &&
+			isCreateSkillComposerTurn(composerSegments)
+		) {
+			if (segmentsTrimmedEmpty(composerSegments)) {
+				return;
+			}
+			setSkillScopePending({
+				targetThreadId,
+				tailSegments: composerSegments.slice(1),
+			});
+			return;
+		}
+
+		if (!text) {
+			return;
+		}
+		if (opts?.threadId && opts.threadId !== currentId) {
+			await shell.invoke('threads:select', opts.threadId);
+			setCurrentId(opts.threadId);
+			await loadMessages(opts.threadId);
+		}
+		clearAgentReviewForThread(targetThreadId);
 		if (resendIdx !== null) {
 			setInlineResendSegments([]);
 			setMessages((m) => [...m.slice(0, resendIdx), { role: 'user', content: text }]);
@@ -1643,13 +1819,13 @@ export default function App() {
 		setWorkedSeconds(null);
 		firstTokenAtRef.current = null;
 		streamStartedAtRef.current = Date.now();
-		streamThreadRef.current = currentId;
+		streamThreadRef.current = targetThreadId;
 		setAwaitingReply(true);
 
 		if (resendIdx !== null) {
 			setResendFromUserIndex(null);
 			const r = (await shell.invoke('chat:editResend', {
-				threadId: currentId,
+				threadId: targetThreadId,
 				visibleIndex: resendIdx,
 				text,
 				mode: composerMode,
@@ -1660,7 +1836,7 @@ export default function App() {
 				streamStartedAtRef.current = null;
 				setResendFromUserIndex(resendIdx);
 				setInlineResendSegments(userMessageToSegments(text, workspaceFileList));
-				void loadMessages(currentId);
+				void loadMessages(targetThreadId);
 			} else {
 				void refreshThreads();
 			}
@@ -1668,7 +1844,7 @@ export default function App() {
 		}
 
 		await shell.invoke('chat:send', {
-			threadId: currentId,
+			threadId: targetThreadId,
 			text,
 			mode: composerMode,
 			modelId: defaultModel,
@@ -1820,6 +1996,40 @@ export default function App() {
 			setSettingsPageOpen(false);
 		}
 	}, [persistSettings]);
+
+	const startSkillCreatorFlow = useCallback(async () => {
+		await closeSettingsPage();
+		if (!shell) {
+			return;
+		}
+		setLayoutMode('agent');
+		const r = (await shell.invoke('threads:create')) as { id: string };
+		const threadId = r.id;
+		await refreshThreads();
+		await shell.invoke('threads:select', threadId);
+		setCurrentId(threadId);
+		setWorkedSeconds(null);
+		setLastTurnUsage(null);
+		setAwaitingReply(false);
+		setStreaming('');
+		setStreamingThinking('');
+		clearStreamingToolPreviewNow();
+		streamStartedAtRef.current = null;
+		firstTokenAtRef.current = null;
+		await loadMessages(threadId);
+		setComposerSegments([
+			{ id: newSegmentId(), kind: 'command', command: CREATE_SKILL_SLUG },
+			{ id: newSegmentId(), kind: 'text', text: '' },
+		]);
+		setInlineResendSegments([]);
+		setResendFromUserIndex(null);
+		const title = t('agentSettings.skillCreatorThreadTitle');
+		const rr = (await shell.invoke('threads:rename', threadId, title)) as { ok?: boolean };
+		if (rr?.ok) {
+			await refreshThreads();
+		}
+		composerRichHeroRef.current?.focus();
+	}, [closeSettingsPage, shell, t, refreshThreads, loadMessages, clearStreamingToolPreviewNow]);
 
 	const onToggleModelEnabled = useCallback(
 		async (id: string, enabled: boolean) => {
@@ -2455,6 +2665,25 @@ export default function App() {
 			onFileChipPreview: (relPath: string) => void onExplorerOpenFile(relPath),
 		}
 	);
+	const slashCommand = useComposerSlashCommand(
+		(slot) => (slot === 'inline' && resendIdxRef.current !== null ? setInlineResendSegments : setComposerSegments),
+		composerRichSurface,
+		{ t }
+	);
+	const syncComposerOverlays = useCallback(
+		(root: HTMLElement, slot: AtComposerSlot) => {
+			const slice = textBeforeCaretForAt(root);
+			const caret = slice.length;
+			if (getAtMentionRange(slice, caret)) {
+				slashCommand.closeSlashMenu();
+				atMention.syncAtFromRich(root, slot);
+				return;
+			}
+			atMention.syncAtFromRich(root, slot);
+			slashCommand.syncSlashFromRich(root, slot);
+		},
+		[atMention, slashCommand]
+	);
 	closeAtMenuLatestRef.current = atMention.closeAtMenu;
 
 	useEffect(() => {
@@ -2469,17 +2698,18 @@ export default function App() {
 			if (inlineResendRootRef.current?.contains(t)) {
 				return;
 			}
-			if (t instanceof Element && t.closest('.ref-at-menu, .ref-model-dd, .ref-plus-menu')) {
+			if (t instanceof Element && t.closest('.ref-at-menu, .ref-slash-menu, .ref-model-dd, .ref-plus-menu')) {
 				return;
 			}
 			closeAtMenuLatestRef.current();
+			slashCommand.closeSlashMenu();
 			composerRichInlineRef.current?.blur();
 			setResendFromUserIndex(null);
 			setInlineResendSegments([]);
 		};
 		document.addEventListener('pointerdown', onDocPointerDown, true);
 		return () => document.removeEventListener('pointerdown', onDocPointerDown, true);
-	}, [resendFromUserIndex]);
+	}, [resendFromUserIndex, slashCommand]);
 
 	const editorFileBasename = useMemo(() => {
 		const p = filePath.trim();
@@ -3076,6 +3306,9 @@ export default function App() {
 		);
 
 		const onComposerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+			if (slashCommand.handleSlashKeyDown(e)) {
+				return;
+			}
 			if (atMention.handleAtKeyDown(e)) {
 				return;
 			}
@@ -3104,8 +3337,8 @@ export default function App() {
 				className={inputClass}
 				placeholder={inputPlaceholder}
 				onFilePreview={(rel) => void onExplorerOpenFile(rel)}
-				onRichInput={(root) => atMention.syncAtFromRich(root, slotKey)}
-				onRichSelect={(root) => atMention.syncAtFromRich(root, slotKey)}
+				onRichInput={(root) => syncComposerOverlays(root, slotKey)}
+				onRichSelect={(root) => syncComposerOverlays(root, slotKey)}
 				onKeyDown={onComposerKeyDown}
 			/>
 		);
@@ -3307,9 +3540,12 @@ export default function App() {
 							className="ref-capsule-input"
 							placeholder={composerPlaceholder}
 							onFilePreview={(rel) => void onExplorerOpenFile(rel)}
-							onRichInput={(root) => atMention.syncAtFromRich(root, 'hero')}
-							onRichSelect={(root) => atMention.syncAtFromRich(root, 'hero')}
+							onRichInput={(root) => syncComposerOverlays(root, 'hero')}
+							onRichSelect={(root) => syncComposerOverlays(root, 'hero')}
 							onKeyDown={(e) => {
+								if (slashCommand.handleSlashKeyDown(e)) {
+									return;
+								}
 								if (atMention.handleAtKeyDown(e)) {
 									return;
 								}
@@ -3447,6 +3683,20 @@ export default function App() {
 					/>
 				) : null}
 
+				{skillScopePending ? (
+					<SkillScopeDialog
+						workspaceOpen={!!workspace}
+						onCancel={() => setSkillScopePending(null)}
+						onConfirm={(scope) => {
+							const p = skillScopePending;
+							setSkillScopePending(null);
+							if (p) {
+								void executeSkillCreatorSend(scope, p);
+							}
+						}}
+					/>
+				) : null}
+
 				<AgentMistakeLimitDialog
 					open={mistakeLimitRequest !== null}
 					payload={mistakeLimitRequest}
@@ -3524,9 +3774,12 @@ export default function App() {
 									className="ref-capsule-input"
 									placeholder={composerPlaceholder}
 									onFilePreview={(rel) => void onExplorerOpenFile(rel)}
-									onRichInput={(root) => atMention.syncAtFromRich(root, 'hero')}
-									onRichSelect={(root) => atMention.syncAtFromRich(root, 'hero')}
+									onRichInput={(root) => syncComposerOverlays(root, 'hero')}
+									onRichSelect={(root) => syncComposerOverlays(root, 'hero')}
 									onKeyDown={(e) => {
+										if (slashCommand.handleSlashKeyDown(e)) {
+											return;
+										}
 										if (atMention.handleAtKeyDown(e)) {
 											return;
 										}
@@ -4823,8 +5076,8 @@ export default function App() {
 							onChangeModelEntries={onChangeModelEntries}
 							onToggleEnabled={(id, on) => void onToggleModelEnabled(id, on)}
 							onPickDefaultModel={(id) => void onPickDefaultModel(id)}
-							agentCustomization={agentCustomization}
-							onChangeAgentCustomization={setAgentCustomization}
+							agentCustomization={mergedAgentCustomization}
+							onChangeAgentCustomization={onChangeMergedAgentCustomization}
 							editorSettings={editorSettings}
 							onChangeEditorSettings={setEditorSettings}
 							onPersistLanguage={(loc) => void onPersistLanguage(loc)}
@@ -4840,6 +5093,7 @@ export default function App() {
 							onRestartMcpServer={onRestartMcpServer}
 							shell={shell ?? null}
 							workspaceOpen={!!workspace}
+							onOpenSkillCreator={startSkillCreatorFlow}
 						/>
 					</div>
 				</div>
@@ -4879,6 +5133,17 @@ export default function App() {
 				onHighlight={atMention.setAtMenuHighlight}
 				onSelect={atMention.applyAtSelection}
 				onClose={atMention.closeAtMenu}
+			/>
+
+			<ComposerSlashMenu
+				open={slashCommand.slashMenuOpen}
+				query={slashCommand.slashQuery}
+				items={slashCommand.slashMenuItems}
+				highlightIndex={slashCommand.slashMenuHighlight}
+				caretRect={slashCommand.slashCaretRect}
+				onHighlight={slashCommand.setSlashMenuHighlight}
+				onSelect={slashCommand.applySlashSelection}
+				onClose={slashCommand.closeSlashMenu}
 			/>
 
 			{saveToastVisible ? <div key={saveToastKey} className="ref-save-toast">Saved ✓</div> : null}

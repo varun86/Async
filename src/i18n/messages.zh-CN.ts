@@ -449,6 +449,43 @@ export const messagesZhCN: Record<string, string> = {
 	'thought.totalBlock': '\n\n整段输出耗时约 {{sec}} 秒。',
 
 	// agent settings (Rules / Skills panel)
+	'agentSettings.leadCursor':
+		'Rules、Skills 与 Subagents 可按存储范围放在「所有项目」（用户设置）或「当前项目」（写入工作区 `.async/agent.json`）。顶部筛选可查看全部、仅全局或仅本项目。「对话创建」会新开对话并在输入框放入蓝色 `/create-skill` 标签，你只需在标签后写需求；亦可「手动添加」直接填表。',
+	'agentSettings.scopeFilterAll': '全部',
+	'agentSettings.scopeFilterUser': '所有项目',
+	'agentSettings.scopeFilterProject': '当前项目',
+	'agentSettings.scopeFilterAria': '按存储范围筛选规则与技能',
+	'agentSettings.originUser': '全局',
+	'agentSettings.originProject': '本项目',
+	'agentSettings.itemScopeStorage': '存储范围',
+	'agentSettings.needWorkspaceForProject': '请先打开工作区文件夹，才能添加或编辑「当前项目」条目。',
+	'agentSettings.rulesEmptyFiltered': '当前筛选下没有规则。切换到「全部」或更换范围。',
+	'agentSettings.skillsEmptyFiltered': '当前筛选下没有 Skill。切换到「全部」或更换范围。',
+	'agentSettings.subEmptyFiltered': '当前筛选下没有 Subagent。切换到「全部」或更换范围。',
+	'agentSettings.newSkillChat': '对话创建',
+	'agentSettings.newSkillManual': '手动添加',
+	'agentSettings.skillCreatorThreadTitle': 'Skill 创建向导',
+	'agentSettings.skillCreatorHelp':
+		'输入框会显示蓝色 `/create-skill` 标签，其后填写说明；发送前会询问适用范围，内置系统提示会引导模型按 SKILL.md 规范输出（无需自行粘贴长提示词）。',
+
+	'skillCreator.scopeAria': '选择 Skill 适用范围',
+	'skillCreator.scopeTitle': '此 Skill 保存在哪？',
+	'skillCreator.scopeDesc': '选择后，助手会按范围给出落盘路径与设置建议。',
+	'skillCreator.scopeAllProjects': '所有项目（用户级）',
+	'skillCreator.scopeAllHint': '写入全局 Skills，各仓库可用（Async 设置中的用户 Skills）。',
+	'skillCreator.scopeThisProject': '当前项目',
+	'skillCreator.scopeProjectHint': '仅本工作区：`.async/skills/<slug>/SKILL.md` 等。',
+	'skillCreator.scopeProjectNeedWs': '请先打开工作区文件夹',
+	'skillCreator.bubbleHeadAll': '[创建 Skill · 所有项目]',
+	'skillCreator.bubbleHeadProject': '[创建 Skill · 本项目]',
+	'skillCreator.sendErrorNoWs': '未打开工作区，无法使用「当前项目」范围。',
+
+	'slashCmd.menuAria': '斜杠命令',
+	'slashCmd.noMatch': '无匹配命令',
+	'slashCmd.createSkillDesc': '引导创建 Agent Skill（SKILL.md），支持范围选择与内置系统说明。',
+	'slashCmd.createRuleDesc': '在设置中编写规则，约束模型行为与代码风格（占位：后续可接规则向导）。',
+	'slashCmd.createSubagentDesc': '添加子代理角色说明，用于复杂任务分工（占位：后续可接向导）。',
+
 	'agentSettings.lead1':
 		'为 Agent 提供领域知识与固定流程：规则注入系统提示；Manual 规则在消息中写 @rule:规则名 或 @rule:uuid；Skills 用 ',
 	'agentSettings.lead2':
@@ -476,9 +513,9 @@ export const messagesZhCN: Record<string, string> = {
 	'agentSettings.ruleBodyPh': '写给模型的约束与风格…',
 	'agentSettings.rulesEmpty': '暂无规则。点击「新建」添加。',
 	'agentSettings.skillsTitle': 'Skills',
-	'agentSettings.skillsInfo': '输入框 ./slug 触发',
+	'agentSettings.skillsInfo': '可用「对话创建」生成；输入框 ./slug 也可触发',
 	'agentSettings.skillsDesc':
-		'在对话输入以 ./slug 开头（后接说明），会把该 Skill 的说明注入本轮系统提示，用户消息去掉前缀后发给模型。磁盘技能路径：`.claude/skills/<slug>/` 或 `.async/skills/<slug>/` 下的 `SKILL.md`（需开启「导入第三方配置」）。',
+		'Skill 用于专项任务说明。推荐用「对话创建」新开向导会话；也可「手动添加」或在与助手的对话中以 ./slug 开头（前缀会去掉后再发送）。开启「导入第三方配置」时，会合并工作区内 `.claude/skills/<slug>/` 与 `.async/skills/<slug>/` 下的 `SKILL.md`（同名时 `.async` 优先）。',
 	'agentSettings.skillNameAria': 'Skill 名称',
 	'agentSettings.slugLabel': 'slug（不含 ./）',
 	'agentSettings.skillIntro': '简介',

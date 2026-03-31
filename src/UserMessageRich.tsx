@@ -1,4 +1,4 @@
-import type { ComposerSegment } from './composerSegments';
+import { CREATE_SKILL_SLUG, CREATE_SKILL_WIRE, type ComposerSegment } from './composerSegments';
 import { FileTypeIcon } from './fileTypeIcons';
 
 function fileBasename(path: string): string {
@@ -22,6 +22,14 @@ export function UserMessageRich({ segments, onFileClick }: Props) {
 				s.kind === 'text' ? (
 					<span key={s.id} className="ref-msg-user-rich-text">
 						{s.text}
+					</span>
+				) : s.kind === 'command' && s.command === CREATE_SKILL_SLUG ? (
+					<span
+						key={s.id}
+						className="ref-inline-slash-chip ref-inline-slash-chip--readonly"
+						aria-hidden
+					>
+						<span className="ref-inline-slash-chip-label">{CREATE_SKILL_WIRE}</span>
 					</span>
 				) : (
 					<span

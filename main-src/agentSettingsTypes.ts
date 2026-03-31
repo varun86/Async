@@ -1,5 +1,7 @@
 /** 与渲染端 `src/agentSettingsTypes.ts` 保持字段一致 */
 
+export type AgentItemOrigin = 'user' | 'project';
+
 export type AgentRuleScope = 'always' | 'glob' | 'manual';
 
 export type AgentRule = {
@@ -9,6 +11,8 @@ export type AgentRule = {
 	scope: AgentRuleScope;
 	globPattern?: string;
 	enabled: boolean;
+	/** user = 全局设置；project = 当前仓库 `.async/agent.json` */
+	origin?: AgentItemOrigin;
 };
 
 export type AgentSkill = {
@@ -18,6 +22,7 @@ export type AgentSkill = {
 	slug: string;
 	content: string;
 	enabled?: boolean;
+	origin?: AgentItemOrigin;
 };
 
 export type AgentSubagent = {
@@ -26,6 +31,7 @@ export type AgentSubagent = {
 	description: string;
 	instructions: string;
 	enabled?: boolean;
+	origin?: AgentItemOrigin;
 };
 
 export type AgentCommand = {

@@ -1,8 +1,15 @@
 import { parseLeadingWorkspaceRefs } from './composerAtMention';
 
+/** 与 Cursor 类似的斜杠命令 chip，当前仅支持创建 Skill */
+export type SlashCommandId = 'create-skill';
+
+export const CREATE_SKILL_SLUG: SlashCommandId = 'create-skill';
+export const CREATE_SKILL_WIRE = '/create-skill';
+
 export type ComposerSegment =
 	| { id: string; kind: 'text'; text: string }
-	| { id: string; kind: 'file'; path: string };
+	| { id: string; kind: 'file'; path: string }
+	| { id: string; kind: 'command'; command: SlashCommandId };
 
 export function newSegmentId(): string {
 	return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -37,6 +44,14 @@ export function segmentsToWireText(segments: ComposerSegment[]): string {
 		const s = segments[k]!;
 		if (s.kind === 'text') {
 			out += s.text;
+		} else if (s.kind === 'command' && s.command === CREATE_SKILL_SLUG) {
+			out += CREATE_SKILL_WIRE;
+			const next = segments[k + 1];
+			if (next?.kind === 'text' && next.text.length > 0 && !/^\s/u.test(next.text)) {
+				out += FILE_REF_BOUNDARY;
+			} else if (next?.kind === 'file') {
+				out += FILE_REF_BOUNDARY;
+			}
 		} else {
 			out += `@${s.path}`;
 			const next = segments[k + 1];
@@ -50,6 +65,20 @@ export function segmentsToWireText(segments: ComposerSegment[]): string {
 
 /** 将用户消息解析为 segments（兼容旧版「首行全是 @路径」格式） */
 export function userMessageToSegments(content: string, knownPaths: string[]): ComposerSegment[] {
+	const trimmedStart = content.replace(/^\uFEFF/, '');
+	if (trimmedStart.startsWith(CREATE_SKILL_WIRE)) {
+		let rest = trimmedStart.slice(CREATE_SKILL_WIRE.length);
+		if (rest.startsWith(FILE_REF_BOUNDARY)) {
+			rest = rest.slice(1);
+		} else {
+			rest = rest.replace(/^\s+/, '');
+		}
+		const tailSegs = rest.length > 0 ? wirePlainToSegments(rest, knownPaths) : [];
+		return mergeAdjacentText([
+			{ id: newSegmentId(), kind: 'command', command: CREATE_SKILL_SLUG },
+			...tailSegs,
+		]);
+	}
 	const legacy = parseLeadingWorkspaceRefs(content);
 	if (legacy.refs.length > 0) {
 		const parts: ComposerSegment[] = legacy.refs.map((p) => ({
@@ -103,5 +132,18 @@ export function wirePlainToSegments(text: string, knownPaths: string[]): Compose
 }
 
 export function segmentsTrimmedEmpty(segments: ComposerSegment[]): boolean {
+	if (segments.length === 0) {
+		return true;
+	}
+	const first = segments[0];
+	if (first?.kind === 'command' && first.command === CREATE_SKILL_SLUG) {
+		const tail = segments.slice(1);
+		return segmentsToWireText(tail).trim().length === 0;
+	}
 	return segmentsToWireText(segments).trim().length === 0;
+}
+
+export function isCreateSkillComposerTurn(segments: ComposerSegment[]): boolean {
+	const s = segments[0];
+	return s?.kind === 'command' && s.command === CREATE_SKILL_SLUG;
 }

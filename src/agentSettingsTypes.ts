@@ -1,5 +1,7 @@
 /** 与主进程 `settingsStore` 中 `agent` 字段结构一致（供设置 UI 使用） */
 
+export type AgentItemOrigin = 'user' | 'project';
+
 export type AgentRuleScope = 'always' | 'glob' | 'manual';
 
 export type AgentRule = {
@@ -10,16 +12,19 @@ export type AgentRule = {
 	/** scope === 'glob' 时：相对路径 glob（如 ** / *.ts，无空格） */
 	globPattern?: string;
 	enabled: boolean;
+	/** user = 所有项目；project = 当前仓库 */
+	origin?: AgentItemOrigin;
 };
 
 export type AgentSkill = {
 	id: string;
 	name: string;
 	description: string;
-	/** 对话里以「点斜杠 + slug」触发，slug 不含前缀 */
+	/** 技能标识；也可配合仓库 `.async/skills/<slug>/SKILL.md` */
 	slug: string;
 	content: string;
 	enabled?: boolean;
+	origin?: AgentItemOrigin;
 };
 
 export type AgentSubagent = {
@@ -28,6 +33,7 @@ export type AgentSubagent = {
 	description: string;
 	instructions: string;
 	enabled?: boolean;
+	origin?: AgentItemOrigin;
 };
 
 export type AgentCommand = {

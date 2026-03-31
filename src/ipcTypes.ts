@@ -63,6 +63,12 @@ export type ChatStreamPayload =
 			threshold: number;
 	  };
 
+/** Skill 创建向导：用户输入在 `userNote`；主进程注入内置系统提示并写入简短可见气泡 */
+export type ChatSkillCreatorPayload = {
+	userNote: string;
+	scope: 'user' | 'project';
+};
+
 /** `chat:send` IPC 载荷（与主进程一致） */
 export type ChatSendPayload = {
 	threadId: string;
@@ -70,6 +76,8 @@ export type ChatSendPayload = {
 	mode?: ComposerMode;
 	/** `auto` 或用户模型条目 id */
 	modelId?: string;
+	/** 与 `text` 二选一：走 Skill Creator 分支时传此项，`text` 可为空字符串 */
+	skillCreator?: ChatSkillCreatorPayload;
 };
 
 /** `plan:save` IPC 载荷 */

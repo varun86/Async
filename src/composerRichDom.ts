@@ -1,9 +1,10 @@
 /** 富文本输入：内联文件 chip + @ 提及的 DOM 工具（contenteditable） */
 
 import { fileTypeIconHtmlForRelPath } from './fileTypeIcons';
-import { newSegmentId, type ComposerSegment } from './composerSegments';
+import { CREATE_SKILL_SLUG, CREATE_SKILL_WIRE, newSegmentId, type ComposerSegment } from './composerSegments';
 
 const CHIP_CLASS = 'ref-inline-file-chip';
+export const SLASH_CMD_CLASS = 'ref-inline-slash-chip';
 
 function fileBasename(path: string): string {
 	const n = path.replace(/\\/g, '/');
@@ -22,7 +23,7 @@ export function domPlainPrefixForAt(root: HTMLElement): string {
 			return;
 		}
 		const e = n as HTMLElement;
-		if (e.classList.contains(CHIP_CLASS)) {
+		if (e.classList.contains(CHIP_CLASS) || e.classList.contains(SLASH_CMD_CLASS)) {
 			return;
 		}
 		if (e.tagName === 'BR') {
@@ -133,7 +134,7 @@ export function findAtMentionDomRange(root: HTMLElement): Range | null {
 			return false;
 		}
 		const e = n as HTMLElement;
-		if (e.classList.contains(CHIP_CLASS)) {
+		if (e.classList.contains(CHIP_CLASS) || e.classList.contains(SLASH_CMD_CLASS)) {
 			return false;
 		}
 		if (e.tagName === 'BR') {
@@ -228,6 +229,43 @@ export function createFileChipElement(relPath: string, segId: string, h: FileChi
 	return span;
 }
 
+export function createSlashCommandChipElement(segId: string, h: FileChipDomHandlers): HTMLElement {
+	const span = document.createElement('span');
+	span.contentEditable = 'false';
+	span.dataset.segId = segId;
+	span.dataset.voidSlash = CREATE_SKILL_SLUG;
+	span.className = SLASH_CMD_CLASS;
+	span.setAttribute('role', 'presentation');
+
+	const label = document.createElement('span');
+	label.className = 'ref-inline-slash-chip-label';
+	label.textContent = CREATE_SKILL_WIRE;
+
+	const btn = document.createElement('button');
+	btn.type = 'button';
+	btn.className = 'ref-inline-slash-chip-x';
+	btn.setAttribute('aria-label', 'Remove slash command');
+	btn.textContent = '×';
+	btn.addEventListener('mousedown', (e) => e.preventDefault());
+	btn.addEventListener('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		span.remove();
+		h.onStructureChange();
+	});
+
+	span.addEventListener('mousedown', (e) => {
+		if ((e.target as HTMLElement).closest('.ref-inline-slash-chip-x')) {
+			return;
+		}
+		e.preventDefault();
+	});
+
+	span.appendChild(label);
+	span.appendChild(btn);
+	return span;
+}
+
 export function applyFileChipFromAtMention(root: HTMLElement, relPath: string, segId: string, h: FileChipDomHandlers): void {
 	const r = findAtMentionDomRange(root);
 	if (!r) {
@@ -299,6 +337,15 @@ export function readSegmentsFromRoot(root: HTMLElement): ComposerSegment[] {
 			return;
 		}
 		const e = n as HTMLElement;
+		if (e.classList.contains(SLASH_CMD_CLASS) && e.dataset.voidSlash === CREATE_SKILL_SLUG) {
+			flush();
+			out.push({
+				id: e.dataset.segId || newSegmentId(),
+				kind: 'command',
+				command: CREATE_SKILL_SLUG,
+			});
+			return;
+		}
 		if (e.classList.contains(CHIP_CLASS) && e.dataset.voidRel) {
 			flush();
 			out.push({
@@ -335,7 +382,9 @@ export function writeSegmentsToRoot(
 				}
 				root.appendChild(document.createTextNode(parts[i]!));
 			}
-		} else {
+		} else if (s.kind === 'command' && s.command === CREATE_SKILL_SLUG) {
+			root.appendChild(createSlashCommandChipElement(s.id, h));
+		} else if (s.kind === 'file') {
 			root.appendChild(createFileChipElement(s.path, s.id, h));
 		}
 	}

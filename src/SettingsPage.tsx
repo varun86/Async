@@ -165,6 +165,8 @@ type Props = {
 	onPickDefaultModel: (id: string) => void;
 	agentCustomization: AgentCustomization;
 	onChangeAgentCustomization: (v: AgentCustomization) => void;
+	/** 打开 Skill Creator：新建对话并发送引导消息 */
+	onOpenSkillCreator?: () => void | Promise<void>;
 	editorSettings: EditorSettings;
 	onChangeEditorSettings: (v: EditorSettings) => void;
 	/** 语言切换后立即持久化（与关闭设置页时的全量保存配合） */
@@ -207,6 +209,7 @@ export function SettingsPage({
 	onPickDefaultModel,
 	agentCustomization,
 	onChangeAgentCustomization,
+	onOpenSkillCreator,
 	editorSettings,
 	onChangeEditorSettings,
 	onPersistLanguage,
@@ -686,7 +689,12 @@ export function SettingsPage({
 						) : null}
 
 						{nav === 'rules' ? (
-							<SettingsAgentPanel value={agentCustomization} onChange={onChangeAgentCustomization} />
+							<SettingsAgentPanel
+								value={agentCustomization}
+								onChange={onChangeAgentCustomization}
+								workspaceOpen={workspaceOpen}
+								onOpenSkillCreator={onOpenSkillCreator}
+							/>
 						) : null}
 
 						{nav === 'editor' ? (

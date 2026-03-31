@@ -439,6 +439,43 @@ export const messagesEn: Record<string, string> = {
 		'{{modeHint}}\n\nFirst-token wait ~{{sec}}s. Richer reasoning may appear here if the gateway supports it.{{total}}',
 	'thought.totalBlock': '\n\nTotal generation time ~{{sec}}s.',
 
+	'agentSettings.leadCursor':
+		'Rules, Skills, and Subagents can live in “all projects” (user settings) or “this project” (`.async/agent.json`). Use the scope filter to view all, global-only, or project-only. “Create in chat” opens a thread with a blue `/create-skill` chip—type after it; or use “Add manually”.',
+	'agentSettings.scopeFilterAll': 'All',
+	'agentSettings.scopeFilterUser': 'All projects',
+	'agentSettings.scopeFilterProject': 'This project',
+	'agentSettings.scopeFilterAria': 'Filter by storage scope',
+	'agentSettings.originUser': 'Global',
+	'agentSettings.originProject': 'Project',
+	'agentSettings.itemScopeStorage': 'Stored in',
+	'agentSettings.needWorkspaceForProject': 'Open a workspace folder first to add or edit “this project” items.',
+	'agentSettings.rulesEmptyFiltered': 'No rules match this filter. Switch to “All” or another scope.',
+	'agentSettings.skillsEmptyFiltered': 'No skills match this filter. Switch to “All” or another scope.',
+	'agentSettings.subEmptyFiltered': 'No subagents match this filter. Switch to “All” or another scope.',
+	'agentSettings.newSkillChat': 'Create in chat',
+	'agentSettings.newSkillManual': 'Add manually',
+	'agentSettings.skillCreatorThreadTitle': 'Skill creator',
+	'agentSettings.skillCreatorHelp':
+		'The composer shows a blue `/create-skill` chip; type your request after it. Before send you pick scope, and the app injects a built-in system brief for SKILL.md-style output—no long prompt paste needed.',
+
+	'skillCreator.scopeAria': 'Choose skill storage scope',
+	'skillCreator.scopeTitle': 'Where should this skill live?',
+	'skillCreator.scopeDesc': 'The assistant will tailor paths and settings advice to this choice.',
+	'skillCreator.scopeAllProjects': 'All projects (user-level)',
+	'skillCreator.scopeAllHint': 'Global skills in Async settings, available in every workspace.',
+	'skillCreator.scopeThisProject': 'This project',
+	'skillCreator.scopeProjectHint': 'Workspace only, e.g. `.async/skills/<slug>/SKILL.md`.',
+	'skillCreator.scopeProjectNeedWs': 'Open a workspace folder first',
+	'skillCreator.bubbleHeadAll': '[Create Skill · All projects]',
+	'skillCreator.bubbleHeadProject': '[Create Skill · This project]',
+	'skillCreator.sendErrorNoWs': 'No workspace is open; you cannot use “This project” scope.',
+
+	'slashCmd.menuAria': 'Slash commands',
+	'slashCmd.noMatch': 'No matching commands',
+	'slashCmd.createSkillDesc': 'Create an Agent Skill (SKILL.md) with scope picker and built-in system brief.',
+	'slashCmd.createRuleDesc': 'Author rules for model behavior (placeholder; wizard later).',
+	'slashCmd.createSubagentDesc': 'Add a subagent role (placeholder; wizard later).',
+
 	'agentSettings.lead1':
 		'Give the agent domain knowledge: rules in the system prompt; Manual rules via @rule:name or @rule:uuid in the message; Skills use ',
 	'agentSettings.lead2':
@@ -466,9 +503,9 @@ export const messagesEn: Record<string, string> = {
 	'agentSettings.ruleBodyPh': 'Constraints and style for the model…',
 	'agentSettings.rulesEmpty': 'No rules yet. Click New to add one.',
 	'agentSettings.skillsTitle': 'Skills',
-	'agentSettings.skillsInfo': 'Trigger with ./slug in input',
+	'agentSettings.skillsInfo': 'Use “Create in chat”; ./slug in the input also works',
 	'agentSettings.skillsDesc':
-		'Messages starting with ./slug inject that skill; the prefix is stripped. On-disk: `.claude/skills/<slug>/` or `.async/skills/<slug>/SKILL.md` when third-party import is on.',
+		'Skills describe specialized tasks. Prefer “Create in chat” for a guided session, “Add manually” for the form, or start a message with ./slug (prefix is stripped). With third-party import on, disk skills load from `.claude/skills/<slug>/` and `.async/skills/<slug>/SKILL.md` (`.async` wins on slug clash).',
 	'agentSettings.skillNameAria': 'Skill name',
 	'agentSettings.slugLabel': 'slug (without ./)',
 	'agentSettings.skillIntro': 'Summary',

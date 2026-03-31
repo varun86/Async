@@ -3,6 +3,7 @@ import { useI18n } from './i18n';
 import type {
 	AgentCommand,
 	AgentCustomization,
+	AgentItemOrigin,
 	AgentRule,
 	AgentRuleScope,
 	AgentSkill,
@@ -83,18 +84,40 @@ function useDragReorder<T extends { id: string }>(items: T[], onReorder: (next: 
 	return { dragId, onDragStart, onDragOver, onDrop, onDragEnd };
 }
 
+type AgentLibraryFilter = 'all' | 'user' | 'project';
+
 type Props = {
 	value: AgentCustomization;
 	onChange: (next: AgentCustomization) => void;
+	workspaceOpen: boolean;
+	/** 新建 Skill：打开对话并由模型引导编写 SKILL.md */
+	onOpenSkillCreator?: () => void | Promise<void>;
 };
 
-export function SettingsAgentPanel({ value, onChange }: Props) {
+function itemMatchesLibraryFilter(item: { origin?: AgentItemOrigin }, filter: AgentLibraryFilter): boolean {
+	const o = item.origin ?? 'user';
+	if (filter === 'all') return true;
+	if (filter === 'user') return o === 'user';
+	return o === 'project';
+}
+
+export function SettingsAgentPanel({ value, onChange, workspaceOpen, onOpenSkillCreator }: Props) {
 	const { t } = useI18n();
 	const v = { ...defaultAgentCustomization(), ...value };
 	const rules = v.rules ?? [];
 	const skills = v.skills ?? [];
 	const subagents = v.subagents ?? [];
 	const commands = v.commands ?? [];
+
+	const [libraryFilter, setLibraryFilter] = useState<AgentLibraryFilter>('all');
+	const reorderEnabled = libraryFilter === 'all';
+
+	const originForNewItem = (): AgentItemOrigin => {
+		if (libraryFilter === 'project') return 'project';
+		return 'user';
+	};
+
+	const canAddProjectItem = libraryFilter !== 'project' || workspaceOpen;
 
 	/** 折叠状态 */
 	const [collapsedRules, setCollapsedRules] = useState<Set<string>>(new Set());
@@ -121,12 +144,14 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 
 	// ─── Rules ────────────────────────────────────────────
 	const addRule = () => {
+		if (!canAddProjectItem) return;
 		const r: AgentRule = {
 			id: newId(),
 			name: '新规则',
 			content: '',
 			scope: 'always',
 			enabled: true,
+			origin: originForNewItem(),
 		};
 		patch({ rules: [...rules, r] });
 	};
@@ -139,7 +164,8 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 	const rulesDrag = useDragReorder(rules, (next) => patch({ rules: next }));
 
 	// ─── Skills ───────────────────────────────────────────
-	const addSkill = () => {
+	const addSkillInline = () => {
+		if (!canAddProjectItem) return;
 		const s: AgentSkill = {
 			id: newId(),
 			name: '新 Skill',
@@ -147,6 +173,7 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 			description: '',
 			content: '',
 			enabled: true,
+			origin: originForNewItem(),
 		};
 		patch({ skills: [...skills, s] });
 	};
@@ -160,12 +187,14 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 
 	// ─── Subagents ────────────────────────────────────────
 	const addSub = () => {
+		if (!canAddProjectItem) return;
 		const s: AgentSubagent = {
 			id: newId(),
 			name: '新 Subagent',
 			description: '',
 			instructions: '',
 			enabled: true,
+			origin: originForNewItem(),
 		};
 		patch({ subagents: [...subagents, s] });
 	};
@@ -195,15 +224,36 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 	};
 	const cmdsDrag = useDragReorder(commands, (next) => patch({ commands: next }));
 
+	const renderOriginBadge = (origin?: AgentItemOrigin) => {
+		const o = origin ?? 'user';
+		return (
+			<span
+				className={`ref-settings-agent-origin-badge ${o === 'project' ? 'ref-settings-agent-origin-badge--project' : 'ref-settings-agent-origin-badge--user'}`}
+			>
+				{o === 'project' ? t('agentSettings.originProject') : t('agentSettings.originUser')}
+			</span>
+		);
+	};
+
 	return (
 		<div className="ref-settings-panel ref-settings-panel--agent">
-			<p className="ref-settings-lead ref-settings-agent-lead">
-				{t('agentSettings.lead1')}
-				<code className="ref-settings-code">./slug</code>
-				{t('agentSettings.lead2')}
-				<code className="ref-settings-code">/slash</code>
-				{t('agentSettings.lead3')}
-			</p>
+			<p className="ref-settings-lead ref-settings-agent-lead">{t('agentSettings.leadCursor')}</p>
+			<div className="ref-settings-agent-scope-pills" role="tablist" aria-label={t('agentSettings.scopeFilterAria')}>
+				{(['all', 'user', 'project'] as const).map((key) => (
+					<button
+						key={key}
+						type="button"
+						role="tab"
+						aria-selected={libraryFilter === key}
+						className={`ref-settings-agent-scope-pill ${libraryFilter === key ? 'is-active' : ''}`}
+						onClick={() => setLibraryFilter(key)}
+					>
+						{key === 'all' ? t('agentSettings.scopeFilterAll') : null}
+						{key === 'user' ? t('agentSettings.scopeFilterUser') : null}
+						{key === 'project' ? t('agentSettings.scopeFilterProject') : null}
+					</button>
+				))}
+			</div>
 
 			<div className="ref-settings-agent-card">
 				<div className="ref-settings-agent-card-row">
@@ -319,19 +369,25 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 							<IconInfo />
 						</span>
 					</h2>
-					<button type="button" className="ref-settings-agent-new-btn" onClick={addRule}>
+					<button
+						type="button"
+						className="ref-settings-agent-new-btn"
+						onClick={addRule}
+						disabled={!canAddProjectItem}
+						title={!canAddProjectItem ? t('agentSettings.needWorkspaceForProject') : undefined}
+					>
 						+ {t('agentSettings.new')}
 					</button>
 				</div>
 				<p className="ref-settings-agent-section-desc">{t('agentSettings.rulesDesc')}</p>
 				<ul className="ref-settings-agent-list">
-					{rules.map((r) => {
+					{rules.filter((r) => itemMatchesLibraryFilter(r, libraryFilter)).map((r) => {
 						const collapsed = collapsedRules.has(r.id);
 						return (
 							<li
 								key={r.id}
 								className={`ref-settings-agent-item ${rulesDrag.dragId === r.id ? 'is-dragging' : ''}`}
-								draggable
+								draggable={reorderEnabled}
 								onDragStart={(e) => rulesDrag.onDragStart(e, r.id)}
 								onDragOver={rulesDrag.onDragOver}
 								onDrop={(e) => rulesDrag.onDrop(e, r.id)}
@@ -351,6 +407,7 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 									>
 										<span className="ref-settings-toggle-knob" />
 									</button>
+									{renderOriginBadge(r.origin)}
 									<input
 										className="ref-settings-agent-item-name"
 										value={r.name}
@@ -371,6 +428,18 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 								</div>
 								{!collapsed && (
 									<>
+										<label className="ref-settings-field ref-settings-field--compact">
+											<span>{t('agentSettings.itemScopeStorage')}</span>
+											<select
+												value={r.origin ?? 'user'}
+												onChange={(e) => updateRule(r.id, { origin: e.target.value as AgentItemOrigin })}
+											>
+												<option value="user">{t('agentSettings.originUser')}</option>
+												<option value="project" disabled={!workspaceOpen}>
+													{t('agentSettings.originProject')}
+												</option>
+											</select>
+										</label>
 										<label className="ref-settings-field ref-settings-field--compact">
 											<span>{t('agentSettings.scope')}</span>
 											<select
@@ -407,31 +476,52 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 						);
 					})}
 				</ul>
-				{rules.length === 0 ? <p className="ref-settings-agent-empty">{t('agentSettings.rulesEmpty')}</p> : null}
+				{rules.length === 0 ? (
+					<p className="ref-settings-agent-empty">{t('agentSettings.rulesEmpty')}</p>
+				) : rules.filter((r) => itemMatchesLibraryFilter(r, libraryFilter)).length === 0 ? (
+					<p className="ref-settings-agent-empty">{t('agentSettings.rulesEmptyFiltered')}</p>
+				) : null}
 			</section>
 
 			{/* ─── Skills ─── */}
 			<section className="ref-settings-agent-section" aria-labelledby="agent-skills-h">
-				<div className="ref-settings-agent-section-head">
+				<div className="ref-settings-agent-section-head ref-settings-agent-section-head--wrap">
 					<h2 id="agent-skills-h" className="ref-settings-agent-section-title">
 						{t('agentSettings.skillsTitle')}
 						<span className="ref-settings-agent-info-ico" title={t('agentSettings.skillsInfo')}>
 							<IconInfo />
 						</span>
 					</h2>
-					<button type="button" className="ref-settings-agent-new-btn" onClick={addSkill}>
-						+ {t('agentSettings.new')}
-					</button>
+					<div className="ref-settings-agent-head-actions">
+						{onOpenSkillCreator ? (
+							<button
+								type="button"
+								className="ref-settings-agent-new-btn ref-settings-agent-new-btn--emph"
+								onClick={() => void onOpenSkillCreator()}
+							>
+								{t('agentSettings.newSkillChat')}
+							</button>
+						) : null}
+						<button
+							type="button"
+							className="ref-settings-agent-new-btn"
+							onClick={addSkillInline}
+							disabled={!canAddProjectItem}
+							title={!canAddProjectItem ? t('agentSettings.needWorkspaceForProject') : undefined}
+						>
+							+ {t('agentSettings.newSkillManual')}
+						</button>
+					</div>
 				</div>
 				<p className="ref-settings-agent-section-desc">{t('agentSettings.skillsDesc')}</p>
 				<ul className="ref-settings-agent-list">
-					{skills.map((s) => {
+					{skills.filter((s) => itemMatchesLibraryFilter(s, libraryFilter)).map((s) => {
 						const collapsed = collapsedSkills.has(s.id);
 						return (
 							<li
 								key={s.id}
 								className={`ref-settings-agent-item ${skillsDrag.dragId === s.id ? 'is-dragging' : ''}`}
-								draggable
+								draggable={reorderEnabled}
 								onDragStart={(e) => skillsDrag.onDragStart(e, s.id)}
 								onDragOver={skillsDrag.onDragOver}
 								onDrop={(e) => skillsDrag.onDrop(e, s.id)}
@@ -451,6 +541,7 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 									>
 										<span className="ref-settings-toggle-knob" />
 									</button>
+									{renderOriginBadge(s.origin)}
 									<input
 										className="ref-settings-agent-item-name"
 										value={s.name}
@@ -471,6 +562,18 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 								</div>
 								{!collapsed && (
 									<>
+										<label className="ref-settings-field ref-settings-field--compact">
+											<span>{t('agentSettings.itemScopeStorage')}</span>
+											<select
+												value={s.origin ?? 'user'}
+												onChange={(e) => updateSkill(s.id, { origin: e.target.value as AgentItemOrigin })}
+											>
+												<option value="user">{t('agentSettings.originUser')}</option>
+												<option value="project" disabled={!workspaceOpen}>
+													{t('agentSettings.originProject')}
+												</option>
+											</select>
+										</label>
 										<label className="ref-settings-field ref-settings-field--compact">
 											<span>{t('agentSettings.slugLabel')}</span>
 											<input
@@ -505,9 +608,40 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 				{skills.length === 0 ? (
 					<div className="ref-settings-agent-empty-block">
 						<p>{t('agentSettings.skillsEmpty')}</p>
-						<button type="button" className="ref-settings-agent-empty-cta" onClick={addSkill}>
-							{t('agentSettings.newSkill')}
-						</button>
+						<div className="ref-settings-agent-empty-actions">
+							{onOpenSkillCreator ? (
+								<button type="button" className="ref-settings-agent-empty-cta" onClick={() => void onOpenSkillCreator()}>
+									{t('agentSettings.newSkillChat')}
+								</button>
+							) : null}
+							<button
+								type="button"
+								className="ref-settings-agent-empty-cta ref-settings-agent-empty-cta--secondary"
+								onClick={addSkillInline}
+								disabled={!canAddProjectItem}
+							>
+								{t('agentSettings.newSkillManual')}
+							</button>
+						</div>
+					</div>
+				) : skills.filter((s) => itemMatchesLibraryFilter(s, libraryFilter)).length === 0 ? (
+					<div className="ref-settings-agent-empty-block">
+						<p>{t('agentSettings.skillsEmptyFiltered')}</p>
+						<div className="ref-settings-agent-empty-actions">
+							{onOpenSkillCreator ? (
+								<button type="button" className="ref-settings-agent-empty-cta" onClick={() => void onOpenSkillCreator()}>
+									{t('agentSettings.newSkillChat')}
+								</button>
+							) : null}
+							<button
+								type="button"
+								className="ref-settings-agent-empty-cta ref-settings-agent-empty-cta--secondary"
+								onClick={addSkillInline}
+								disabled={!canAddProjectItem}
+							>
+								{t('agentSettings.newSkillManual')}
+							</button>
+						</div>
 					</div>
 				) : null}
 			</section>
@@ -521,19 +655,25 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 							<IconInfo />
 						</span>
 					</h2>
-					<button type="button" className="ref-settings-agent-new-btn" onClick={addSub}>
+					<button
+						type="button"
+						className="ref-settings-agent-new-btn"
+						onClick={addSub}
+						disabled={!canAddProjectItem}
+						title={!canAddProjectItem ? t('agentSettings.needWorkspaceForProject') : undefined}
+					>
 						+ {t('agentSettings.new')}
 					</button>
 				</div>
 				<p className="ref-settings-agent-section-desc">{t('agentSettings.subagentsDesc')}</p>
 				<ul className="ref-settings-agent-list">
-					{subagents.map((s) => {
+					{subagents.filter((s) => itemMatchesLibraryFilter(s, libraryFilter)).map((s) => {
 						const collapsed = collapsedSubs.has(s.id);
 						return (
 							<li
 								key={s.id}
 								className={`ref-settings-agent-item ${subsDrag.dragId === s.id ? 'is-dragging' : ''}`}
-								draggable
+								draggable={reorderEnabled}
 								onDragStart={(e) => subsDrag.onDragStart(e, s.id)}
 								onDragOver={subsDrag.onDragOver}
 								onDrop={(e) => subsDrag.onDrop(e, s.id)}
@@ -553,6 +693,7 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 									>
 										<span className="ref-settings-toggle-knob" />
 									</button>
+									{renderOriginBadge(s.origin)}
 									<input
 										className="ref-settings-agent-item-name"
 										value={s.name}
@@ -573,6 +714,18 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 								</div>
 								{!collapsed && (
 									<>
+										<label className="ref-settings-field ref-settings-field--compact">
+											<span>{t('agentSettings.itemScopeStorage')}</span>
+											<select
+												value={s.origin ?? 'user'}
+												onChange={(e) => updateSub(s.id, { origin: e.target.value as AgentItemOrigin })}
+											>
+												<option value="user">{t('agentSettings.originUser')}</option>
+												<option value="project" disabled={!workspaceOpen}>
+													{t('agentSettings.originProject')}
+												</option>
+											</select>
+										</label>
 										<label className="ref-settings-field ref-settings-field--compact">
 											<span>{t('agentSettings.subDesc')}</span>
 											<input
@@ -599,7 +752,14 @@ export function SettingsAgentPanel({ value, onChange }: Props) {
 				{subagents.length === 0 ? (
 					<div className="ref-settings-agent-empty-block">
 						<p>{t('agentSettings.subEmpty')}</p>
-						<button type="button" className="ref-settings-agent-empty-cta" onClick={addSub}>
+						<button type="button" className="ref-settings-agent-empty-cta" onClick={addSub} disabled={!canAddProjectItem}>
+							{t('agentSettings.newSub')}
+						</button>
+					</div>
+				) : subagents.filter((s) => itemMatchesLibraryFilter(s, libraryFilter)).length === 0 ? (
+					<div className="ref-settings-agent-empty-block">
+						<p>{t('agentSettings.subEmptyFiltered')}</p>
+						<button type="button" className="ref-settings-agent-empty-cta" onClick={addSub} disabled={!canAddProjectItem}>
 							{t('agentSettings.newSub')}
 						</button>
 					</div>
