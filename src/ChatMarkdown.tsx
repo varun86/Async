@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useDeferredValue, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AgentActivityGroup } from './AgentActivityGroup';
@@ -52,11 +52,16 @@ export function ChatMarkdown({
 	 * content 解析涉及全量 tool 协议扫描，开销较大；
 	 * streamingToolPreview 变化极频繁（每个 tool_input_delta 都触发），
 	 * 拆分后 preview 变化只需做轻量合并，避免阻塞 React 渲染导致流式卡片被跳过。
+	 *
+	 * 无流式 tool 预览时对正文使用 useDeferredValue，把重解析推迟到浏览器空闲，
+	 * 避免多工具结果同时落盘时连续重算阻塞交互。
 	 */
+	const deferredContent = useDeferredValue(content);
+	const parseInput = streamingToolPreview != null ? content : deferredContent;
 	const parsedSegments = useMemo(() => {
 		if (!agentUi) return [] as AssistantSegment[];
 		const t0 = performance.now();
-		const result = segmentAssistantContentUnified(content, { t, planUi });
+		const result = segmentAssistantContentUnified(parseInput, { t, planUi });
 		if (import.meta.env.DEV) {
 			const elapsed = performance.now() - t0;
 			if (elapsed > 8) {
@@ -67,7 +72,7 @@ export function ChatMarkdown({
 			}
 		}
 		return result;
-	}, [agentUi, content, t, planUi]);
+	}, [agentUi, parseInput, t, planUi]);
 
 	const renderSegments = useMemo(() => {
 		if (!agentUi) {

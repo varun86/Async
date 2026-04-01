@@ -540,6 +540,29 @@ function unescapeToolResultBody(body: string): string {
 	return body.split(TOOL_RESULT_CLOSE_ESC).join('</tool_result>');
 }
 
+/**
+ * 流式追加时，此前缀之后的正文尚未形成完整 tool 协议闭合，分段结果可能仍变化。
+ * 用于解析缓存等场景判断「稳定边界」（与 findAllToolResultBlocks / findAllToolCallMarkers 语义一致）。
+ */
+export function computeStableAgentToolProtocolPrefixLen(content: string): number {
+	const resultBlocks = findAllToolResultBlocks(content);
+	const lastRb = resultBlocks[resultBlocks.length - 1];
+	if (lastRb && lastRb.fullEnd === content.length) {
+		const fromOpen = content.slice(lastRb.index);
+		if (!fromOpen.includes('</tool_result>')) {
+			return lastRb.index;
+		}
+	}
+	const markers = findAllToolCallMarkers(content, resultBlocks);
+	for (let i = markers.length - 1; i >= 0; i--) {
+		const mk = markers[i]!;
+		if (mk.isStreaming) {
+			return mk.start;
+		}
+	}
+	return content.length;
+}
+
 function findAllToolResultBlocks(
 	content: string
 ): ToolResultBlock[] {

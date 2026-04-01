@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { segmentAssistantContent, segmentAssistantContentUnified } from './agentChatSegments';
+import {
+	computeStableAgentToolProtocolPrefixLen,
+	segmentAssistantContent,
+	segmentAssistantContentUnified,
+} from './agentChatSegments';
 import { defaultT } from './i18n';
 
 describe('segmentAssistantContent', () => {
@@ -74,5 +78,27 @@ describe('segmentAssistantContent', () => {
 		const segs = segmentAssistantContentUnified(content, { t: defaultT, planUi: true });
 		expect(JSON.stringify(segs)).not.toContain('QUESTIONS');
 		expect(segs.some((s) => s.type === 'activity')).toBe(true);
+	});
+});
+
+describe('computeStableAgentToolProtocolPrefixLen', () => {
+	it('returns full length when tool protocol is complete', () => {
+		const content = [
+			'<tool_call tool="read_file">{"path":"a.ts"}</tool_call>',
+			'<tool_result tool="read_file" success="true">  1|x</tool_result>',
+		].join('\n');
+		expect(computeStableAgentToolProtocolPrefixLen(content)).toBe(content.length);
+	});
+
+	it('excludes incomplete tool_result body from stable prefix', () => {
+		const open = '<tool_result tool="read_file" success="true">';
+		const content = `${open}partial body without close`;
+		expect(computeStableAgentToolProtocolPrefixLen(content)).toBe(content.indexOf(open));
+	});
+
+	it('excludes incomplete tool_call JSON from stable prefix', () => {
+		const content = '<tool_call tool="read_file">{"path":"x.ts"';
+		const start = content.indexOf('<tool_call');
+		expect(computeStableAgentToolProtocolPrefixLen(content)).toBe(start);
 	});
 });
