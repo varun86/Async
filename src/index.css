@@ -2205,10 +2205,16 @@ body {
 	margin: 0 0 10px;
 	max-height: 220px;
 	overflow: auto;
-	padding: 6px 8px;
-	border-radius: 6px;
-	border: 1px solid rgba(255, 255, 255, 0.04);
-	background: rgba(6, 8, 12, 0.28);
+	padding: 0 0 8px;
+	border-radius: 0;
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+
+.ref-thought-reasoning-wrap::-webkit-scrollbar {
+	display: none;
+	width: 0;
+	height: 0;
 }
 
 .ref-thought-reasoning-chunk + .ref-thought-reasoning-chunk {
@@ -3853,6 +3859,8 @@ body {
 	content: attr(data-placeholder);
 	color: var(--void-fg-3);
 	pointer-events: none;
+	font-size: 12px;
+	line-height: 1.5;
 }
 
 .ref-composer-rich-input:focus:empty:before {

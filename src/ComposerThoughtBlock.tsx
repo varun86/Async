@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { TurnTokenUsage } from './ipcTypes';
@@ -44,6 +44,40 @@ export function ComposerThoughtBlock({
 			setOpen(true);
 		}
 	}, [renderChunks]);
+
+	const reasoningScrollRef = useRef<HTMLDivElement>(null);
+
+	/** 思考区有 max-height + overflow；流式变长时默认滚到最底，避免停在顶部只看得到旧内容 */
+	useLayoutEffect(() => {
+		if (!open || renderChunks.length === 0) {
+			return;
+		}
+		const el = reasoningScrollRef.current;
+		if (!el) {
+			return;
+		}
+		let cancelled = false;
+		const pinBottom = () => {
+			if (cancelled || !reasoningScrollRef.current) {
+				return;
+			}
+			const wrap = reasoningScrollRef.current;
+			wrap.scrollTop = wrap.scrollHeight;
+		};
+		pinBottom();
+		let raf1 = 0;
+		let raf2 = 0;
+		raf1 = requestAnimationFrame(() => {
+			pinBottom();
+			raf2 = requestAnimationFrame(pinBottom);
+		});
+		return () => {
+			cancelled = true;
+			cancelAnimationFrame(raf1);
+			cancelAnimationFrame(raf2);
+		};
+	}, [open, renderChunks]);
+
 	const id = useId();
 	const headId = `${id}-head`;
 	const panelId = `${id}-panel`;
@@ -86,7 +120,7 @@ export function ComposerThoughtBlock({
 				<div className="ref-collapse-inner">
 					<div id={panelId} role="region" aria-labelledby={headId} className="ref-thought-panel">
 						{renderChunks.length > 0 ? (
-							<div className="ref-thought-reasoning-wrap">
+							<div ref={reasoningScrollRef} className="ref-thought-reasoning-wrap">
 								{renderChunks.map((chunk) => (
 									<div key={chunk.id} className="ref-thought-reasoning-chunk">
 										<div className="ref-md-root ref-thought-md-root">

@@ -4034,7 +4034,10 @@ export default function App() {
 					streamingToolPreview != null ||
 					(agentOrPlanStreaming && liveAssistantBlocks.blocks.length > 0);
 				const phase = assistantTurnHasOutput ? 'streaming' : 'thinking';
-				thoughtAfterBody = assistantTurnHasOutput;
+				// Agent/Plan 的思考走 ChatMarkdown 内联 liveThoughtMeta；Ask/Debug 用外层 ComposerThoughtBlock。
+				// 若此处在出字后把 thoughtAfterBody 设为 true，Ask 下整块「深度思考」会被挤到回复下方，体验差。
+				thoughtAfterBody =
+					assistantTurnHasOutput && composerMode !== 'ask' && composerMode !== 'debug';
 				const elapsed =
 					phase === 'thinking'
 						? Math.max(0, (Date.now() - stAt) / 1000)
