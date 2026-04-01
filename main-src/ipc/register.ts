@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { windowsCmdUtf8Prefix } from '../winUtf8.js';
 import { setWorkspaceRoot, getWorkspaceRoot, resolveWorkspacePath, isPathInsideRoot } from '../workspace.js';
 import {
 	ensureWorkspaceFileIndex,
@@ -1190,12 +1191,14 @@ export function registerIpc(): void {
 		try {
 			const isWin = process.platform === 'win32';
 			const shell = isWin ? process.env.ComSpec || 'cmd.exe' : '/bin/bash';
-			const args = isWin ? ['/d', '/s', '/c', trimmed] : ['-lc', trimmed];
+			const cmdLine = isWin ? windowsCmdUtf8Prefix(trimmed) : trimmed;
+			const args = isWin ? ['/d', '/s', '/c', cmdLine] : ['-lc', cmdLine];
 			const { stdout, stderr } = await execFileAsync(shell, args, {
 				cwd: root,
 				windowsHide: true,
 				maxBuffer: 5 * 1024 * 1024,
 				timeout: 120_000,
+				encoding: 'utf8',
 			});
 			return { ok: true as const, stdout: stdout || '', stderr: stderr || '' };
 		} catch (e: unknown) {

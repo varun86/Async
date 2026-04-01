@@ -329,6 +329,7 @@ export const messagesEn: Record<string, string> = {
 	'agent.revertFile': 'Revert this file',
 	'agent.edit.expand': 'Expand preview ({{lines}} lines)',
 	'agent.edit.collapse': 'Collapse preview',
+	'agent.edit.streamingPlaceholder': 'Streaming patch…',
 	'agent.working': 'Continuing to work on this change…',
 	'agent.toolPending': '{{name}}…',
 

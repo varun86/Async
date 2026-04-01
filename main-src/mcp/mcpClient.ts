@@ -29,6 +29,9 @@ function mergeStdioEnv(extra?: Record<string, string>): Record<string, string> {
 		if (v !== undefined) out[k] = v;
 	}
 	if (extra) Object.assign(out, extra);
+	if (process.platform === 'win32' && !out.PYTHONUTF8) {
+		out.PYTHONUTF8 = '1';
+	}
 	return out;
 }
 
@@ -188,7 +191,7 @@ export class McpClient extends EventEmitter<McpClientEvents> implements McpClien
 				const stderrStream = transport.stderr;
 				if (stderrStream && 'on' in stderrStream) {
 					(stderrStream as NodeJS.ReadableStream).on('data', (data: Buffer) => {
-						console.warn(`[MCP ${this.config.name} stderr]`, data.toString());
+						console.warn(`[MCP ${this.config.name} stderr]`, data.toString('utf8'));
 					});
 				}
 			} else if (this.config.transport === 'sse') {

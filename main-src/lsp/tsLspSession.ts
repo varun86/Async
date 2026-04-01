@@ -76,7 +76,7 @@ export class TsLspSession {
 		}
 
 		this.child.stderr?.on('data', (buf) => {
-			const s = buf.toString();
+			const s = buf.toString('utf8');
 			if (s.trim()) {
 				console.warn('[ts-lsp]', s.slice(0, 500));
 			}

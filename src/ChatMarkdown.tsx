@@ -1,8 +1,10 @@
+import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AgentActivityGroup } from './AgentActivityGroup';
 import { AgentCommandCard } from './AgentCommandCard';
 import { AgentDiffCard } from './AgentDiffCard';
+import { AgentStreamingFenceCard } from './AgentStreamingFenceCard';
 import { AgentEditCard } from './AgentEditCard';
 import { AgentResultCard } from './AgentResultCard';
 import {
@@ -42,6 +44,52 @@ export function ChatMarkdown({
 	showAgentWorking = false,
 }: Props) {
 	const { t } = useI18n();
+
+	/**
+	 * 将 content 解析与 streamingToolPreview 拆开：
+	 * content 解析涉及全量 tool 协议扫描，开销较大；
+	 * streamingToolPreview 变化极频繁（每个 tool_input_delta 都触发），
+	 * 拆分后 preview 变化只需做轻量合并，避免阻塞 React 渲染导致流式卡片被跳过。
+	 */
+	const parsedSegments = useMemo(() => {
+		if (!agentUi) return [] as AssistantSegment[];
+		const t0 = performance.now();
+		const result = segmentAssistantContentUnified(content, { t });
+		if (import.meta.env.DEV) {
+			const elapsed = performance.now() - t0;
+			if (elapsed > 8) {
+				// eslint-disable-next-line no-console
+				console.log(
+					`[ChatMarkdown] parsedSegments: ${elapsed.toFixed(1)}ms, contentLen=${content.length}, segs=${result.length}`
+				);
+			}
+		}
+		return result;
+	}, [agentUi, content, t]);
+
+	const renderSegments = useMemo(() => {
+		if (!agentUi) {
+			return [] as AssistantSegment[];
+		}
+		const filtered = dropParsedStreamingFileEditWhilePreview(
+			parsedSegments,
+			streamingToolPreview != null
+		);
+		const streamingSegments = buildStreamingToolSegments(streamingToolPreview, { t });
+		const segs: AssistantSegment[] = [...filtered, ...streamingSegments];
+		const hasPendingTail =
+			segs.some((s) => s.type === 'activity' && s.status === 'pending') ||
+			streamingToolPreview != null;
+		if (showAgentWorking && !hasPendingTail) {
+			segs.push({
+				type: 'activity',
+				text: t('agent.working'),
+				status: 'pending',
+			});
+		}
+		return segs;
+	}, [agentUi, parsedSegments, t, streamingToolPreview, showAgentWorking]);
+
 	if (!agentUi) {
 		return (
 			<div className="ref-md-root">
@@ -50,22 +98,6 @@ export function ChatMarkdown({
 		);
 	}
 
-	const parsedSegments = dropParsedStreamingFileEditWhilePreview(
-		segmentAssistantContentUnified(content, { t }),
-		streamingToolPreview != null
-	);
-	const streamingSegments = buildStreamingToolSegments(streamingToolPreview, { t });
-	const renderSegments: AssistantSegment[] = [...parsedSegments, ...streamingSegments];
-	const hasPendingTail =
-		renderSegments.some((s) => s.type === 'activity' && s.status === 'pending') ||
-		streamingToolPreview != null;
-	if (showAgentWorking && !hasPendingTail) {
-		renderSegments.push({
-			type: 'activity',
-			text: t('agent.working'),
-			status: 'pending',
-		});
-	}
 	if (renderSegments.length === 0) {
 		return <div className="ref-md-root ref-md-root--agent-chat" />;
 	}
@@ -94,6 +126,8 @@ export function ChatMarkdown({
 						);
 					case 'command':
 						return <AgentCommandCard key={i} lang={seg.lang} body={seg.body} onRun={onRunCommand ? () => onRunCommand(seg.body) : undefined} />;
+					case 'streaming_code':
+						return <AgentStreamingFenceCard key={i} lang={seg.lang} body={seg.body} />;
 					case 'file_edit':
 						return (
 							<AgentEditCard

@@ -1,5 +1,10 @@
 import { defaultT, type TFunction } from './i18n';
 import {
+	agentSegmentDebugEnabled,
+	agentSegmentDebugLog,
+	segmentTypeHistogram,
+} from './agentSegmentDebug';
+import {
 	isStructuredAssistantMessage,
 	parseAgentAssistantPayload,
 	structuredToLegacyAgentXml,
@@ -103,6 +108,8 @@ export type AssistantSegment =
 	| { type: 'markdown'; text: string }
 	| { type: 'diff'; diff: string }
 	| { type: 'command'; lang: string; body: string }
+	/** 围栏已开、闭合 ``` 未到达（流式），独立成段以便立即渲染代码卡片壳 */
+	| { type: 'streaming_code'; lang: string; body: string }
 	| ActivitySegment
 	| ActivityGroupSegment
 	| { type: 'file_changes'; files: FileChangeSummary[] }
@@ -158,6 +165,100 @@ function isShortCommandFence(lang: string, body: string): boolean {
 	if (!['bash', 'shell', 'sh', 'zsh', 'powershell', 'pwsh', 'cmd'].includes(L)) return false;
 	const lines = body.split('\n').filter((l) => l.trim().length > 0);
 	return lines.length <= 4 && body.length <= 400;
+}
+
+/**
+ * 在任意文本切片内解析 fenced code（含未闭合围栏）与活动段落。
+ * 该函数不解析 tool 协议，仅用于 tool 标记之外的纯文本区域。
+ */
+/** 防止畸形输入或逻辑错误导致 while 死循环；正常文档远低于此值 */
+const MAX_FENCE_SCAN_ITERATIONS = 16_000;
+
+function segmentTextWithFenceSupport(text: string): AssistantSegment[] {
+	const out: AssistantSegment[] = [];
+	let i = 0;
+	const n = text.length;
+	let scanIters = 0;
+
+	const pushText = (slice: string) => {
+		if (!slice) return;
+		out.push(...segmentParagraphsForActivity(slice));
+	};
+
+	while (i < n) {
+		if (++scanIters > MAX_FENCE_SCAN_ITERATIONS) {
+			// eslint-disable-next-line no-console
+			console.warn('[agentSegments] segmentTextWithFenceSupport: iteration cap hit, see ASYNC_DEBUG_AGENT_SEGMENTS', {
+				textLen: n,
+				cursor: i,
+				segmentsSoFar: out.length,
+			});
+			agentSegmentDebugLog('segmentTextWithFenceSupport: iteration cap, flushing tail as markdown', {
+				textLen: n,
+				cursor: i,
+				segmentsSoFar: out.length,
+			});
+			out.push({ type: 'markdown', text: text.slice(i) });
+			break;
+		}
+		const fence = text.indexOf('```', i);
+		if (fence === -1) {
+			pushText(text.slice(i));
+			break;
+		}
+		pushText(text.slice(i, fence));
+		const langEnd = text.indexOf('\n', fence + 3);
+		if (langEnd === -1) {
+			const afterFence = text.slice(fence + 3);
+			// 仍在同一行补全语言标记（无换行）：尽早出卡片壳，避免裸露 ``` 文本
+			if (/^[\w+#.+-]*$/.test(afterFence)) {
+				out.push({ type: 'streaming_code', lang: afterFence, body: '' });
+			} else {
+				out.push({ type: 'markdown', text: text.slice(fence) });
+			}
+			break;
+		}
+		const lang = text.slice(fence + 3, langEnd).trim();
+		const close = text.indexOf('```', langEnd + 1);
+		if (close === -1) {
+			out.push({
+				type: 'streaming_code',
+				lang,
+				body: text.slice(langEnd + 1),
+			});
+			break;
+		}
+		const body = text.slice(langEnd + 1, close);
+		if (lang === 'diff' || isUnifiedDiffBody(body)) {
+			for (const piece of splitUnifiedDiffFiles(body)) {
+				if (piece.trim()) out.push({ type: 'diff', diff: piece.trimEnd() });
+			}
+		} else if (isShortCommandFence(lang, body)) {
+			out.push({ type: 'command', lang, body: body.trimEnd() });
+		} else {
+			out.push({ type: 'markdown', text: text.slice(fence, close + 3) });
+		}
+		const nextI = close + 3;
+		if (nextI <= i) {
+			// eslint-disable-next-line no-console
+			console.warn('[agentSegments] segmentTextWithFenceSupport: non-advancing cursor', {
+				i,
+				close,
+				nextI,
+				fence,
+			});
+			agentSegmentDebugLog('segmentTextWithFenceSupport: non-advancing cursor, breaking', {
+				i,
+				close,
+				nextI,
+				fence,
+			});
+			break;
+		}
+		i = nextI;
+	}
+
+	return mergeAdjacentMarkdown(out);
 }
 
 // ─── Tool marker parsing ────────────────────────────────────────────────
@@ -959,10 +1060,18 @@ function markerHasSubstantiveTail(content: string, mk: ParsedMarker): boolean {
 }
 
 function extractToolSegments(content: string, t: TFunction): { segments: AssistantSegment[]; hasTools: boolean } {
+	const dbg = agentSegmentDebugEnabled();
 	const resultBlocks = findAllToolResultBlocks(content);
 	const markers = findAllToolCallMarkers(content, resultBlocks);
 	if (markers.length === 0 && resultBlocks.length === 0) {
 		return { segments: [], hasTools: false };
+	}
+	if (dbg) {
+		agentSegmentDebugLog('extractToolSegments:start', {
+			contentLen: content.length,
+			toolResultBlocks: resultBlocks.length,
+			markers: markers.length,
+		});
 	}
 	// 有 tool_result 块但没有对应 tool_call 标记时（如流式时序差异），
 	// 为每个孤立的 tool_result 块合成虚拟 marker，避免原始 XML 泄漏到渲染层
@@ -972,7 +1081,7 @@ function extractToolSegments(content: string, t: TFunction): { segments: Assista
 		for (const r of resultBlocks) {
 			if (r.index > cursor) {
 				const text = content.slice(cursor, r.index).trim();
-				if (text) syntheticSegments.push(...segmentParagraphsForActivity(text));
+				if (text) syntheticSegments.push(...segmentTextWithFenceSupport(text));
 			}
 			// 判断是否为流式未闭合块：fullEnd 等于 content.length 且 body 为空或未完整
 			const isStreaming = r.fullEnd === content.length && !content.endsWith('</tool_result>');
@@ -991,9 +1100,16 @@ function extractToolSegments(content: string, t: TFunction): { segments: Assista
 		}
 		if (cursor < content.length) {
 			const text = content.slice(cursor).trim();
-			if (text) syntheticSegments.push(...segmentParagraphsForActivity(text));
+			if (text) syntheticSegments.push(...segmentTextWithFenceSupport(text));
 		}
-		return { segments: groupActivities(mergeAdjacentMarkdown(syntheticSegments)), hasTools: true };
+		const merged = groupActivities(mergeAdjacentMarkdown(syntheticSegments));
+		if (dbg) {
+			agentSegmentDebugLog('extractToolSegments:synthetic', {
+				segmentCount: merged.length,
+				histogram: segmentTypeHistogram(merged),
+			});
+		}
+		return { segments: merged, hasTools: true };
 	}
 	for (const r of resultBlocks) {
 		const prev = markers.find(
@@ -1026,7 +1142,7 @@ function extractToolSegments(content: string, t: TFunction): { segments: Assista
 	for (const mk of markers) {
 		if (mk.start > cursor) {
 			const text = content.slice(cursor, mk.start).trim();
-			if (text) segments.push(...segmentParagraphsForActivity(text));
+			if (text) segments.push(...segmentTextWithFenceSupport(text));
 		}
 
 		if (mk.isPlan) {
@@ -1121,10 +1237,17 @@ function extractToolSegments(content: string, t: TFunction): { segments: Assista
 
 	if (cursor < content.length) {
 		const text = content.slice(cursor).trim();
-		if (text) segments.push(...segmentParagraphsForActivity(text));
+		if (text) segments.push(...segmentTextWithFenceSupport(text));
 	}
 
-	return { segments: groupActivities(mergeAdjacentMarkdown(segments)), hasTools: true };
+	const done = groupActivities(mergeAdjacentMarkdown(segments));
+	if (dbg) {
+		agentSegmentDebugLog('extractToolSegments:done', {
+			segmentCount: done.length,
+			histogram: segmentTypeHistogram(done),
+		});
+	}
+	return { segments: done, hasTools: true };
 }
 
 function countLines(s: string): number {
@@ -1213,50 +1336,30 @@ function expandSubAgentsInSegments(segs: AssistantSegment[]): AssistantSegment[]
 }
 
 function segmentAssistantContentCore(content: string, t: TFunction): AssistantSegment[] {
+	const dbg = agentSegmentDebugEnabled();
+	const t0 = dbg ? performance.now() : 0;
 	const { segments: toolSegments, hasTools } = extractToolSegments(content, t);
-	if (hasTools) return toolSegments;
-
-	const out: AssistantSegment[] = [];
-	let i = 0;
-	const n = content.length;
-
-	const pushText = (slice: string) => {
-		if (!slice) return;
-		out.push(...segmentParagraphsForActivity(slice));
-	};
-
-	while (i < n) {
-		const fence = content.indexOf('```', i);
-		if (fence === -1) {
-			pushText(content.slice(i));
-			break;
+	if (hasTools) {
+		if (dbg) {
+			agentSegmentDebugLog('segmentAssistantContentCore:tools', {
+				ms: Number((performance.now() - t0).toFixed(2)),
+				contentLen: content.length,
+				segmentCount: toolSegments.length,
+				histogram: segmentTypeHistogram(toolSegments),
+			});
 		}
-		pushText(content.slice(i, fence));
-		const langEnd = content.indexOf('\n', fence + 3);
-		if (langEnd === -1) {
-			out.push({ type: 'markdown', text: content.slice(fence) });
-			break;
-		}
-		const lang = content.slice(fence + 3, langEnd).trim();
-		const close = content.indexOf('```', langEnd + 1);
-		if (close === -1) {
-			out.push({ type: 'markdown', text: content.slice(fence) });
-			break;
-		}
-		const body = content.slice(langEnd + 1, close);
-		if (lang === 'diff' || isUnifiedDiffBody(body)) {
-			for (const piece of splitUnifiedDiffFiles(body)) {
-				if (piece.trim()) out.push({ type: 'diff', diff: piece.trimEnd() });
-			}
-		} else if (isShortCommandFence(lang, body)) {
-			out.push({ type: 'command', lang, body: body.trimEnd() });
-		} else {
-			out.push({ type: 'markdown', text: content.slice(fence, close + 3) });
-		}
-		i = close + 3;
+		return toolSegments;
 	}
-
-	return mergeAdjacentMarkdown(out);
+	const plain = segmentTextWithFenceSupport(content);
+	if (dbg) {
+		agentSegmentDebugLog('segmentAssistantContentCore:plain', {
+			ms: Number((performance.now() - t0).toFixed(2)),
+			contentLen: content.length,
+			segmentCount: plain.length,
+			histogram: segmentTypeHistogram(plain),
+		});
+	}
+	return plain;
 }
 
 export function segmentAssistantContent(content: string, options?: SegmentAssistantOptions): AssistantSegment[] {
@@ -1270,7 +1373,10 @@ export function segmentAssistantContent(content: string, options?: SegmentAssist
  */
 export function segmentAssistantContentUnified(content: string, options?: SegmentAssistantOptions): AssistantSegment[] {
 	const t = options?.t ?? defaultT;
+	const dbg = agentSegmentDebugEnabled();
+	const t0 = dbg ? performance.now() : 0;
 	const p = parseAgentAssistantPayload(content);
+	let out: AssistantSegment[];
 	if (p) {
 		const merged: AssistantSegment[] = [];
 		for (const part of p.parts) {
@@ -1281,9 +1387,21 @@ export function segmentAssistantContentUnified(content: string, options?: Segmen
 				merged.push(...extractToolSegments(mini, t).segments);
 			}
 		}
-		return expandSubAgentsInSegments(groupActivities(mergeAdjacentMarkdown(merged)));
+		out = expandSubAgentsInSegments(groupActivities(mergeAdjacentMarkdown(merged)));
+	} else {
+		out = segmentAssistantContent(content, options);
 	}
-	return segmentAssistantContent(content, options);
+	if (dbg) {
+		agentSegmentDebugLog('segmentAssistantContentUnified:summary', {
+			ms: Number((performance.now() - t0).toFixed(2)),
+			contentLen: content.length,
+			structured: Boolean(p),
+			parts: p?.parts.length,
+			segmentCount: out.length,
+			histogram: segmentTypeHistogram(out),
+		});
+	}
+	return out;
 }
 
 function mergeAdjacentMarkdown(segs: AssistantSegment[]): AssistantSegment[] {

@@ -15,10 +15,11 @@ function repoRoot(): string {
 
 async function git(args: string[], cwd?: string): Promise<string> {
 	const root = cwd ?? repoRoot();
-	const { stdout, stderr } = await execFileAsync('git', args, {
+	const { stdout, stderr } = await execFileAsync('git', ['-c', 'core.quotepath=false', ...args], {
 		cwd: root,
 		maxBuffer: 10 * 1024 * 1024,
 		windowsHide: true,
+		encoding: 'utf8',
 	});
 	if (stderr && !stdout) {
 		return stderr.trim();

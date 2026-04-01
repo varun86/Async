@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <strong>Open-source desktop shell for AI coding: agent workflow, editor, Git, and terminal in one place.</strong><br/>
-  Inspired by the workflow popularized by Cursor, but built as an open stack you can inspect, modify, and run with your own model keys.
+  <strong>An open-source desktop shell for AI coding: agent workflow, editor, Git, and terminal in one place.</strong><br/>
+  Built for people who like the Cursor-style workflow, but want something they can actually inspect, modify, and run with their own keys.
 </p>
 
 <p align="center">
@@ -26,7 +26,9 @@
 
 ## Why this project exists
 
-Async Shell is an attempt to build a **Cursor-style workflow in the open**: an AI-native desktop environment where the agent, Monaco editor, Git, diff/review flow, and terminal work together in one app. The project is released under **Apache 2.0**, uses **bring-your-own** model keys, and keeps threads, settings, and plans **local-first**.
+Async Shell is an attempt to build a **Cursor-like coding workflow in the open**. The idea is simple: put the agent, Monaco editor, Git, diff/review flow, and terminal in one desktop app, but keep the stack transparent and hackable.
+
+The project is released under **Apache 2.0**, uses **BYOK** model access, and keeps threads, settings, and plans **local-first** by default.
 
 | Aspect | **Cursor** | **Async Shell** |
 | --- | --- | --- |
@@ -39,16 +41,26 @@ Async Shell is an attempt to build a **Cursor-style workflow in the open**: an A
 
 ## What is Async Shell?
 
-Async Shell is an open-source desktop app for working with coding agents. Instead of treating AI as a sidebar chat, it centers the workflow around an **Agent Loop**: chat, tool execution, code edits, and review all happen in the same workspace.
+Async Shell is an open-source desktop app for working with coding agents. Instead of treating AI as a sidebar chat, it is built around an **Agent Loop**: thinking, planning, tool execution, code edits, and review all happen in the same workspace.
 
 ### Why use Async?
 
-- **Agent-first workflow** — the agent can work with your workspace, tools, and terminal through a clear **Think → Plan → Execute → Observe** loop.
-- **Visible tool execution** — tool inputs stream live, and **trajectory** cards show what happened for `read_file`, `write_to_file`, `str_replace`, `search_files`, and shell steps.
-- **Your keys, your machine** — use your own providers and keep conversations plus repository state local.
-- **Git built in** — review status, diffs, and agent-driven changes against the real repository you are editing.
-- **Multiple working modes** — switch between **Agent**, **Plan**, **Ask**, and **Debug** depending on how much autonomy or control you want.
-- **Lightweight desktop stack** — Electron + React, **Agent** and **Editor** layouts, Monaco, and an embedded terminal in a smaller open codebase.
+- **Agent-first workflow**: the agent can work with your files, tools, and terminal through a visible **Think -> Plan -> Execute -> Observe** loop.
+- **Visible tool execution**: live tool-input streaming and trajectory cards show what happened for `read_file`, `write_to_file`, `str_replace`, `search_files`, and shell steps.
+- **Your keys, your machine**: bring your own providers and keep conversation history plus repo state local.
+- **Git built in**: inspect status, diffs, and agent-driven changes against the real repository you are editing.
+- **Multiple working modes**: switch between **Agent**, **Plan**, **Ask**, and **Debug** depending on how much autonomy you want.
+- **Lean desktop stack**: Electron + React, Monaco, embedded terminal, and a codebase that is much easier to read than a giant IDE.
+
+## Recent Progress
+
+Recent commits have mostly focused on making the agent path feel more robust and more transparent:
+
+- **Claude Code-style sub-agents** with nested activity UI, background execution, and better stream handling.
+- **Structured assistant messages** stored as JSON, then expanded into native tool-call formats for OpenAI and Anthropic.
+- **Message normalization and API repair** before tool pairing, to reduce malformed histories and orphan tool blocks.
+- **Disk skills and workspace config improvements**, so local agent behavior is easier to manage.
+- **Chat UI polish**, including cleaner composer visuals and more stable streaming presentation.
 
 ---
 
@@ -84,10 +96,11 @@ Async Shell is an open-source desktop app for working with coding agents. Instea
 
 ### Autonomous Agent Loop
 
-- Live tool parameter streaming and **trajectory** cards.
+- Live tool parameter streaming and trajectory cards.
 - **Plan** vs **Agent** mode: review a structured plan first, or run the tool loop directly.
-- **Tool approval gate** for shell commands and file writes.
+- Tool approval gates for shell commands and file writes.
 - Editor context sync so agent edits can focus the relevant file and line range.
+- Nested sub-agent updates, background execution, and timeline-style activity rendering.
 
 ### Multi-Model Support
 
@@ -101,31 +114,33 @@ Async Shell is an open-source desktop app for working with coding agents. Instea
 - **Monaco** editor with tabs, syntax highlighting, and diff review flows.
 - **Git** integration for status, diff, staging, commit, and push from the UI.
 - **xterm.js** terminal for both user commands and agent shell output.
-- **Composer** with **@** file mentions, rich segments, and persistent threads.
+- **Composer** with `@` file mentions, rich segments, and persistent threads.
 - **Quick Open** palette (`Ctrl/Cmd+P`) and keyboard-first navigation.
 - Built-in **i18n** support for English and Simplified Chinese.
+- Local disk skills, workspace config merge, and tool approval controls for safer agent use.
 
 ---
 
 ## Technical Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
-│                    Renderer Process                      │
-│  React + Vite  │  Monaco Editor  │  xterm.js Terminal   │
-│  Composer / Chat / Plan / Agent UI                       │
+│                    Renderer Process                    │
+│  React + Vite  │  Monaco Editor  │  xterm.js Terminal  │
+│  Composer / Chat / Plan / Agent UI                     │
 └──────────────────────────┬──────────────────────────────┘
                            │  contextBridge (IPC)
 ┌──────────────────────────▼──────────────────────────────┐
-│                     Main Process                         │
-│  agentLoop.ts  │  toolExecutor.ts  │  LLM Adapters      │
-│  gitService    │  threadStore      │  settingsStore      │
-│  workspace     │  LSP session      │  PTY terminal       │
+│                      Main Process                      │
+│  agentLoop.ts  │  toolExecutor.ts  │  LLM Adapters     │
+│  gitService    │  threadStore      │  settingsStore    │
+│  workspace     │  LSP session      │  PTY terminal     │
 └─────────────────────────────────────────────────────────┘
 ```
 
 - **Main / renderer IPC** via Electron `contextBridge` and `ipcMain`.
-- **`agentLoop.ts`** handles multi-round tool calls, partial JSON streaming, and aborts.
+- **`agentLoop.ts`** handles multi-round tool calls, partial JSON streaming, tool repair, and aborts.
+- **Structured assistant messages** are persisted locally and expanded to provider-native tool formats when needed.
 - **Local persistence** stores threads, settings, and plans as JSON / Markdown under user data.
 - **`gitService`** provides the Git layer used by the UI for status, diff, staging, commit, and push.
 - **LSP** integration uses TypeScript Language Server for in-editor intelligence.
@@ -134,30 +149,30 @@ Async Shell is an open-source desktop app for working with coding agents. Instea
 
 ```text
 Async/
-├── main-src/                 # Bundled → electron/main.bundle.cjs (Node / Electron main)
-│   ├── index.ts              # App entry: windows, userData, IPC registration
-│   ├── agent/                # agentLoop.ts, toolExecutor.ts, agentTools.ts, toolApprovalGate.ts
-│   ├── llm/                  # OpenAI / Anthropic / Gemini adapters & streaming
-│   ├── lsp/                  # TypeScript LSP session
-│   ├── ipc/register.ts       # ipcMain handlers (chat, threads, git, fs, agent, …)
-│   ├── threadStore.ts        # Persistent threads + messages (JSON)
-│   ├── settingsStore.ts      # settings.json
-│   ├── gitService.ts         # Porcelain status, diff previews, commit/push
-│   └── workspace.ts          # Open-folder root & safe path resolution
-├── src/                      # Vite + React renderer
-│   ├── App.tsx               # Shell layout, chat, composer modes, Git / explorer
-│   ├── i18n/                 # Locale messages (en / zh-CN)
-│   ├── AgentActivityGroup.tsx # Cursor-style "Explored N files" collapsible group
-│   ├── AgentResultCard.tsx   # Tool result display cards
-│   └── …                     # Agent UI, Plan review, Monaco, terminal, …
+├── main-src/                  # Bundled -> electron/main.bundle.cjs (Node / Electron main)
+│   ├── index.ts               # App entry: windows, userData, IPC registration
+│   ├── agent/                 # agentLoop.ts, toolExecutor.ts, agentTools.ts, toolApprovalGate.ts
+│   ├── llm/                   # OpenAI / Anthropic / Gemini adapters & streaming
+│   ├── lsp/                   # TypeScript LSP session
+│   ├── ipc/register.ts        # ipcMain handlers (chat, threads, git, fs, agent, ...)
+│   ├── threadStore.ts         # Persistent threads + messages (JSON)
+│   ├── settingsStore.ts       # settings.json
+│   ├── gitService.ts          # Porcelain status, diff previews, commit/push
+│   └── workspace.ts           # Open-folder root & safe path resolution
+├── src/                       # Vite + React renderer
+│   ├── App.tsx                # Shell layout, chat, composer modes, Git / explorer
+│   ├── i18n/                  # Locale messages (en / zh-CN)
+│   ├── AgentActivityGroup.tsx # Collapsible "Explored N files" activity group
+│   ├── AgentResultCard.tsx    # Tool result display cards
+│   └── ...                    # Agent UI, Plan review, Monaco, terminal, ...
 ├── electron/
-│   ├── main.bundle.cjs       # esbuild output (do not edit by hand)
-│   └── preload.cjs           # contextBridge → window.asyncShell
-├── docs/assets/              # Logo, screenshots
+│   ├── main.bundle.cjs        # esbuild output (do not edit by hand)
+│   └── preload.cjs            # contextBridge -> window.asyncShell
+├── docs/assets/               # Logo, screenshots
 ├── scripts/
-│   └── export-app-icon.mjs   # Rasterize SVG → resources/icons/icon.png
-├── esbuild.main.mjs          # Builds main process
-├── vite.config.ts            # Renderer build
+│   └── export-app-icon.mjs    # Rasterize SVG -> resources/icons/icon.png
+├── esbuild.main.mjs           # Builds main process
+├── vite.config.ts             # Renderer build
 └── package.json
 ```
 
@@ -165,11 +180,11 @@ Async/
 
 Default layout under Electron **`userData`**:
 
-- **`async/threads.json`** — threads and messages.
-- **`async/settings.json`** — models, keys (local), layout, agent options.
-- **`.async/plans/`** — saved Plan documents (Markdown).
+- **`async/threads.json`**: threads and messages.
+- **`async/settings.json`**: models, keys, layout, and agent options.
+- **`.async/plans/`**: saved Plan documents (Markdown).
 
-The renderer may use **localStorage** for small UI flags; **`threads.json`** is the source of truth for conversations.
+The renderer may use **localStorage** for small UI flags, but **`threads.json`** is the source of truth for conversations.
 
 ---
 
@@ -177,8 +192,8 @@ The renderer may use **localStorage** for small UI flags; **`threads.json`** is 
 
 ### Prerequisites
 
-- **Node.js** ≥ 18
-- **npm** ≥ 9
+- **Node.js** >= 18
+- **npm** >= 9
 - **Git** (optional but recommended)
 
 ### Install and Run
@@ -222,7 +237,15 @@ npm run dev:debug
 npm run icons
 ```
 
-This rasterizes `docs/assets/async-logo.svg` into `resources/icons/icon.png` (256x256) and `public/favicon.png`.
+This rasterizes `docs/assets/async-logo.svg` into `resources/icons/icon.png` and `public/favicon.png`.
+
+---
+
+## Acknowledgements
+
+Async Shell is obviously shaped by workflows popularized by Cursor and by the broader coding-agent ecosystem.
+
+And yes, special thanks to Claude Code for its accidental source-map-powered "open-source release". That unplanned peek behind the curtain made a lot of ideas easier to study, compare, and rebuild properly in the open.
 
 ---
 
@@ -240,7 +263,7 @@ This rasterizes `docs/assets/async-logo.svg` into `resources/icons/icon.png` (25
 
 Questions, ideas, and feedback are welcome.
 
-- **Forum**: [linux.do](https://linux.do/) — join the discussion, share your setup, report issues.
+- **Forum**: [linux.do](https://linux.do/) - join the discussion, share your setup, or report issues.
 
 ---
 

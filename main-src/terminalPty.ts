@@ -20,7 +20,8 @@ export function registerTerminalPtyIpc(): void {
 		const cwd = root && existsSync(root) ? root : process.cwd();
 		const isWin = process.platform === 'win32';
 		const shell = isWin ? process.env.ComSpec || 'cmd.exe' : process.env.SHELL || '/bin/bash';
-		const args: string[] = isWin ? [] : ['-i'];
+		/** Windows：启动时切 UTF-8 代码页，避免终端内中文乱码。 */
+		const args: string[] = isWin ? ['/k', 'chcp 65001>nul'] : ['-i'];
 		const id = randomUUID();
 		let proc: pty.IPty;
 		try {

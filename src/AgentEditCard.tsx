@@ -48,7 +48,7 @@ export function AgentEditCard({ edit, onOpenFile }: Props) {
 	const previewScrollWrapRef = useRef<HTMLDivElement>(null);
 	const [previewInnerWidth, setPreviewInnerWidth] = useState(320);
 	const streamingRef = useRef(false);
-	streamingRef.current = edit.isStreaming;
+	streamingRef.current = Boolean(edit.isStreaming);
 
 	useLayoutEffect(() => {
 		if (!edit.isStreaming) {
@@ -110,6 +110,8 @@ export function AgentEditCard({ edit, onOpenFile }: Props) {
 		: expanded
 			? previewLines
 			: collapsedHead;
+	/** JSON 尚未解析出 old/new 时预览区为空，仍要占位避免「整块空白像卡住」 */
+	const showStreamingEmptyHint = edit.isStreaming && visibleLines.length === 0;
 	const canOpenFile = edit.path.trim().length > 0;
 	const expandRemainingLines = Math.max(0, previewLines.length - collapsedHead.length);
 
@@ -154,6 +156,11 @@ export function AgentEditCard({ edit, onOpenFile }: Props) {
 					className={`ref-edit-card-preview-wrap ${edit.isStreaming ? 'ref-edit-card-preview-wrap--streaming-scroll' : ''}`}
 				>
 					<div ref={previewMeasureRef} className="ref-edit-card-preview">
+						{showStreamingEmptyHint ? (
+							<div className="ref-edit-card-streaming-placeholder" role="status">
+								{t('agent.edit.streamingPlaceholder')}
+							</div>
+						) : null}
 						{visibleLines.map((line, idx) => (
 							<div
 								key={`${line.kind}-${idx}`}

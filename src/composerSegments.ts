@@ -68,10 +68,11 @@ export function isSlashCommandDomPendingUpgrade(
 }
 
 /**
- * 文件引用与紧随其后的正文之间插入 ZWNJ，避免 `@path` 与后续字符被拼成一段后，
- * `wirePlainToSegments` 用最长前缀匹配时把正文吃进路径（例如 `@foo.tshello`）。
+ * 文件/command 与紧随其后的正文之间若缺少空白，在 wire 中补一个 ASCII 空格，
+ * 避免 `@path` 与后续字符粘连后被最长前缀匹配吃进路径（如 `@foo.tshello`）。
+ * 历史消息里可能仍是 ZWNJ（\u200c），解析端保留兼容。
  */
-const FILE_REF_BOUNDARY = '\u200c';
+const FILE_REF_GLUE_SPACE = ' ';
 
 /** 发送给后端的纯文本：与内联 chip 顺序一致 */
 export function segmentsToWireText(segments: ComposerSegment[]): string {
@@ -84,15 +85,15 @@ export function segmentsToWireText(segments: ComposerSegment[]): string {
 			out += CREATE_SKILL_WIRE;
 			const next = segments[k + 1];
 			if (next?.kind === 'text' && next.text.length > 0 && !/^\s/u.test(next.text)) {
-				out += FILE_REF_BOUNDARY;
+				out += FILE_REF_GLUE_SPACE;
 			} else if (next?.kind === 'file') {
-				out += FILE_REF_BOUNDARY;
+				out += FILE_REF_GLUE_SPACE;
 			}
 		} else if (s.kind === 'file') {
 			out += `@${s.path}`;
 			const next = segments[k + 1];
 			if (next?.kind === 'text' && next.text.length > 0 && !/^\s/u.test(next.text)) {
-				out += FILE_REF_BOUNDARY;
+				out += FILE_REF_GLUE_SPACE;
 			}
 		}
 	}
@@ -104,7 +105,9 @@ export function userMessageToSegments(content: string, knownPaths: string[]): Co
 	const trimmedStart = content.replace(/^\uFEFF/, '');
 	if (trimmedStart.startsWith(CREATE_SKILL_WIRE)) {
 		let rest = trimmedStart.slice(CREATE_SKILL_WIRE.length);
-		if (rest.startsWith(FILE_REF_BOUNDARY)) {
+		if (rest.startsWith(FILE_REF_GLUE_SPACE)) {
+			rest = rest.slice(1);
+		} else if (rest.startsWith('\u200c')) {
 			rest = rest.slice(1);
 		} else {
 			rest = rest.replace(/^\s+/, '');

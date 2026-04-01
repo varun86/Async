@@ -274,9 +274,12 @@ export function applyFileChipFromAtMention(root: HTMLElement, relPath: string, s
 	r.deleteContents();
 	const chip = createFileChipElement(relPath, segId, h);
 	r.insertNode(chip);
+	/* 与常见 IM/IDE 一致：选完 @ 文件后插入尾随空格，正文与引用在文本上天然分隔 */
+	const pad = document.createTextNode(' ');
+	chip.after(pad);
 	const sel = window.getSelection();
 	const nr = document.createRange();
-	nr.setStartAfter(chip);
+	nr.setStartAfter(pad);
 	nr.collapse(true);
 	sel?.removeAllRanges();
 	sel?.addRange(nr);

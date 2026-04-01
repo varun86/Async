@@ -24,11 +24,12 @@ let cache: GitCache | null = null;
 
 async function runGit(args: string[], cwd: string): Promise<string> {
 	try {
-		const { stdout } = await execFileAsync('git', args, {
+		const { stdout } = await execFileAsync('git', ['-c', 'core.quotepath=false', ...args], {
 			cwd,
 			windowsHide: true,
 			timeout: 5_000,
 			maxBuffer: 512 * 1024,
+			encoding: 'utf8',
 		});
 		return stdout.trim();
 	} catch {

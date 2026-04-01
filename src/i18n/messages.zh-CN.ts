@@ -335,6 +335,7 @@ export const messagesZhCN: Record<string, string> = {
 	'agent.revertFile': '撤销此文件改动',
 	'agent.edit.expand': '展开预览（{{lines}} 行）',
 	'agent.edit.collapse': '收起预览',
+	'agent.edit.streamingPlaceholder': '正在流式接收补丁…',
 	'agent.working': '正在继续处理本次改动…',
 	'agent.toolPending': '{{name}}…',
 

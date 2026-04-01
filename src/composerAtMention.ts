@@ -177,6 +177,9 @@ export function formatMessageWithWorkspaceFileRefs(relativePaths: string[], body
 	return `${head}\n\n${b}`;
 }
 
+/** 与 composerSegments 内联 wire 格式一致：文件 token 与紧随正文之间的 ZWNJ（非空白，不能仅靠 \s+ 分词） */
+const INLINE_FILE_REF_BOUNDARY = '\u200c';
+
 /**
  * 从已发送消息还原「文件 chip + 正文」：首行为仅由空格分隔的 `@相对路径` token 时解析。
  */
@@ -188,13 +191,30 @@ export function parseLeadingWorkspaceRefs(text: string): { refs: string[]; body:
 		return { refs: [], body: text };
 	}
 	const nl = trimmed.indexOf('\n');
-	const firstLine = (nl === -1 ? trimmed : trimmed.slice(0, nl)).trim();
-	const tokens = firstLine.split(/\s+/).filter(Boolean);
+	const firstLineFull = nl === -1 ? trimmed : trimmed.slice(0, nl);
+	const restAfterFirstLine = nl === -1 ? '' : trimmed.slice(nl + 1);
+
+	const z = firstLineFull.indexOf(INLINE_FILE_REF_BOUNDARY);
+	let refLine: string;
+	let afterBoundary: string;
+	if (z >= 0) {
+		refLine = firstLineFull.slice(0, z).trim();
+		afterBoundary = firstLineFull.slice(z + INLINE_FILE_REF_BOUNDARY.length);
+	} else {
+		refLine = firstLineFull.trim();
+		afterBoundary = '';
+	}
+
+	const tokens = refLine.split(/\s+/).filter(Boolean);
 	if (!tokens.length || !tokens.every((t) => t.startsWith('@') && t.length > 1)) {
 		return { refs: [], body: text };
 	}
 	const refs = tokens.map((t) => t.slice(1));
-	let rest = nl === -1 ? '' : trimmed.slice(nl + 1);
-	rest = rest.replace(/^\n+/, '');
-	return { refs, body: rest };
+	let body = afterBoundary.replace(/^\n+/, '');
+	if (restAfterFirstLine) {
+		const tail = restAfterFirstLine.replace(/^\n+/, '');
+		body = body ? `${body}\n${tail}` : tail;
+	}
+	body = body.replace(/^\n+/, '');
+	return { refs, body };
 }

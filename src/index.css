@@ -2434,8 +2434,49 @@ body {
 
 .ref-md-root--agent-chat > .ref-agent-activity,
 .ref-md-root--agent-chat > .ref-edit-card,
-.ref-md-root--agent-chat > .ref-activity-group {
+.ref-md-root--agent-chat > .ref-activity-group,
+.ref-md-root--agent-chat > .ref-agent-streaming-fence {
 	animation: ref-seg-enter 0.28s ease-out both;
+}
+
+/* 流式未闭合围栏：与 .ref-md-root pre 对齐，避免等闭合 ``` 才出现代码块 */
+.ref-agent-streaming-fence {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+	margin: 0;
+	min-width: 0;
+}
+
+.ref-agent-streaming-fence-lang {
+	font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+	font-size: 11px;
+	color: var(--void-fg-3);
+	padding: 0 2px;
+}
+
+.ref-agent-streaming-fence-pre {
+	margin: 0;
+	padding: 12px 14px;
+	border-radius: 10px;
+	background: #12121a;
+	border: 1px solid var(--void-border-soft);
+	overflow: auto;
+	max-width: 100%;
+	font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+	font-size: 11px;
+	line-height: 1.45;
+	color: var(--void-fg-1);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.ref-agent-streaming-fence-pre code {
+	background: transparent;
+	padding: 0;
+	font-size: inherit;
+	line-height: inherit;
 }
 
 /* ??? ????????CSS grid ?????? ??? */
@@ -8304,6 +8345,13 @@ body {
 	background:
 		linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(9, 9, 12, 0.88)),
 		rgba(9, 9, 12, 0.85);
+}
+
+.ref-edit-card-streaming-placeholder {
+	padding: 12px 10px;
+	font-size: 12px;
+	line-height: 1.45;
+	color: rgba(148, 163, 184, 0.75);
 }
 
 .ref-edit-card-preview-line {

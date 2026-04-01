@@ -28,12 +28,14 @@
 
 说白了就一个目标：**在功能和体验上对标 [Cursor](https://cursor.com)**——AI 原生 IDE Shell，Agent、Monaco 编辑器、工作区工具、Diff 审阅、终端全部拧成一股绳——**但以开源方式交付**：**Apache 2.0** 协议，**自带模型密钥（BYOK）**，对话与配置默认**存在本地**。
 
-|  | **Cursor**（对标参照） | **Async Shell** |
+你可以把它理解成一个 AI 原生桌面工作区：Agent、Monaco 编辑器、Git、Diff 审阅、终端都放在一起，但底层是透明的、可以自己研究也可以自己改。项目使用 **Apache 2.0** 协议，模型接入走 **BYOK**，线程、设置、计划默认都是 **本地优先**。
+
+| 维度 | **Cursor** | **Async Shell** |
 | --- | --- | --- |
-| **形态** | 成熟商业产品，开箱即用 | **开源** —— 可读、可改、可自建 |
-| **密钥** | 产品内计费与集成 | **BYOK**：OpenAI、Anthropic、Gemini 或任意兼容接口 |
-| **会话与数据** | 随厂商走 | **本地优先**：对话、配置、计划全在你自己机器上 |
-| **定位** | 完整 IDE + 生态 | 聚焦 **Shell**：Agent 循环、Monaco、Git、终端、四种 Composer 模式 |
+| **交付方式** | 商业产品 | **开源代码**，可读、可改、可自建 |
+| **模型接入** | 平台内计费 / 集成 | **BYOK**，支持 OpenAI、Anthropic、Gemini 和兼容接口 |
+| **数据存储** | 产品侧管理 | **本地优先**，线程、设置、计划都在你机器上 |
+| **产品重点** | 完整 IDE 产品 | 更聚焦的桌面 **Shell**：Agent、编辑器、Git、终端 |
 
 ---
 
@@ -57,21 +59,20 @@ Async Shell 是一款开源的 AI 原生桌面应用，定位是你和 Agent 之
 ### Editor 布局
 
 <p align="center">
-  <img src="docs/assets/workspace_1.png" width="1024" alt="Async Editor 模式" />
+  <img src="docs/assets/workspace_1.png" width="1024" alt="Async Editor 布局" />
 </p>
 
 ### Agent 布局
 
 <p align="center">
-  <img src="docs/assets/workspace_2.png" width="2880" alt="Async Editor 模式" />
+  <img src="docs/assets/workspace_2.png" width="1024" alt="Async Agent 布局" />
 </p>
 
 ### Plan 模式
 
 <p align="center">
-  <img src="docs/assets/workspace_3.png" width="2072" alt="Async Editor 模式" />
+  <img src="docs/assets/workspace_3.png" width="1024" alt="Async Plan 模式" />
 </p>
-
 
 ### 模型设置
 
@@ -85,110 +86,120 @@ Async Shell 是一款开源的 AI 原生桌面应用，定位是你和 Agent 之
 
 ### 自主 Agent 循环
 
-- 流式工具参数 + 实时**轨迹**卡片，执行过程一目了然。
-- **Plan** 与 **Agent** 双模式：先审计划再执行，或者直接跑工具循环。
-- **工具审批门控**：Shell 命令和文件写入可配置为执行前弹窗确认。
-- 智能编辑器上下文：Agent 改代码时自动在编辑器侧定位到对应文件和行范围。
+- 工具参数流式展示，配合轨迹卡片，执行过程比较清楚。
+- **Plan** 和 **Agent** 双模式：可以先看计划，也可以直接让 Agent 开跑。
+- Shell 命令和文件写入支持审批门控。
+- Agent 改代码时，可以联动编辑器定位到对应文件和行范围。
+- 支持嵌套子 Agent、后台执行和时间线式活动展示。
 
 ### 多模型支持
 
-- 内置 **Anthropic**（含扩展思考）、**OpenAI**、**Gemini** 适配器。
-- 兼容 OpenAI 接口的任意端点 —— Ollama、vLLM、各类聚合 API，接上就能用。
-- 面向推理模型的流式**思考块**展示。
-- **Auto 自动模式**：让应用自动选最合适的可用模型。
+- 内置 **Anthropic**、**OpenAI**、**Gemini** 适配。
+- 支持兼容 OpenAI 接口的各种端点，比如 Ollama、vLLM、聚合 API、自建服务。
+- 在支持的模型上展示流式思考块。
+- **Auto** 模式可以自动挑当前最合适的模型。
 
 ### 开发体验
 
-- **Monaco** 编辑器，支持多标签页、语法高亮、面向 Diff 的审阅流。
-- **Git** 服务：在界面内直接完成状态查看、暂存、提交、推送。
-- **xterm.js** 终端：本地命令行 + 观察 Agent 触发的 Shell 操作。
-- **Composer**：**@** 引用文件、多段消息、持久化线程，用起来顺手。
-- **快速打开**面板（`Ctrl/Cmd+P`），键盘党友好。
-- 内置**国际化**（中英文开箱即用）。
+- **Monaco** 编辑器，支持多标签页、语法高亮和 Diff 审阅流程。
+- **Git** 集成：状态、Diff、暂存、提交、推送都能在 UI 里完成。
+- **xterm.js** 终端：既能自己用，也能看 Agent 触发了什么 Shell 操作。
+- **Composer** 支持 `@` 文件引用、多段消息和线程持久化。
+- **快速打开**（`Ctrl/Cmd+P`）和整体键盘优先的交互。
+- 内置中英文国际化。
+- 支持本地 disk skills、工作区配置合并和工具审批控制。
 
 ---
 
 ## 技术架构
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
-│                      渲染进程                            │
-│  React + Vite  │  Monaco 编辑器  │  xterm.js 终端       │
-│  Composer / Chat / Plan / Agent UI                       │
+│                      渲染进程                           │
+│  React + Vite  │  Monaco 编辑器  │  xterm.js 终端      │
+│  Composer / Chat / Plan / Agent UI                     │
 └──────────────────────────┬──────────────────────────────┘
                            │  contextBridge（IPC）
 ┌──────────────────────────▼──────────────────────────────┐
-│                      主进程                              │
-│  agentLoop.ts  │  toolExecutor.ts  │  LLM 适配器        │
-│  gitService    │  threadStore      │  settingsStore      │
-│  workspace     │  LSP 会话         │  PTY 终端           │
+│                       主进程                            │
+│  agentLoop.ts  │  toolExecutor.ts  │  LLM 适配器       │
+│  gitService    │  threadStore      │  settingsStore    │
+│  workspace     │  LSP 会话         │  PTY 终端         │
 └─────────────────────────────────────────────────────────┘
 ```
 
-- **主进程 / 渲染进程分离**，通过 Electron `contextBridge` 和 `ipcMain` 通信。
-- **`agentLoop.ts`**：多轮工具调用、流式 JSON 片段解析、中止支持。
-- **本地持久化**：线程、配置、计划以 JSON/Markdown 落在用户目录，不上云。
-- **`gitService`**：与 UI 同步的 Git 操作层（状态、Diff、暂存、提交、推送）。
-- **LSP**：集成 TypeScript Language Server，提供编辑器内代码智能。
+- 主进程和渲染进程分离，通过 Electron `contextBridge` 和 `ipcMain` 通信。
+- **`agentLoop.ts`** 负责多轮工具调用、流式 JSON 片段、工具修复和中止控制。
+- Assistant 消息支持结构化持久化，需要时再展开成不同模型原生的 tool 格式。
+- 线程、设置、计划等数据默认以 JSON / Markdown 形式落在本地。
+- **`gitService`** 提供 UI 用到的 Git 操作层。
+- **LSP** 目前接入了 TypeScript Language Server。
 
 ## 项目结构
 
 ```text
-async-shell/
-├── main-src/                 # 源码 → 打包至 electron/main.bundle.cjs（主进程）
-│   ├── index.ts              # 应用入口：窗口管理、IPC 注册
-│   ├── agent/                # agentLoop.ts、toolExecutor.ts、agentTools.ts、toolApprovalGate.ts
-│   ├── llm/                  # 各厂商适配器与流式处理
-│   ├── lsp/                  # TypeScript LSP 会话
-│   ├── ipc/register.ts       # IPC 处理函数（聊天、线程、Git、文件系统等）
-│   ├── threadStore.ts        # 线程与消息持久化
-│   ├── settingsStore.ts      # 设置持久化
-│   ├── gitService.ts         # Git 状态与操作服务
-│   └── workspace.ts          # 工作区管理与安全路径解析
-├── src/                      # Vite + React 渲染进程
-│   ├── App.tsx               # 核心布局、聊天、Composer 模式、Git / 文件浏览器
-│   ├── i18n/                 # 国际化文案（中 / 英）
-│   ├── AgentActivityGroup.tsx # Cursor 风格的「已探索 N 个文件」折叠分组
-│   ├── AgentResultCard.tsx   # 工具结果展示卡片
-│   └── …                     # Agent UI、Plan 审阅、Monaco、终端等组件
+Async/
+├── main-src/                  # 主进程源码，最终打包到 electron/main.bundle.cjs
+│   ├── index.ts               # 应用入口：窗口、userData、IPC 注册
+│   ├── agent/                 # agentLoop.ts、toolExecutor.ts、agentTools.ts 等
+│   ├── llm/                   # OpenAI / Anthropic / Gemini 适配器与流式处理
+│   ├── lsp/                   # TypeScript LSP 会话
+│   ├── ipc/register.ts        # IPC 处理函数（聊天、线程、Git、文件系统等）
+│   ├── threadStore.ts         # 线程与消息持久化
+│   ├── settingsStore.ts       # settings.json 管理
+│   ├── gitService.ts          # Git 状态、Diff、提交、推送
+│   └── workspace.ts           # 工作区根目录与安全路径解析
+├── src/                       # 渲染进程（Vite + React）
+│   ├── App.tsx                # 主界面、聊天、Composer 模式、Git / 文件树
+│   ├── i18n/                  # 中英文文案
+│   ├── AgentActivityGroup.tsx # “已探索 N 个文件” 折叠组
+│   ├── AgentResultCard.tsx    # 工具结果卡片
+│   └── ...                    # Agent UI、Plan 审阅、Monaco、终端等组件
 ├── electron/
-│   ├── main.bundle.cjs       # esbuild 自动生成，勿手动修改
-│   └── preload.cjs           # 预加载脚本 → window.asyncShell
-├── docs/assets/              # Logo、截图等静态资源
+│   ├── main.bundle.cjs        # esbuild 产物，不建议手改
+│   └── preload.cjs            # 预加载脚本 -> window.asyncShell
+├── docs/assets/               # Logo、截图
 ├── scripts/
-│   └── export-app-icon.mjs   # SVG → resources/icons/icon.png（应用图标）
-├── esbuild.main.mjs          # 主进程构建配置
-├── vite.config.ts            # 渲染进程构建配置
+│   └── export-app-icon.mjs    # SVG -> PNG 图标导出
+├── esbuild.main.mjs           # 主进程构建脚本
+├── vite.config.ts             # 渲染进程构建配置
 └── package.json
 ```
 
 ## 数据存储
 
-默认位于 Electron **`userData`** 目录下：
+默认位于 Electron 的 **`userData`** 目录下：
 
-- **`async/threads.json`** —— 聊天记录与线程列表。
-- **`async/settings.json`** —— 模型配置、API 密钥、应用设置。
-- **`.async/plans/`** —— Plan 模式生成的 Markdown 计划文件。
+- **`async/threads.json`**：线程和聊天消息。
+- **`async/settings.json`**：模型配置、密钥、布局和 Agent 选项。
+- **`.async/plans/`**：Plan 模式生成的 Markdown 计划文件。
 
-渲染进程可能用 **localStorage** 存少量 UI 状态；对话的权威数据源是 **`threads.json`**。
+渲染进程可能会用 **localStorage** 存一些轻量 UI 状态，但对话的权威数据源还是 **`threads.json`**。
 
 ---
 
-## 快速上手
+## 快速开始
 
 ### 环境要求
 
-- **Node.js** ≥ 18
-- **npm** ≥ 9
-- **Git**（推荐安装）
+- **Node.js** >= 18
+- **npm** >= 9
+- **Git**（建议安装）
 
 ### 安装与运行
 
-1. **克隆仓库**（替换成你自己的 fork 或上游地址）：
+1. **克隆仓库**：
 
    ```bash
-   git clone https://github.com/your-org/async-shell.git
-   cd async-shell
+   git clone https://github.com/ZYKJShadow/Async.git
+   cd Async
+   ```
+
+   如果你更习惯 Gitee，也可以使用：
+
+   ```bash
+   git clone https://gitee.com/shadowsocks_z/Async.git
+   cd Async
    ```
 
 2. **安装依赖**：
@@ -197,13 +208,13 @@ async-shell/
    npm install
    ```
 
-3. **构建并启动**：
+3. **构建并启动桌面应用**：
 
    ```bash
    npm run desktop
    ```
 
-   会先构建主进程和渲染进程（输出到 `dist/`），然后用 Electron 打开 `dist/index.html`。
+   这会先构建主进程和渲染进程，然后用 Electron 打开应用。
 
 ### 开发模式
 
@@ -211,7 +222,7 @@ async-shell/
 npm run dev
 ```
 
-需要 DevTools 调试的话：
+如果需要同时打开 DevTools：
 
 ```bash
 npm run dev:debug
@@ -223,7 +234,13 @@ npm run dev:debug
 npm run icons
 ```
 
-把 `docs/assets/async-logo.svg` 光栅化为 `resources/icons/icon.png`（256×256）和 `public/favicon.png`。
+会把 `docs/assets/async-logo.svg` 光栅化成 `resources/icons/icon.png` 和 `public/favicon.png`。
+
+---
+
+## 致谢
+
+确实也得认真感谢一下 Claude Code 带来的“开源时刻”，Async Shell 这种开源替代方案，也算是间接受益者之一。
 
 ---
 

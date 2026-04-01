@@ -21,6 +21,7 @@ import { assembleAgentToolPool } from './agentToolPool.js';
 import type { ComposerMode } from '../llm/composerMode.js';
 import { buildSubagentSystemAppend, resolveSubagentProfile } from './subagentProfile.js';
 import { shouldRunAgentInBackground } from './agentForkPolicy.js';
+import { windowsCmdUtf8Prefix, windowsPowerShellUtf8Command } from '../winUtf8.js';
 
 /** 工具执行器持有的 LSP 会话引用（由 register.ts 通过 setToolLspSession 注入）。 */
 let _lspSession: TsLspSession | null = null;
@@ -495,12 +496,14 @@ async function executeSearchFiles(call: ToolCall): Promise<ToolResult> {
 		const isWin = process.platform === 'win32';
 		const shell = isWin ? process.env.ComSpec || 'cmd.exe' : '/bin/bash';
 		const grepCmd = `rg --line-number --max-count=5 --max-filesize=1M --no-heading --color=never -e ${JSON.stringify(pattern)} .`;
-		const args = isWin ? ['/d', '/s', '/c', grepCmd] : ['-lc', grepCmd];
+		const cmdLine = isWin ? windowsCmdUtf8Prefix(grepCmd) : grepCmd;
+		const args = isWin ? ['/d', '/s', '/c', cmdLine] : ['-lc', cmdLine];
 		const { stdout } = await execFileAsync(shell, args, {
 			cwd: searchDir,
 			windowsHide: true,
 			maxBuffer: 2 * 1024 * 1024,
 			timeout: 30_000,
+			encoding: 'utf8',
 		});
 		const lines = (stdout || '').split('\n').filter(Boolean);
 		if (lines.length > MAX_SEARCH_RESULTS) {
@@ -562,8 +565,9 @@ async function executeCommand(call: ToolCall): Promise<ToolResult> {
 
 	const isWin = process.platform === 'win32';
 	const shell = isWin ? 'powershell.exe' : '/bin/bash';
+	const psCommand = isWin ? windowsPowerShellUtf8Command(command) : command;
 	const args = isWin
-		? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command]
+		? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psCommand]
 		: ['-lc', command];
 
 	try {
@@ -572,6 +576,7 @@ async function executeCommand(call: ToolCall): Promise<ToolResult> {
 			windowsHide: true,
 			maxBuffer: 5 * 1024 * 1024,
 			timeout: 120_000,
+			encoding: 'utf8',
 		});
 		let output = '';
 		if (stdout) output += stdout;

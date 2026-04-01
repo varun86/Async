@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { initWindowsConsoleUtf8 } from './winUtf8.js';
 import { initSettingsStore, getRestorableWorkspace } from './settingsStore.js';
 import { ensureDefaultThread, initThreadStore } from './threadStore.js';
 import { registerIpc } from './ipc/register.js';
@@ -24,6 +25,8 @@ function resolveAppIconPath(): string | undefined {
 	}
 	return undefined;
 }
+
+initWindowsConsoleUtf8();
 
 app.whenReady().then(() => {
 	const appIconPath = resolveAppIconPath();

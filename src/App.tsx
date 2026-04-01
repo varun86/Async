@@ -838,7 +838,7 @@ export default function App() {
 	const [saveToastKey, setSaveToastKey] = useState(0);
 	const [saveToastVisible, setSaveToastVisible] = useState(false);
 	const [subAgentBgToast, setSubAgentBgToast] = useState<{ key: number; ok: boolean; text: string } | null>(null);
-	const subAgentBgToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const subAgentBgToastTimerRef = useRef<number | null>(null);
 	const monacoEditorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
 	const [tsLspStatus, setTsLspStatus] = useState<'off' | 'starting' | 'ready' | 'error'>('off');
 	/** 打开文件后在 Monaco 中高亮的行范围（1-based，含 end） */
@@ -1386,10 +1386,11 @@ export default function App() {
 					});
 				}
 			} else if (payload.type === 'thinking_delta') {
-				if (payload.parentToolCallId) {
+				const parentToolCallId = payload.parentToolCallId;
+				if (parentToolCallId) {
 					setStreaming((s) => {
 						const inner = escapeSubAgentXmlText(payload.text);
-						const p = escapeStreamAttr(payload.parentToolCallId);
+						const p = escapeStreamAttr(parentToolCallId);
 						const d = payload.nestingDepth ?? 1;
 						return `${s}<sub_agent_thinking parent="${p}" depth="${d}">${inner}</sub_agent_thinking>`;
 					});
@@ -1403,7 +1404,11 @@ export default function App() {
 						streamingToolPreviewClearTimerRef.current = null;
 					}
 					console.log(`[UI] tool_call: name=${payload.name}`);
-					setStreamingToolPreview(null);
+					// 不在此处清除 streamingToolPreview：
+					// tool_call 与最后一帧 tool_input_delta 可能被 React 18 自动批量更新合并，
+					// 导致流式预览帧从未渲染（卡片直到 tool_result 后才出现）。
+					// 改为在 tool_result 或 done 事件中清除，
+					// 期间 dropParsedStreamingFileEditWhilePreview 自动去重。
 				}
 				const nest =
 					payload.parentToolCallId != null

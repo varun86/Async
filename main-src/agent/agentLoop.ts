@@ -79,6 +79,18 @@ function shouldEmitToolInputDelta(toolName: string): boolean {
 	return !READ_TOOLS_SKIP_INPUT_DELTA.has(toolName);
 }
 
+/** 写入类工具：每发一帧参数增量后让出 Node 事件循环，便于 Electron 先把 IPC 交给渲染进程绘制 */
+const WRITE_TOOLS_STREAM_YIELD = new Set(['str_replace', 'write_to_file']);
+
+function yieldForToolInputStreamUi(toolName: string): Promise<void> {
+	if (!WRITE_TOOLS_STREAM_YIELD.has(toolName)) {
+		return Promise.resolve();
+	}
+	return new Promise((resolve) => {
+		setImmediate(resolve);
+	});
+}
+
 /**
  * 与 Claude Code `query.ts` 的 `maxTurns?: number` 一致：未配置时为 `null`（不限制）。
  */
@@ -104,33 +116,23 @@ function resolveAgentMaxRounds(settings: ShellSettings): number | null {
 export type ToolInputDeltaPayload = { name: string; partialJson: string; index: number };
 
 /**
- * 合并同一事件循环内的高频 tool_input_delta（只发最后一帧），避免 IPC 风暴；
- * 使用 queueMicrotask 而非 setTimeout，避免人为 48ms 延迟导致首帧/收尾丢更新。
+ * tool_input_delta 即时下发。
+ *
+ * 曾用 queueMicrotask 合并「同一事件循环内」多次 queue，只发最后一帧。
+ * 但部分流式实现会在**一个** turn 里连续多次 resolve（多段 arguments 同步到达），
+ * 合并后 UI 只收到一帧，编辑卡片会像「写完全部才出现」。
+ *
+ * 只读类工具在调用方已跳过（READ_TOOLS_SKIP_INPUT_DELTA），此处不会因 read/search 产生 IPC 风暴。
  */
 function createToolInputDeltaBatcher(
 	emit: (p: ToolInputDeltaPayload) => void
 ): { queue: (p: ToolInputDeltaPayload) => void; flush: () => void } {
-	let pending: ToolInputDeltaPayload | null = null;
-	let scheduled = false;
 	return {
 		queue(p: ToolInputDeltaPayload) {
-			pending = p;
-			if (scheduled) return;
-			scheduled = true;
-			queueMicrotask(() => {
-				scheduled = false;
-				if (pending) {
-					emit(pending);
-					pending = null;
-				}
-			});
+			emit(p);
 		},
 		flush() {
-			if (pending) {
-				emit(pending);
-				pending = null;
-			}
-			scheduled = false;
+			// 兼容流结束处仍调用 flush；即时模式下已无挂起帧
 		},
 	};
 }
@@ -634,6 +636,7 @@ async function runOpenAILoop(
 						const effectiveName = row.name || inferOpenAIToolNameFromPartialArguments(row.arguments);
 						if (effectiveName && shouldEmitToolInputDelta(effectiveName)) {
 							toolDeltaBatcher.queue({ name: effectiveName, partialJson: row.arguments, index: idx });
+							await yieldForToolInputStreamUi(effectiveName);
 						}
 					}
 				}
@@ -1022,6 +1025,7 @@ async function runAnthropicLoop(
 									partialJson: tu.input,
 									index: currentBlockIdx,
 								});
+								await yieldForToolInputStreamUi(tu.name);
 							}
 						}
 					}
