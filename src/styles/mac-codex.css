@@ -19,6 +19,25 @@
 	-webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(18px);
 }
 
+/* 顶栏「文件 / 编辑」等：与暗色下已有处理一致，不用 surface chip（明亮模式否则会露出明显方框） */
+:root[data-ui-style='mac-codex'] .ref-menubar .ref-menu-item {
+	background: transparent;
+	border: none;
+	box-shadow: none;
+}
+
+:root[data-ui-style='mac-codex'] .ref-menubar .ref-menu-item:hover {
+	background: color-mix(in srgb, var(--surface-tint-soft) 65%, transparent);
+	border: none;
+	box-shadow: none;
+}
+
+:root[data-ui-style='mac-codex'] .ref-menubar .ref-menu-item.is-active {
+	background: color-mix(in srgb, var(--surface-tint-strong) 55%, transparent);
+	border: none;
+	box-shadow: none;
+}
+
 :root[data-ui-style='mac-codex'] .ref-global-search-btn {
 	height: 32px;
 	border-radius: var(--radius-chip);
@@ -33,26 +52,28 @@
 }
 
 :root[data-ui-style='mac-codex'] .ref-body {
-	padding: var(--app-frame-padding);
+	padding: 0;
 }
 
 :root[data-ui-style='mac-codex'] .ref-menubar--agent {
 	grid-template-columns: 1fr auto;
 }
 
+/* 主三栏贴齐窗口边缘：去掉外圈圆角与「卡片」投影（与暗色下的结构一致） */
 :root[data-ui-style='mac-codex'] .ref-left,
 :root[data-ui-style='mac-codex'] .ref-right,
 :root[data-ui-style='mac-codex'] .ref-center {
-	border-radius: var(--radius-panel);
-	border: 1px solid var(--surface-glass-stroke);
-	box-shadow: var(--shadow-floating), var(--void-shadow-soft);
-	backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-blur));
-	-webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(var(--glass-blur));
+	border-radius: 0;
+	border: none;
+	box-shadow: none;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 }
 
 :root[data-ui-style='mac-codex'] .ref-left {
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-bg-strong) 94%, transparent) 0%, var(--surface-panel-bg) 100%);
+	border-right: 1px solid var(--surface-glass-stroke);
 }
 
 :root[data-ui-style='mac-codex'] .ref-center {
@@ -64,6 +85,7 @@
 :root[data-ui-style='mac-codex'] .ref-right {
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-bg-strong) 92%, transparent) 0%, var(--surface-panel-bg-soft) 100%);
+	border-left: 1px solid var(--surface-glass-stroke);
 }
 
 :root[data-ui-style='mac-codex'] .ref-resize-handle::after {
@@ -2424,18 +2446,16 @@
 /* Phase 10: shift editor into one shared workspace shell so explorer feels embedded, not carded */
 :root[data-ui-style='mac-codex'] .ref-body--editor-shell {
 	position: relative;
-	padding: clamp(10px, 1vw, 14px);
-	border-radius: calc(var(--radius-window) - 6px);
-	border: 1px solid color-mix(in srgb, var(--surface-glass-stroke) 94%, transparent);
+	padding: 0;
+	border-radius: 0;
+	border: none;
 	background:
 		radial-gradient(circle at top center, color-mix(in srgb, var(--surface-tint-soft) 94%, transparent) 0%, transparent 34%),
 		linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-bg-strong) 97%, transparent) 0%, color-mix(in srgb, var(--surface-panel-bg) 94%, transparent) 100%);
-	box-shadow:
-		0 28px 72px rgba(0, 0, 0, 0.18),
-		inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 4%, transparent);
 	overflow: hidden;
-	backdrop-filter: saturate(var(--glass-saturate)) blur(calc(var(--glass-blur) + 2px));
-	-webkit-backdrop-filter: saturate(var(--glass-saturate)) blur(calc(var(--glass-blur) + 2px));
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 }
 
 :root[data-ui-style='mac-codex'] .ref-body--editor-shell::before {
@@ -2636,14 +2656,12 @@
 }
 
 :root[data-ui-style='mac-codex'][data-color-scheme='dark'] .ref-body--editor-shell {
-	border-color: rgba(205, 217, 224, 0.06);
+	border: none;
 	background:
 		radial-gradient(circle at top center, rgba(55, 214, 212, 0.05) 0%, transparent 32%),
 		radial-gradient(circle at 92% 0%, rgba(255, 157, 89, 0.05) 0%, transparent 20%),
 		linear-gradient(180deg, rgba(15, 20, 25, 0.98) 0%, rgba(11, 15, 19, 0.98) 100%);
-	box-shadow:
-		0 30px 84px rgba(0, 0, 0, 0.42),
-		inset 0 1px 0 rgba(255, 255, 255, 0.03);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 :root[data-ui-style='mac-codex'][data-color-scheme='dark'] .ref-body--editor-shell::before {
@@ -2709,23 +2727,18 @@
 }
 
 :root[data-ui-style='mac-codex'] .ref-shell--agent-layout .ref-body {
-	padding-top: 0;
+	padding: 0;
 }
 
 :root[data-ui-style='mac-codex'] .ref-body--agent-shell {
 	position: relative;
 	overflow: hidden;
-	border-radius: calc(var(--radius-window) - 2px);
-	border: 1px solid color-mix(in srgb, var(--surface-glass-stroke) 90%, transparent);
-	border-top: none;
-	border-top-left-radius: 0;
-	border-top-right-radius: 0;
+	border-radius: 0;
+	border: none;
 	background:
 		radial-gradient(circle at top center, color-mix(in srgb, var(--surface-tint-soft) 78%, transparent) 0%, transparent 34%),
 		linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-bg-strong) 96%, transparent) 0%, color-mix(in srgb, var(--surface-panel-bg) 90%, transparent) 100%);
-	box-shadow:
-		0 28px 84px rgba(0, 0, 0, 0.24),
-		inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 4%, transparent);
 }
 
 :root[data-ui-style='mac-codex'] .ref-body--agent-shell::before {
@@ -3181,14 +3194,12 @@
 }
 
 :root[data-ui-style='mac-codex'][data-color-scheme='dark'] .ref-body--agent-shell {
-	border-color: rgba(205, 217, 224, 0.06);
+	border: none;
 	background:
 		radial-gradient(circle at top center, rgba(55, 214, 212, 0.045) 0%, transparent 34%),
 		radial-gradient(circle at 96% 0%, rgba(255, 157, 89, 0.04) 0%, transparent 18%),
 		linear-gradient(180deg, rgba(15, 20, 25, 0.98) 0%, rgba(11, 15, 19, 0.98) 100%);
-	box-shadow:
-		0 30px 84px rgba(0, 0, 0, 0.42),
-		inset 0 1px 0 rgba(255, 255, 255, 0.03);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 :root[data-ui-style='mac-codex'][data-color-scheme='dark'] .ref-agent-rail-toggle {

@@ -933,6 +933,7 @@ export default function App() {
 	const [planTodoDraftOpen, setPlanTodoDraftOpen] = useState(false);
 	const [planTodoDraftText, setPlanTodoDraftText] = useState('');
 	const [editorPlanBuildModelId, setEditorPlanBuildModelId] = useState('');
+	const [editorPlanReviewDismissed, setEditorPlanReviewDismissed] = useState(false);
 	const [thinkingByModelId, setThinkingByModelId] = useState<Record<string, ThinkingLevel>>({});
 	const [streamingThinking, setStreamingThinking] = useState('');
 	const [streamingToolPreview, setStreamingToolPreview] = useState<{
@@ -3485,6 +3486,9 @@ export default function App() {
 
 	const onPlanBuild = useCallback(
 		(modelId: string) => {
+			if (awaitingReply) {
+				return;
+			}
 			const planToBuild = getLatestAgentPlan();
 			if (!planToBuild || !shell || !modelId.trim()) {
 				return;
@@ -3522,6 +3526,7 @@ export default function App() {
 			workspace,
 			executedPlanKeys,
 			shell,
+			awaitingReply,
 			setComposerModePersist,
 			t,
 			onSend,
@@ -3577,13 +3582,15 @@ export default function App() {
 	);
 
 	const onPlanReviewClose = useCallback(() => {
-		setParsedPlan(null);
-		setPlanFilePath(null);
-		setPlanFileRelPath(null);
 		if (layoutMode === 'agent' && agentRightSidebarView === 'plan') {
+			setParsedPlan(null);
+			setPlanFilePath(null);
+			setPlanFileRelPath(null);
 			setAgentRightSidebarOpen(false);
 			setAgentRightSidebarView('git');
+			return;
 		}
+		setEditorPlanReviewDismissed(true);
 	}, [layoutMode, agentRightSidebarView]);
 
 	const onPersistLanguage = useCallback(
@@ -3921,6 +3928,23 @@ export default function App() {
 	}, [filePath, defaultModel]);
 
 	useEffect(() => {
+		if (
+			layoutMode !== 'editor' ||
+			composerMode !== 'plan' ||
+			awaitingReply ||
+			!planFileRelPath
+		) {
+			return;
+		}
+		const current = filePath.trim().replace(/\\/g, '/');
+		const target = planFileRelPath.replace(/\\/g, '/');
+		if (current === target) {
+			return;
+		}
+		void openFileInTab(target);
+	}, [layoutMode, composerMode, awaitingReply, planFileRelPath, filePath, openFileInTab]);
+
+	useEffect(() => {
 		if (!shell || !currentId) {
 			setExecutedPlanKeys([]);
 			return;
@@ -4159,6 +4183,22 @@ export default function App() {
 		}
 		return agentPlanGoalMarkdown.split('\n')[0]?.trim() ?? '';
 	}, [agentPlanGoalMarkdown]);
+	const editorCenterPlanMarkdown = useMemo(() => {
+		if (agentPlanPreviewMarkdown.trim()) {
+			return agentPlanPreviewMarkdown;
+		}
+		if (layoutMode === 'editor' && composerMode === 'plan' && hasConversation && awaitingReply) {
+			return `# ${t('plan.review.label')}\n\n${t('app.planSidebarStreaming')}…`;
+		}
+		return '';
+	}, [agentPlanPreviewMarkdown, layoutMode, composerMode, hasConversation, awaitingReply, t]);
+	const showEditorPlanDocumentInCenter =
+		layoutMode === 'editor' &&
+		composerMode === 'plan' &&
+		hasConversation &&
+		(awaitingReply || !!editorCenterPlanMarkdown.trim());
+	const editorCenterPlanCanBuild =
+		!awaitingReply && !!agentPlanEffectivePlan && !!editorPlanBuildModelId.trim() && modelPickerItems.length > 0;
 	const hasAgentPlanSidebarContent = Boolean(agentPlanPreviewMarkdown.trim());
 	const agentPlanSidebarAutopenRef = useRef(false);
 
@@ -4168,6 +4208,13 @@ export default function App() {
 		}
 		setAgentPlanBuildModelId((prev) => (prev.trim() ? prev : defaultModel));
 	}, [defaultModel, parsedPlan, agentPlanPreviewMarkdown]);
+
+	useEffect(() => {
+		if (!defaultModel.trim() || !showEditorPlanDocumentInCenter) {
+			return;
+		}
+		setEditorPlanBuildModelId((prev) => (prev.trim() ? prev : defaultModel));
+	}, [defaultModel, showEditorPlanDocumentInCenter]);
 
 	useEffect(() => {
 		if (!hasAgentPlanSidebarContent) {
@@ -4205,6 +4252,10 @@ export default function App() {
 			setPlanTodoDraftText('');
 		}
 	}, [agentPlanEffectivePlan]);
+
+	useEffect(() => {
+		setEditorPlanReviewDismissed(false);
+	}, [currentId, composerMode, agentPlanPreviewMarkdown]);
 
 	const onMonacoMount = useCallback(
 		(ed: MonacoEditorNS.IStandaloneCodeEditor, monaco: typeof import('monaco-editor')) => {
@@ -5884,9 +5935,6 @@ export default function App() {
 				isLast &&
 				streamingToolPreview == null &&
 				!(agentOrPlanStreaming && (liveAssistantBlocks.blocks.length > 0 || liveThoughtMeta != null));
-			const suppressPlanStreamingAssistant =
-				m.role === 'assistant' && composerMode === 'plan' && awaitingReply && isLast;
-
 			const userMessageIndex = i < messages.length && m.role === 'user' ? i : -1;
 			const isEditingThisUser = userMessageIndex >= 0 && resendFromUserIndex === userMessageIndex;
 
@@ -5948,10 +5996,6 @@ export default function App() {
 				) : (
 					<Fragment key={`u-${convoKey}-${i}`}>{inner}</Fragment>
 				);
-			}
-
-			if (suppressPlanStreamingAssistant) {
-				return null;
 			}
 
 			return (
@@ -6216,13 +6260,18 @@ export default function App() {
 					hintPlaceholder={t('agent.mistakeLimit.hintPlaceholder')}
 				/>
 
-				{isEditorRail && hasConversation && parsedPlan && composerMode === 'plan' ? (
+				{isEditorRail &&
+				hasConversation &&
+				agentPlanEffectivePlan &&
+				composerMode === 'plan' &&
+				!editorPlanReviewDismissed ? (
 					<PlanReviewPanel
-						plan={parsedPlan}
+						plan={agentPlanEffectivePlan}
 						planFileDisplayPath={planFileRelPath ?? planFilePath}
 						initialBuildModelId={defaultModel}
 						modelItems={modelPickerItems}
 						planBuilt={planReviewIsBuilt}
+						buildDisabled={awaitingReply}
 						onBuild={onPlanBuild}
 						onClose={onPlanReviewClose}
 						onTodoToggle={onPlanTodoToggle}
@@ -6580,7 +6629,12 @@ export default function App() {
 						<button
 							type="button"
 							className="ref-agent-plan-build-btn ref-agent-plan-build-btn--summary"
-							disabled={!agentPlanEffectivePlan || !agentPlanBuildModelId.trim() || modelPickerItems.length === 0}
+							disabled={
+								awaitingReply ||
+								!agentPlanEffectivePlan ||
+								!agentPlanBuildModelId.trim() ||
+								modelPickerItems.length === 0
+							}
 							onClick={() => onPlanBuild(agentPlanBuildModelId)}
 						>
 							{t('plan.review.build')}
@@ -6662,7 +6716,12 @@ export default function App() {
 								<button
 									type="button"
 									className="ref-agent-plan-build-btn"
-									disabled={!agentPlanEffectivePlan || !agentPlanBuildModelId.trim() || modelPickerItems.length === 0}
+									disabled={
+										awaitingReply ||
+										!agentPlanEffectivePlan ||
+										!agentPlanBuildModelId.trim() ||
+										modelPickerItems.length === 0
+									}
 									onClick={() => onPlanBuild(agentPlanBuildModelId)}
 								>
 									{t('plan.review.build')}
@@ -7910,7 +7969,70 @@ export default function App() {
 								onSelect={(id) => void onSelectTab(id)}
 								onClose={onCloseTab}
 							/>
-							{filePath.trim() ? (
+							{showEditorPlanDocumentInCenter ? (
+								<>
+									<div className="ref-editor-bc-toolbar-row">
+										<div className="ref-editor-bc-toolbar-inner">
+											<div className="ref-editor-plan-draft-meta">
+												<span className="ref-editor-plan-draft-label">{t('plan.review.label')}</span>
+												<span
+													className="ref-editor-plan-draft-path"
+													title={planFileRelPath ?? planFilePath ?? undefined}
+												>
+													{planFileRelPath ?? planFilePath ?? t('app.planSidebarWaiting')}
+												</span>
+											</div>
+											<div className="ref-editor-bc-actions">
+												<div className="ref-editor-plan-chrome">
+													<VoidSelect
+														variant="compact"
+														ariaLabel={t('plan.review.model')}
+														value={editorPlanBuildModelId}
+														disabled={planReviewIsBuilt || awaitingReply}
+														onChange={setEditorPlanBuildModelId}
+														options={[
+															{ value: '', label: t('plan.review.pickModel'), disabled: true },
+															...modelPickerItems.map((m) => ({
+																value: m.id,
+																label: m.label,
+															})),
+														]}
+													/>
+													{planReviewIsBuilt ? (
+														<span className="ref-editor-plan-built" role="status">
+															{t('app.planEditorBuilt')}
+														</span>
+													) : awaitingReply ? (
+														<span className="ref-editor-plan-built" role="status">
+															{t('app.planSidebarStreaming')}
+														</span>
+													) : (
+														<button
+															type="button"
+															className="ref-editor-plan-build-btn"
+															disabled={!editorCenterPlanCanBuild}
+															onClick={() => onPlanBuild(editorPlanBuildModelId)}
+														>
+															{t('plan.review.build')}
+														</button>
+													)}
+												</div>
+											</div>
+										</div>
+									</div>
+									<div className="ref-editor-canvas">
+										<div className="ref-editor-pane">
+											<div className="ref-editor-plan-preview-scroll">
+												<div className="ref-editor-plan-preview-surface">
+													<div className="ref-agent-plan-doc-markdown ref-agent-plan-preview-markdown">
+														<ChatMarkdown content={editorCenterPlanMarkdown} />
+													</div>
+												</div>
+											</div>
+										</div>
+									</div>
+								</>
+							) : filePath.trim() ? (
 								<>
 									<div className="ref-editor-bc-toolbar-row">
 										<div className="ref-editor-bc-toolbar-inner">

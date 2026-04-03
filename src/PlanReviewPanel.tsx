@@ -12,6 +12,7 @@ type Props = {
 	modelItems: ModelPickerItem[];
 	/** 当前会话已对该计划文件成功执行 Build */
 	planBuilt?: boolean;
+	buildDisabled?: boolean;
 	onBuild: (modelId: string) => void;
 	onClose: () => void;
 	onTodoToggle: (id: string) => void;
@@ -49,6 +50,7 @@ export function PlanReviewPanel({
 	initialBuildModelId,
 	modelItems,
 	planBuilt = false,
+	buildDisabled = false,
 	onBuild,
 	onClose,
 	onTodoToggle,
@@ -178,7 +180,7 @@ export function PlanReviewPanel({
 					<button
 						type="button"
 						className="ref-plan-review-build"
-						disabled={!buildModelId.trim() || modelItems.length === 0}
+						disabled={buildDisabled || !buildModelId.trim() || modelItems.length === 0}
 						onClick={() => onBuild(buildModelId)}
 					>
 						{t('plan.review.build')}
