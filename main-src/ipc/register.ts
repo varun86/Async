@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, clipboard } from 'electron';
 import { createAppWindow } from '../appWindow.js';
-import { applyThemeChromeToAllWindows, type ThemeChromeScheme } from '../themeChrome.js';
+import { applyThemeChromeToWindow, type ThemeChromeScheme } from '../themeChrome.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -712,12 +712,16 @@ export function registerIpc(): void {
 		return next;
 	});
 
-	ipcMain.handle('theme:applyChrome', (_e, payload: { scheme?: string }) => {
+	ipcMain.handle('theme:applyChrome', (e, payload: { scheme?: string }) => {
 		const s = payload?.scheme;
 		if (s !== 'light' && s !== 'dark') {
 			return { ok: false as const, error: 'bad-scheme' as const };
 		}
-		applyThemeChromeToAllWindows(s as ThemeChromeScheme);
+		const win = BrowserWindow.fromWebContents(e.sender);
+		if (!win) {
+			return { ok: false as const, error: 'no-window' as const };
+		}
+		applyThemeChromeToWindow(win, s as ThemeChromeScheme);
 		return { ok: true as const };
 	});
 

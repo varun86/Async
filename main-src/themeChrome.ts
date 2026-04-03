@@ -22,19 +22,23 @@ export const THEME_CHROME = {
 
 export type ThemeChromeScheme = keyof typeof THEME_CHROME;
 
-export function applyThemeChromeToAllWindows(scheme: ThemeChromeScheme): void {
+export function applyThemeChromeToWindow(win: BrowserWindow, scheme: ThemeChromeScheme): void {
 	const c = THEME_CHROME[scheme];
+	if (win.isDestroyed()) {
+		return;
+	}
+	win.setBackgroundColor(c.backgroundColor);
+	if (process.platform === 'win32') {
+		try {
+			win.setTitleBarOverlay({ ...c.titleBarOverlay });
+		} catch {
+			/* ignore */
+		}
+	}
+}
+
+export function applyThemeChromeToAllWindows(scheme: ThemeChromeScheme): void {
 	for (const win of BrowserWindow.getAllWindows()) {
-		if (win.isDestroyed()) {
-			continue;
-		}
-		win.setBackgroundColor(c.backgroundColor);
-		if (process.platform === 'win32') {
-			try {
-				win.setTitleBarOverlay({ ...c.titleBarOverlay });
-			} catch {
-				/* ignore */
-			}
-		}
+		applyThemeChromeToWindow(win, scheme);
 	}
 }
