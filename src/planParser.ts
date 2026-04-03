@@ -148,8 +148,54 @@ export function stripPlanBodyForChatDisplay(text: string): string {
 
 const PLAN_HEADING = /^#\s+Plan:\s*(.+)$/m;
 const GOAL_SECTION = /^##\s+Goal\s*$/m;
+const EXECUTION_SECTION = /^##\s+Execution Overview\s*$/m;
 const STEPS_SECTION = /^##\s+Implementation Steps\s*$/m;
+const TODOS_SECTION = /^##\s+(?:To-dos|Todos|TODOs?)\s*$/m;
+const CHECKBOX_LINE = /^\s*[-*]\s+\[([ xX])\]\s+(.+)$/;
 const STEP_LINE = /^\d+\.\s+\*\*(.+?)\*\*\s*[—–-]\s*(.+)$/;
+
+function sectionBody(text: string, heading: RegExp): string {
+	const idx = text.search(heading);
+	if (idx < 0) {
+		return '';
+	}
+	const after = text.slice(idx).replace(heading, '').trim();
+	const nextSection = after.search(/^##\s+/m);
+	return (nextSection >= 0 ? after.slice(0, nextSection) : after).trim();
+}
+
+function parseChecklistTodos(block: string): PlanTodoItem[] {
+	const todos: PlanTodoItem[] = [];
+	let index = 0;
+	for (const line of block.split('\n')) {
+		const match = line.match(CHECKBOX_LINE);
+		if (!match) {
+			continue;
+		}
+		index++;
+		todos.push({
+			id: `todo-${index}`,
+			content: match[2]!.trim(),
+			status: match[1]!.toLowerCase() === 'x' ? 'completed' : 'pending',
+		});
+	}
+	return todos;
+}
+
+export function planBodyWithTodos(plan: ParsedPlan): string {
+	const todoLines = plan.todos.map((todo) => `- [${todo.status === 'completed' ? 'x' : ' '}] ${todo.content}`);
+	if (todoLines.length === 0) {
+		return plan.body.trim();
+	}
+	const todoSection = `## To-dos\n${todoLines.join('\n')}`;
+	if (TODOS_SECTION.test(plan.body)) {
+		return plan.body
+			.replace(/##\s+(?:To-dos|Todos|TODOs?)\s*$[\s\S]*?(?=^##\s+|\s*$)/m, `${todoSection}\n\n`)
+			.trim();
+	}
+	return `${plan.body.trim()}\n\n${todoSection}`.trim();
+}
+
 
 export function parsePlanDocument(text: string): ParsedPlan | null {
 	const headMatch = text.match(PLAN_HEADING);
@@ -160,20 +206,22 @@ export function parsePlanDocument(text: string): ParsedPlan | null {
 	const name = headMatch[1]!.trim();
 
 	let overview = '';
-	const goalIdx = text.search(GOAL_SECTION);
-	if (goalIdx >= 0) {
-		const afterGoal = text.slice(goalIdx).replace(GOAL_SECTION, '').trim();
-		const nextSection = afterGoal.search(/^##\s+/m);
-		const goalBlock = nextSection >= 0 ? afterGoal.slice(0, nextSection) : afterGoal;
+	const goalBlock = sectionBody(text, GOAL_SECTION);
+	if (goalBlock) {
 		overview = goalBlock.trim().split('\n')[0]?.trim() ?? '';
+	}
+	if (!overview) {
+		const executionBlock = sectionBody(text, EXECUTION_SECTION);
+		overview = executionBlock.trim().split('\n')[0]?.replace(/^[-*]\s+/, '') ?? '';
 	}
 
 	const todos: PlanTodoItem[] = [];
-	const stepsIdx = text.search(STEPS_SECTION);
-	if (stepsIdx >= 0) {
-		const afterSteps = text.slice(stepsIdx).replace(STEPS_SECTION, '').trim();
-		const nextSection = afterSteps.search(/^##\s+/m);
-		const stepsBlock = nextSection >= 0 ? afterSteps.slice(0, nextSection) : afterSteps;
+	const todoBlock = sectionBody(text, TODOS_SECTION);
+	if (todoBlock) {
+		todos.push(...parseChecklistTodos(todoBlock));
+	}
+	if (todos.length === 0) {
+		const stepsBlock = sectionBody(text, STEPS_SECTION);
 		let stepNum = 0;
 		for (const line of stepsBlock.split('\n')) {
 			const m = line.match(STEP_LINE);
@@ -228,7 +276,7 @@ export function toPlanMd(plan: ParsedPlan): string {
 		'isProject: false',
 		'---',
 		'',
-		plan.body,
+		planBodyWithTodos(plan),
 		'',
 	].join('\n');
 }

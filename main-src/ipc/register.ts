@@ -35,6 +35,7 @@ import {
 	getCurrentThreadId,
 	getThread,
 	listThreads,
+	threadHasUserMessages,
 	replaceFromUserVisibleIndex,
 	selectThread,
 	setThreadTitle,
@@ -822,6 +823,7 @@ export function registerIpc(): void {
 					updatedAt: t.updatedAt,
 					createdAt: t.createdAt,
 					previewCount: t.messages.filter((m) => m.role !== 'system').length,
+					hasUserMessages: threadHasUserMessages(t),
 					isToday: isTimestampToday(t.updatedAt, now),
 					tokenUsage: t.tokenUsage,
 					fileStateCount: t.fileStates ? Object.keys(t.fileStates).length : 0,
@@ -1556,6 +1558,14 @@ export function registerIpc(): void {
 		try {
 			clipboard.writeText(String(text ?? ''));
 			return { ok: true as const };
+		} catch (e) {
+			return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+		}
+	});
+
+	ipcMain.handle('clipboard:readText', () => {
+		try {
+			return { ok: true as const, text: clipboard.readText() };
 		} catch (e) {
 			return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
 		}

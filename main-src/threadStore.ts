@@ -183,6 +183,10 @@ export function listThreads(workspaceRoot: string | null | undefined = null): Th
 	return Object.values(bucket.threads).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+export function threadHasUserMessages(thread: ThreadRecord): boolean {
+	return thread.messages.some((message) => message.role === 'user' && message.content.trim().length > 0);
+}
+
 export function getCurrentThreadId(workspaceRoot: string | null | undefined = null): string | null {
 	return ensureBucket(workspaceRoot).currentThreadId;
 }

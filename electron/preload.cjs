@@ -44,6 +44,7 @@ const INVOKE_CHANNELS = new Set([
 	'shell:openDefault',
 	'shell:openInBrowser',
 	'clipboard:writeText',
+	'clipboard:readText',
 	'git:status',
 	'git:stageAll',
 	'git:commit',

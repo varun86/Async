@@ -66,28 +66,12 @@ Recent commits have mostly focused on making the agent path feel more robust and
 
 ## Screenshots
 
-### Editor layout
-
 <p align="center">
-  <img src="docs/assets/workspace_1.png" width="1024" alt="Async Editor layout" />
+  <img src="docs/assets/workspace_1.png" width="3062" alt="Async Agent 布局" />
 </p>
 
-### Agent layout
-
 <p align="center">
-  <img src="docs/assets/workspace_2.png" width="1024" alt="Async Agent layout" />
-</p>
-
-### Plan mode
-
-<p align="center">
-  <img src="docs/assets/workspace_3.png" width="1024" alt="Async Plan mode" />
-</p>
-
-### Model Settings
-
-<p align="center">
-  <img src="docs/assets/setting_1.png" width="720" alt="Async Model Settings" />
+  <img src="docs/assets/workspace_2.png" width="2072" alt="Async Plan 模式" />
 </p>
 
 ---
