@@ -2011,7 +2011,18 @@ export default function App() {
 					ui?: {
 						sidebarLayout?: { left?: unknown; right?: unknown };
 						colorMode?: string;
+						themePreset?: unknown;
 						fontPreset?: unknown;
+						uiFontPreset?: unknown;
+						codeFontPreset?: unknown;
+						accentColor?: unknown;
+						backgroundColor?: unknown;
+						foregroundColor?: unknown;
+						translucentSidebar?: unknown;
+						contrast?: unknown;
+						usePointerCursors?: unknown;
+						uiFontSize?: unknown;
+						codeFontSize?: unknown;
 						layoutMode?: string;
 					};
 					indexing?: {
@@ -2075,7 +2086,7 @@ export default function App() {
 					setEditorSettings({ ...defaultEditorSettings(), ...st.editor });
 				}
 				setIndexingSettings(normalizeIndexingSettings(st.indexing));
-				setAppearanceSettings(normalizeAppearanceSettings({ uiFontPreset: st.ui?.fontPreset }));
+				setAppearanceSettings(normalizeAppearanceSettings(st.ui));
 				const cm = st.ui?.colorMode;
 				if (cm === 'light' || cm === 'dark' || cm === 'system') {
 					setColorMode(cm);
@@ -3697,7 +3708,22 @@ export default function App() {
 				tsLspEnabled: indexingSettings.tsLspEnabled,
 			},
 			mcp: { servers: mcpServers },
-			ui: { colorMode, fontPreset: appearanceSettings.uiFontPreset, layoutMode },
+			ui: {
+				colorMode,
+				themePreset: appearanceSettings.themePreset,
+				fontPreset: appearanceSettings.uiFontPreset,
+				uiFontPreset: appearanceSettings.uiFontPreset,
+				codeFontPreset: appearanceSettings.codeFontPreset,
+				accentColor: appearanceSettings.accentColor,
+				backgroundColor: appearanceSettings.backgroundColor,
+				foregroundColor: appearanceSettings.foregroundColor,
+				translucentSidebar: appearanceSettings.translucentSidebar,
+				contrast: appearanceSettings.contrast,
+				usePointerCursors: appearanceSettings.usePointerCursors,
+				uiFontSize: appearanceSettings.uiFontSize,
+				codeFontSize: appearanceSettings.codeFontSize,
+				layoutMode,
+			},
 		});
 	}, [
 		shell,

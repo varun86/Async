@@ -54,7 +54,18 @@ export type ShellUiFontPreset = 'apple' | 'inter' | 'segoe';
 export type ShellUiSettings = {
 	sidebarLayout?: SidebarLayoutPx;
 	colorMode?: ShellColorMode;
+	themePreset?: 'codex' | 'graphite' | 'midnight' | 'custom';
 	fontPreset?: ShellUiFontPreset;
+	uiFontPreset?: ShellUiFontPreset;
+	codeFontPreset?: 'sfmono' | 'monospace' | 'jetbrains';
+	accentColor?: string;
+	backgroundColor?: string;
+	foregroundColor?: string;
+	translucentSidebar?: boolean;
+	contrast?: number;
+	usePointerCursors?: boolean;
+	uiFontSize?: number;
+	codeFontSize?: number;
 	/** Desktop shell layout: centered agent workspace or classic editor three-column layout. */
 	layoutMode?: 'agent' | 'editor';
 };
