@@ -54,21 +54,29 @@ Async Shell 是一款开源的 AI 原生桌面应用，定位是你和 Agent 之
 
 ---
 
-## 界面预览
+## 界面预览（部分）
 
 ### Agent布局界面
 <p align="center">
   <img src="docs/assets/workspace_1.png" width="3062" alt="Async Agent 布局" />
 </p>
 
-<p align="center">
-  <img src="docs/assets/workspace_2.png" width="3069" alt="Async Plan 模式" />
-</p>
-
 ### 模型设置
 
 <p align="center">
-  <img src="docs/assets/setting_1.png" width="2880" alt="Async 模型设置" />
+  <img src="docs/assets/setting_1.png" width="1824" alt="Async 模型设置" />
+</p>
+
+### 外观调色盘
+
+<p align="center">
+  <img src="docs/assets/setting_2.png" width="1829" alt="Async 模型设置" />
+</p>
+
+#### Cursor主题
+
+<p align="center">
+  <img src="docs/assets/setting_3.png" width="1829" alt="Async 模型设置" />
 </p>
 
 ---

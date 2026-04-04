@@ -892,6 +892,7 @@ export function appearanceSettingsColorVars(settings: AppAppearanceSettings): Re
 					'--surface-control-bg-active': mixHex(CURSOR_LIGHT_SETTINGS_OPTION_BG, '#000000', 0.07),
 					'--surface-card-bg-soft': CURSOR_LIGHT_COMPOSER_INPUT_BG,
 					'--surface-card-bg': CURSOR_LIGHT_COMPOSER_INPUT_BG,
+					'--surface-code-bg': mixHex(CURSOR_LIGHT_SETTINGS_OPTION_BG, '#000000', 0.035),
 					'--void-thought-meta': mixHex('#FFFFFF', fg0, 0.5),
 					'--void-thought-body': mixHex('#FFFFFF', fg0, 0.8),
 					'--void-thought-detail': mixHex('#FFFFFF', fg0, 0.6),
