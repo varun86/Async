@@ -160,7 +160,14 @@ function tagProjectOrigin<T extends { origin?: 'user' | 'project' }>(items: T[] 
 type LayoutMode = 'agent' | 'editor';
 type AgentRightSidebarView = 'git' | 'plan';
 type EditorLeftSidebarView = 'explorer' | 'search' | 'git';
-import { useI18n, translateChatError, normalizeLocale, type AppLocale, type TFunction } from './i18n';
+import {
+	useI18n,
+	isChatAssistantErrorLine,
+	translateChatError,
+	normalizeLocale,
+	type AppLocale,
+	type TFunction,
+} from './i18n';
 import './monacoSetup';
 
 type ThreadInfo = {
@@ -6149,6 +6156,11 @@ export default function App() {
 									composerMode === 'plan' ||
 									composerMode === 'agent' ||
 									assistantMessageUsesAgentToolProtocol(m.content)
+								}
+								assistantBubbleVariant={
+									m.role === 'assistant' && isChatAssistantErrorLine(m.content, t)
+										? 'error'
+										: 'default'
 								}
 								planUi={composerMode === 'plan'}
 								workspaceRoot={workspace}

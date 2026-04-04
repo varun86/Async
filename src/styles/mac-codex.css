@@ -647,6 +647,10 @@
 	color: var(--color-text-secondary);
 }
 
+:root[data-ui-style='mac-codex'] .ref-md-root--chat-error {
+	color: var(--color-text-primary);
+}
+
 :root[data-ui-style='mac-codex'] .ref-tool-approval-inline,
 :root[data-ui-style='mac-codex'] .ref-agent-diff-card,
 :root[data-ui-style='mac-codex'] .ref-agent-review,

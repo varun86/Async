@@ -486,6 +486,8 @@ export const messagesEn: Record<string, string> = {
 	'agent.edit.collapse': 'Collapse preview',
 	'agent.edit.streamingPlaceholder': 'Streaming patch…',
 	'agent.working': 'Continuing to work on this change…',
+	'agent.emptyStructuredReply':
+		'No assistant output this turn (no model text and no tool calls; the run may have been interrupted or errored).',
 	'agent.toolPending': '{{name}}…',
 	'agent.toolProgress.executing': 'Running: {{name}}',
 	'agent.toolProgress.detail': '{{name}}: {{detail}}',

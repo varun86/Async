@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo } from 'react';
+import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AgentActivityGroup } from './AgentActivityGroup';
@@ -65,6 +65,8 @@ type Props = {
 	onRunCommand?: (cmd: string) => void;
 	streamingToolPreview?: StreamingToolPreview | null;
 	showAgentWorking?: boolean;
+	/** 对话错误气泡：强制易读配色并避免 Agent 解析路径漏字 */
+	assistantBubbleVariant?: 'default' | 'error';
 	/** 实时回合块状态；与 showAgentWorking 同时为真且 blocks 非空时，优先走块渲染，避免整段 content 重解析 */
 	liveAgentBlocksState?: LiveAgentBlocksState | null;
 	liveThoughtMeta?: {
@@ -86,11 +88,15 @@ export function ChatMarkdown({
 	showAgentWorking = false,
 	liveAgentBlocksState = null,
 	liveThoughtMeta = null,
+	assistantBubbleVariant = 'default',
 }: Props) {
 	const { t } = useI18n();
 
+	const forcePlainMarkdown = assistantBubbleVariant === 'error';
+	const agentMarkdown = agentUi && !forcePlainMarkdown;
+
 	const useLiveBlockRender =
-		agentUi &&
+		agentMarkdown &&
 		showAgentWorking &&
 		(liveThoughtMeta != null ||
 			(liveAgentBlocksState != null && liveAgentBlocksState.blocks.length > 0));
@@ -101,16 +107,14 @@ export function ChatMarkdown({
 	 * streamingToolPreview 变化极频繁（每个 tool_input_delta 都触发），
 	 * 拆分后 preview 变化只需做轻量合并，避免阻塞 React 渲染导致流式卡片被跳过。
 	 *
-	 * 无流式 tool 预览时对正文使用 useDeferredValue，把重解析推迟到浏览器空闲，
-	 * 避免多工具结果同时落盘时连续重算阻塞交互。
+	 * 正文解析必须用当前 content：useDeferredValue 会在高优先级更新后短暂保留旧值，
+	 * 若旧值为空则 segment 结果为空，对话错误等短消息会出现「有气泡无字」。
 	 *
 	 * Live blocks 主路径下不再对整段 content 做 segmentAssistantContentUnified，也不合并 streamingToolPreview（块内已含）。
 	 */
-	const deferredContent = useDeferredValue(content);
-	const parseInput =
-		useLiveBlockRender ? content : streamingToolPreview != null ? content : deferredContent;
+	const parseInput = content;
 	const parsedSegments = useMemo(() => {
-		if (!agentUi) return [] as AssistantSegment[];
+		if (!agentMarkdown) return [] as AssistantSegment[];
 		const t0 = performance.now();
 		if (useLiveBlockRender && liveAgentBlocksState) {
 			const result = liveBlocksToAssistantSegments(liveAgentBlocksState.blocks, t);
@@ -136,10 +140,10 @@ export function ChatMarkdown({
 			}
 		}
 		return result;
-	}, [agentUi, useLiveBlockRender, liveAgentBlocksState, parseInput, t, planUi]);
+	}, [agentMarkdown, useLiveBlockRender, liveAgentBlocksState, parseInput, t, planUi]);
 
 	const renderSegments = useMemo(() => {
-		if (!agentUi) {
+		if (!agentMarkdown) {
 			return [] as AssistantSegment[];
 		}
 		const filtered = dropParsedStreamingFileEditWhilePreview(
@@ -172,7 +176,7 @@ export function ChatMarkdown({
 			});
 		}
 		return segs;
-	}, [agentUi, parsedSegments, t, streamingToolPreview, showAgentWorking, useLiveBlockRender, liveThoughtMeta]);
+	}, [agentMarkdown, parsedSegments, t, streamingToolPreview, showAgentWorking, useLiveBlockRender, liveThoughtMeta]);
 
 	const renderUnits = useMemo(() => {
 		const out: RenderUnit[] = [];
@@ -191,27 +195,43 @@ export function ChatMarkdown({
 		return out;
 	}, [renderSegments]);
 
-	if (!agentUi) {
+	if (!agentMarkdown) {
+		const plainClass =
+			assistantBubbleVariant === 'error'
+				? `ref-md-root ref-md-root--chat-error${agentUi ? ' ref-md-root--agent-chat' : ''}`
+				: 'ref-md-root';
 		return (
-			<div className="ref-md-root">
+			<div className={plainClass}>
 				<ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
 			</div>
 		);
 	}
 
+	const agentRootClass =
+		assistantBubbleVariant === 'error'
+			? 'ref-md-root ref-md-root--agent-chat ref-md-root--chat-error'
+			: 'ref-md-root ref-md-root--agent-chat';
+
 	if (renderUnits.length === 0) {
-		return <div className="ref-md-root ref-md-root--agent-chat" />;
+		if (content.trim()) {
+			return (
+				<div className={agentRootClass}>
+					<ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+				</div>
+			);
+		}
+		return <div className={agentRootClass} />;
 	}
 	if (renderUnits.length === 1 && renderUnits[0]!.type === 'markdown') {
 		return (
-			<div className="ref-md-root ref-md-root--agent-chat">
+			<div className={agentRootClass}>
 				<ReactMarkdown remarkPlugins={[remarkGfm]}>{renderUnits[0]!.text}</ReactMarkdown>
 			</div>
 		);
 	}
 
 	return (
-		<div className="ref-md-root ref-md-root--agent-chat">
+		<div className={agentRootClass}>
 			{renderUnits.map((seg, i) => {
 				switch (seg.type) {
 					case 'markdown':

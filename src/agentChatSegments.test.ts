@@ -79,6 +79,26 @@ describe('segmentAssistantContent', () => {
 		expect(JSON.stringify(segs)).not.toContain('QUESTIONS');
 		expect(segs.some((s) => s.type === 'activity')).toBe(true);
 	});
+
+	it('yields markdown for UI chat error line (no tool protocol)', () => {
+		const segs = segmentAssistantContentUnified('错误：未配置 OpenAI 兼容 API Key。', {
+			t: defaultT,
+			planUi: false,
+		});
+		expect(segs.length).toBeGreaterThan(0);
+		expect(segs.some((s) => s.type === 'markdown')).toBe(true);
+	});
+
+	it('replaces empty structured assistant JSON with readable copy', () => {
+		const content = '{"_asyncAssistant":1,"v":1,"parts":[]}';
+		const segs = segmentAssistantContentUnified(content, { t: defaultT });
+		const md = segs.find((s) => s.type === 'markdown');
+		expect(md?.type).toBe('markdown');
+		if (md?.type === 'markdown') {
+			expect(md.text).not.toContain('_asyncAssistant');
+			expect(md.text.length).toBeGreaterThan(10);
+		}
+	});
 });
 
 describe('computeStableAgentToolProtocolPrefixLen', () => {

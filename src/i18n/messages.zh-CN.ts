@@ -489,6 +489,8 @@ export const messagesZhCN: Record<string, string> = {
 	'agent.edit.collapse': '收起预览',
 	'agent.edit.streamingPlaceholder': '正在流式接收补丁…',
 	'agent.working': '正在继续处理本次改动…',
+	'agent.emptyStructuredReply':
+		'本回合没有助手输出（模型未返回正文，且本回合没有工具记录；也可能被中断或出错）。',
 	'agent.toolPending': '{{name}}…',
 	'agent.toolProgress.executing': '正在执行：{{name}}',
 	'agent.toolProgress.detail': '{{name}}：{{detail}}',

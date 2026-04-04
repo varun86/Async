@@ -1479,6 +1479,10 @@ export function segmentAssistantContentUnified(content: string, options?: Segmen
 				merged.push(...extractToolSegments(mini, t).segments);
 			}
 		}
+		/** `parts: []` 或仅有空 text 时落盘 JSON 无可见内容，避免把原始协议串显示给用户 */
+		if (merged.length === 0) {
+			merged.push({ type: 'markdown', text: t('agent.emptyStructuredReply') });
+		}
 		out = expandSubAgentsInSegments(groupActivities(mergeAdjacentMarkdown(merged)));
 	} else {
 		out = segmentAssistantContent(content, options);
