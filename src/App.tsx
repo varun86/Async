@@ -48,6 +48,7 @@ import {
 } from './agentFileChangesPersist';
 import { mergeAgentFileChangesWithGit } from './agentFileChangesFromGit';
 import { ModelPickerDropdown, type ModelPickerItem } from './ModelPickerDropdown';
+import { GitBranchPickerDropdown } from './GitBranchPickerDropdown';
 import { VoidSelect } from './VoidSelect';
 import type { SettingsNavId } from './SettingsPage';
 import {
@@ -516,8 +517,8 @@ function GitDiffLines({ diff, t }: { diff: string; t: TFunction }) {
 	);
 }
 
-/** 圆角发送钮内：几何居中在屏上易显偏左上，viewBox 内略向右下修正 */
-const SEND_ICON_VIEWBOX_NUDGE = 'translate(12.55 13.1)';
+/** 暂停方块：水平略偏右以贴近描边类图标的观感；垂直保持 viewBox 中心 y=12，避免在圆钮内显偏下 */
+const STOP_ICON_VIEWBOX_NUDGE = 'translate(12.55 12)';
 
 function IconArrowUp({ className }: { className?: string }) {
 	return (
@@ -540,7 +541,7 @@ function IconArrowDown({ className }: { className?: string }) {
 function IconStop({ className }: { className?: string }) {
 	return (
 		<svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-			<g transform={SEND_ICON_VIEWBOX_NUDGE}>
+			<g transform={STOP_ICON_VIEWBOX_NUDGE}>
 				<rect x="-6" y="-6" width="12" height="12" rx="2" />
 			</g>
 		</svg>
@@ -979,6 +980,9 @@ export default function App() {
 	const [gitChangedPaths, setGitChangedPaths] = useState<string[]>([]);
 	/** `git:status` 成功（有仓库且本机可执行 git）；否则 Agent 改动条回退为对话解析统计 */
 	const [gitStatusOk, setGitStatusOk] = useState(false);
+	/** 与 refreshGit 同步预取的本地分支列表（供分支选择器立即展示） */
+	const [gitBranchList, setGitBranchList] = useState<string[]>([]);
+	const [gitBranchListCurrent, setGitBranchListCurrent] = useState('');
 	const [diffPreviews, setDiffPreviews] = useState<Record<string, DiffPreview>>({});
 	const [diffLoading, setDiffLoading] = useState(false);
 	const [gitActionError, setGitActionError] = useState<string | null>(null);
@@ -1023,6 +1027,12 @@ export default function App() {
 	const [layoutSwitchTarget, setLayoutSwitchTarget] = useState<LayoutMode | null>(null);
 	const [modelPickerOpen, setModelPickerOpen] = useState(false);
 	const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+	const [gitBranchPickerOpen, setGitBranchPickerOpen] = useState(false);
+	useEffect(() => {
+		if (plusMenuOpen || modelPickerOpen) {
+			setGitBranchPickerOpen(false);
+		}
+	}, [plusMenuOpen, modelPickerOpen]);
 	const [composerMode, setComposerMode] = useState<ComposerMode>(() => readComposerMode());
 	const [modelProviders, setModelProviders] = useState<UserLlmProvider[]>([]);
 	const [defaultModel, setDefaultModel] = useState('');
@@ -1278,6 +1288,7 @@ export default function App() {
 	const modelPillHeroRef = useRef<HTMLDivElement>(null);
 	const modelPillBottomRef = useRef<HTMLDivElement>(null);
 	const modelPillInlineRef = useRef<HTMLDivElement>(null);
+	const composerGitBranchAnchorRef = useRef<HTMLButtonElement>(null);
 	type ComposerAnchorSlot = 'hero' | 'bottom' | 'inline';
 	const [plusMenuAnchorSlot, setPlusMenuAnchorSlot] = useState<ComposerAnchorSlot>('bottom');
 	const [modelPickerAnchorSlot, setModelPickerAnchorSlot] = useState<ComposerAnchorSlot>('bottom');
@@ -1674,24 +1685,43 @@ export default function App() {
 		if (!shell) {
 			return;
 		}
-		const r = (await shell.invoke('git:status')) as
+		type StatusR =
 			| { ok: true; branch: string; lines: string[]; pathStatus?: GitPathStatusMap; changedPaths?: string[] }
 			| { ok: false; error?: string };
+		type ListR = { ok: true; branches: string[]; current: string } | { ok: false; error?: string };
+		const [r, lb] = (await Promise.all([
+			shell.invoke('git:status'),
+			shell.invoke('git:listBranches'),
+		])) as [StatusR, ListR];
 		if (r.ok) {
 			setGitStatusOk(true);
 			setGitBranch(r.branch || 'master');
 			setGitLines(r.lines);
 			setGitPathStatus(r.pathStatus ?? {});
 			setGitChangedPaths(r.changedPaths ?? []);
+			if (lb.ok) {
+				setGitBranchList(Array.isArray(lb.branches) ? lb.branches : []);
+				setGitBranchListCurrent(typeof lb.current === 'string' ? lb.current : '');
+			} else {
+				setGitBranchList([]);
+				setGitBranchListCurrent('');
+			}
 		} else {
 			setGitStatusOk(false);
 			setGitBranch('—');
 			setGitLines([r.error ?? 'Failed to load changes']);
 			setGitPathStatus({});
 			setGitChangedPaths([]);
+			setGitBranchList([]);
+			setGitBranchListCurrent('');
 		}
 		setTreeEpoch((n) => n + 1);
 	}, [shell]);
+
+	const onGitBranchListFresh = useCallback((b: string[], c: string) => {
+		setGitBranchList(b);
+		setGitBranchListCurrent(c);
+	}, []);
 
 	const clearAgentReviewForThread = useCallback((threadId: string) => {
 		setAgentReviewPendingByThread((prev) => {
@@ -3027,7 +3057,13 @@ export default function App() {
 		setComposerSegments([]);
 		setInlineResendSegments([]);
 		setResendFromUserIndex(null);
-		composerRichHeroRef.current?.focus();
+		queueMicrotask(() => {
+			if (composerRichBottomRef.current) {
+				composerRichBottomRef.current.focus();
+			} else {
+				composerRichHeroRef.current?.focus();
+			}
+		});
 	};
 
 	onNewThreadRef.current = onNewThread;
@@ -3888,7 +3924,13 @@ export default function App() {
 		if (rr?.ok) {
 			await refreshThreads();
 		}
-		composerRichHeroRef.current?.focus();
+		queueMicrotask(() => {
+			if (composerRichBottomRef.current) {
+				composerRichBottomRef.current.focus();
+			} else {
+				composerRichHeroRef.current?.focus();
+			}
+		});
 	}, [closeSettingsPage, shell, t, refreshThreads, loadMessages, clearStreamingToolPreviewNow]);
 
 	const onChangeModelEntries = useCallback((entries: UserModelEntry[]) => {
@@ -4552,7 +4594,13 @@ export default function App() {
 					return next;
 				});
 				setLayoutMode('agent');
-				queueMicrotask(() => composerRichHeroRef.current?.focus());
+				queueMicrotask(() => {
+					if (composerRichBottomRef.current) {
+						composerRichBottomRef.current.focus();
+					} else {
+						composerRichHeroRef.current?.focus();
+					}
+				});
 			},
 			addToNewChat: async (rel) => {
 				const r = (await shell.invoke('threads:create')) as { id: string };
@@ -4578,7 +4626,13 @@ export default function App() {
 				setInlineResendSegments([]);
 				setResendFromUserIndex(null);
 				setLayoutMode('agent');
-				queueMicrotask(() => composerRichHeroRef.current?.focus());
+				queueMicrotask(() => {
+					if (composerRichBottomRef.current) {
+						composerRichBottomRef.current.focus();
+					} else {
+						composerRichHeroRef.current?.focus();
+					}
+				});
 			},
 			rename: async (rel) => {
 				const parts = normPath(rel).split('/').filter(Boolean);
@@ -5671,7 +5725,6 @@ export default function App() {
 			if (h) {
 				h.style.height = '';
 			}
-			return;
 		}
 		applyFollowupHeight(composerRichBottomRef.current);
 		applyInlineEditHeight(composerRichInlineRef.current);
@@ -5930,17 +5983,52 @@ export default function App() {
 		persistRailWidths(defaultQuarterRailWidths());
 	}, [persistRailWidths]);
 
+	const composerGitBranchRowEl = useMemo(
+		() => (
+			<div className="ref-composer-git-branch-row">
+				<button
+					ref={composerGitBranchAnchorRef}
+					type="button"
+					className="ref-composer-git-branch-trigger"
+					title={gitStatusOk ? t('git.branchPicker.triggerTitle') : t('git.branchPicker.notRepo')}
+					aria-label={`${t('app.tabGit')}: ${gitBranch}`}
+					aria-expanded={gitBranchPickerOpen}
+					aria-haspopup="dialog"
+					disabled={!gitStatusOk}
+					onClick={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						setPlusMenuOpen(false);
+						setModelPickerOpen(false);
+						if (!gitStatusOk) {
+							return;
+						}
+						setGitBranchPickerOpen((o) => !o);
+					}}
+				>
+					<IconGitSCM className="ref-composer-git-branch-ico" aria-hidden />
+					<span className="ref-composer-git-branch-name">{gitBranch}</span>
+					<IconChevron className="ref-composer-git-branch-chev" aria-hidden />
+				</button>
+			</div>
+		),
+		[gitBranch, gitBranchPickerOpen, gitStatusOk, t]
+	);
+
 	const renderStackedChatComposer = (
 		slot: 'bottom' | 'inline',
 		composer: { segments: ComposerSegment[]; setSegments: typeof setComposerSegments; canSend: boolean },
-		extraClass?: string
+		extraClass?: string,
+		/** 仅 Agent 中间栏显示输入下方的 Git 分支行；Editor 侧栏聊天为 false */
+		showGitBranchRow = true
 	) => {
 		const richRef = slot === 'bottom' ? composerRichBottomRef : composerRichInlineRef;
 		const plusRef = slot === 'bottom' ? plusAnchorBottomRef : plusAnchorInlineRef;
 		const modelRef = slot === 'bottom' ? modelPillBottomRef : modelPillInlineRef;
 		const slotKey: ComposerAnchorSlot = slot === 'bottom' ? 'bottom' : 'inline';
 		const isBottomSlot = slot === 'bottom';
-		const inputPlaceholder = isBottomSlot ? followUpComposerPlaceholder : composerPlaceholder;
+		const inputPlaceholder =
+			isBottomSlot && hasConversation ? followUpComposerPlaceholder : composerPlaceholder;
 		const inputClass = 'ref-capsule-input ref-capsule-input--stacked-chat';
 
 		const barStart = (
@@ -6046,13 +6134,25 @@ export default function App() {
 			/>
 		);
 
-		return (
+		const capsule = (
 			<div className={['ref-capsule', 'ref-capsule--stacked-chat', extraClass].filter(Boolean).join(' ')}>
 				<div className="ref-composer-stacked-body">{richInput}</div>
 				<div className="ref-capsule-bar ref-capsule-bar--stacked">
 					{barStart}
 					{barEnd}
 				</div>
+			</div>
+		);
+		if (!isBottomSlot) {
+			return capsule;
+		}
+		if (!showGitBranchRow) {
+			return capsule;
+		}
+		return (
+			<div className="ref-composer-stack-with-branch">
+				{capsule}
+				{composerGitBranchRowEl}
 			</div>
 		);
 	};
@@ -6523,126 +6623,18 @@ export default function App() {
 					</div>
 				) : null}
 				{!isEditorRail ? agentPlanSummaryCard : null}
-				{hasConversation ? (
-					renderStackedChatComposer('bottom', {
-						segments: composerSegments,
-						setSegments: setComposerSegments,
-						canSend: canSendComposer,
-					}, undefined)
-				) : isEditorRail ? null : (
-					<>
-						<div className="ref-capsule">
-							<div className="ref-composer-hero-body">
-								<ComposerRichInput
-									innerRef={composerRichHeroRef}
-									segments={composerSegments}
-									onSegmentsChange={setComposerSegments}
-									className="ref-capsule-input"
-									placeholder={composerPlaceholder}
-									onFilePreview={(rel) => void onExplorerOpenFile(rel)}
-									onComposerAttachFiles={persistComposerAttachments}
-									onRichInput={(root) => syncComposerOverlays(root, 'hero')}
-									onRichSelect={(root) => syncComposerOverlays(root, 'hero')}
-									onKeyDown={(e) => {
-										if (slashCommand.handleSlashKeyDown(e)) {
-											return;
-										}
-										if (atMention.handleAtKeyDown(e)) {
-											return;
-										}
-										if (e.key === 'Escape' && resendFromUserIndex !== null) {
-											e.preventDefault();
-											setResendFromUserIndex(null);
-											setInlineResendSegments([]);
-											return;
-										}
-										if (e.key === 'Tab' && e.shiftKey) {
-											e.preventDefault();
-											void onNewThread();
-											return;
-										}
-										if (e.key === 'Enter' && !e.shiftKey) {
-											e.preventDefault();
-											void onSend();
-										}
-									}}
-								/>
-							</div>
-							<div className="ref-capsule-bar">
-								<div className="ref-plus-anchor ref-editor-rail-mode-cluster" ref={plusAnchorHeroRef}>
-									<button
-										type="button"
-										className={`ref-mode-chip ref-mode-chip--${composerMode} ref-mode-chip--opens-menu is-active`}
-										aria-expanded={plusMenuOpen}
-										aria-haspopup="menu"
-										title={t('app.addPlusTitle')}
-										aria-label={t('app.addPlusAria')}
-										onClick={() => {
-											setPlusMenuAnchorSlot('hero');
-											setModelPickerOpen(false);
-											setPlusMenuOpen((o) => !o);
-										}}
-									>
-										<ComposerModeIcon mode={composerMode} className="ref-mode-chip-ico" />
-										<span className="ref-mode-chip-label">{composerModeLabel(composerMode, t)}</span>
-										<IconChevron className="ref-mode-chip-menu-chev" />
-									</button>
-								</div>
-								<div className="ref-model-pill-anchor" ref={modelPillHeroRef}>
-									<button
-										type="button"
-										className="ref-model-pill"
-										aria-expanded={modelPickerOpen}
-										aria-haspopup="listbox"
-										onClick={() => {
-											setModelPickerAnchorSlot('hero');
-											setPlusMenuOpen(false);
-											setModelPickerOpen((o) => !o);
-										}}
-									>
-										<span className="ref-model-name">{modelPillLabel}</span>
-										<IconChevron className="ref-model-chev" />
-									</button>
-								</div>
-								<div className="ref-capsule-bar-spacer" />
-								<button
-									type="button"
-									className={`ref-send-btn ${awaitingReply ? 'is-stop' : ''}`}
-									title={awaitingReply ? t('app.stopGeneration') : t('app.send')}
-									aria-label={awaitingReply ? t('app.stopGeneration') : t('app.send')}
-									disabled={!awaitingReply && !canSendComposer}
-									onClick={() => (awaitingReply ? void onAbort() : void onSend())}
-								>
-									{awaitingReply ? (
-										<IconStop className="ref-send-icon" />
-									) : (
-										<IconArrowUp className="ref-send-icon" />
-									)}
-								</button>
-							</div>
-						</div>
-						<div className="ref-quick-actions">
-							<button
-								type="button"
-								className="ref-quick-pill"
-								onClick={() => {
-									setComposerModePersist('plan');
-									void onNewThread();
-								}}
-							>
-								{t('app.planNewIdea')}
-								<kbd className="ref-kbd">Shift+Tab</kbd>
-							</button>
-							<button
-								type="button"
-								className="ref-quick-pill"
-								onClick={() => setWorkspaceToolsOpen(true)}
-							>
-								{t('app.quickTerminal')}
-							</button>
-						</div>
-					</>
-				)}
+				{hasConversation || !isEditorRail
+					? renderStackedChatComposer(
+							'bottom',
+							{
+								segments: composerSegments,
+								setSegments: setComposerSegments,
+								canSend: canSendComposer,
+							},
+							undefined,
+							!isEditorRail
+						)
+					: null}
 			</div>
 		);
 
@@ -9009,6 +9001,20 @@ export default function App() {
 				anchorRef={plusMenuAnchorRefForDropdown}
 				mode={composerMode}
 				onSelectMode={setComposerModePersist}
+			/>
+
+			<GitBranchPickerDropdown
+				open={gitBranchPickerOpen}
+				onClose={() => setGitBranchPickerOpen(false)}
+				anchorRef={composerGitBranchAnchorRef}
+				shell={shell ?? null}
+				repoReady={gitStatusOk}
+				branches={gitBranchList}
+				listCurrent={gitBranchListCurrent}
+				onBranchListFresh={onGitBranchListFresh}
+				displayBranch={gitBranch}
+				onAfterGitChange={() => void refreshGit()}
+				onNotify={showTransientToast}
 			/>
 
 			<ModelPickerDropdown

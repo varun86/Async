@@ -1886,6 +1886,57 @@ export function registerIpc(): void {
 		}
 	});
 
+	ipcMain.handle('git:listBranches', async () => {
+		try {
+			const root = getWorkspaceRoot();
+			if (!root) {
+				return { ok: false as const, error: 'No workspace' };
+			}
+			const top = await gitService.gitRevParseShowToplevel();
+			if (!top) {
+				return { ok: false as const, error: 'Not a Git repository' };
+			}
+			const { branches, current } = await gitService.gitListLocalBranches();
+			return { ok: true as const, branches, current };
+		} catch (e) {
+			return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+		}
+	});
+
+	ipcMain.handle('git:checkoutBranch', async (_e, branch: string) => {
+		try {
+			const root = getWorkspaceRoot();
+			if (!root) {
+				return { ok: false as const, error: 'No workspace' };
+			}
+			const top = await gitService.gitRevParseShowToplevel();
+			if (!top) {
+				return { ok: false as const, error: 'Not a Git repository' };
+			}
+			await gitService.gitSwitchBranch(typeof branch === 'string' ? branch : '');
+			return { ok: true as const };
+		} catch (e) {
+			return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+		}
+	});
+
+	ipcMain.handle('git:createBranch', async (_e, name: string) => {
+		try {
+			const root = getWorkspaceRoot();
+			if (!root) {
+				return { ok: false as const, error: 'No workspace' };
+			}
+			const top = await gitService.gitRevParseShowToplevel();
+			if (!top) {
+				return { ok: false as const, error: 'Not a Git repository' };
+			}
+			await gitService.gitCreateBranchAndSwitch(typeof name === 'string' ? name : '');
+			return { ok: true as const };
+		} catch (e) {
+			return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+		}
+	});
+
 	ipcMain.handle(
 		'plan:save',
 		(_e, payload: { filename: string; content: string }) => {

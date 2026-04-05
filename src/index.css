@@ -144,6 +144,7 @@ html[data-theme-switching='true'] .ref-capsule,
 html[data-theme-switching='true'] .ref-at-menu,
 html[data-theme-switching='true'] .ref-slash-menu,
 html[data-theme-switching='true'] .ref-model-dd,
+html[data-theme-switching='true'] .ref-git-branch-dd,
 html[data-theme-switching='true'] .ref-agent-plan-doc-surface,
 html[data-theme-switching='true'] .ref-editor-launchpad,
 html[data-theme-switching='true'] .ref-editor-welcome-panel {
@@ -2916,10 +2917,11 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 }
 
 /* ?????????????????????? Cursor ????? */
+/* —— Agent 有对话：整块「输入 + Git 行」离窗口底 = 本段 padding-bottom + 下方 .ref-center--chat .ref-command-stack 的 margin-bottom —— */
 .ref-center--chat {
 	--ref-center-composer-lift: 0px;
 	--ref-chat-tail-space: clamp(72px, 8vh, 108px);
-	padding-bottom: 16px;
+	padding-bottom: 14px;
 }
 
 .ref-center--agent-layout {
@@ -2927,8 +2929,19 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	padding-inline: 28px;
 }
 
+/* Agent 中间栏底边距：有/无对话同一套堆叠输入，离底一致（mac-codex 见 mac-codex.css） */
+.ref-center.ref-center--agent-layout.ref-center--chat {
+	padding-bottom: max(14px, env(safe-area-inset-bottom, 0px));
+}
+
+.ref-center.ref-center--agent-layout.ref-center--empty-agent {
+	padding-bottom: max(14px, env(safe-area-inset-bottom, 0px));
+}
+
+/* —— Agent 空状态：与有对话共用底部堆叠输入，lift 与 chat 对齐 —— */
 .ref-center--empty-agent {
-	--ref-center-composer-lift: clamp(18px, 4vh, 52px);
+	--ref-center-composer-lift: 0px;
+	padding-bottom: 2px;
 }
 
 .ref-center--empty-agent .ref-hero-spacer {
@@ -2937,7 +2950,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 
 .ref-center--empty-agent .ref-command-stack {
 	margin-top: auto;
-	margin-bottom: clamp(10px, 2vh, 18px);
+	margin-bottom: 0;
 }
 
 .ref-center--chat .ref-messages {
@@ -2985,9 +2998,10 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	background: var(--void-scrollbar-thumb-active);
 }
 
+/* 有对话时底部输入区：与 .ref-center--chat 的 padding-bottom 一起决定离底距离 */
 .ref-center--chat .ref-command-stack {
 	margin-top: auto;
-	margin-bottom: 14px;
+	margin-bottom: 0;
 	max-width: min(100%, 720px);
 	width: 100%;
 	align-self: center;
@@ -5415,6 +5429,353 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	flex-direction: column;
 	gap: 4px;
 	min-width: 0;
+}
+
+/* 输入胶囊外下方：当前 Git 分支（与输入区分离，右对齐） */
+.ref-composer-stack-with-branch {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 14px;
+	width: 100%;
+	min-width: 0;
+}
+
+.ref-composer-git-branch-row {
+	display: flex;
+	justify-content: flex-end;
+	padding: 0 14px 0 8px;
+}
+
+.ref-composer-git-branch-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+	padding: 5px 12px 5px 10px;
+	border: 1px solid var(--void-border-soft);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--void-bg-2) 88%, transparent);
+	color: var(--void-fg-1);
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 1.2;
+	font-family: inherit;
+	cursor: pointer;
+	transition:
+		color 0.15s ease,
+		background 0.15s ease,
+		border-color 0.15s ease;
+}
+
+.ref-composer-git-branch-trigger:hover:not(:disabled) {
+	color: var(--void-fg-0);
+	background: color-mix(in srgb, var(--void-bg-3) 90%, transparent);
+	border-color: var(--void-border);
+}
+
+.ref-composer-git-branch-trigger:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.ref-composer-git-branch-trigger[aria-expanded='true']:not(:disabled) {
+	border-color: color-mix(in srgb, var(--void-ring) 35%, var(--void-border));
+	background: color-mix(in srgb, var(--void-ring) 8%, var(--void-bg-2));
+}
+
+.ref-composer-git-branch-ico {
+	display: block;
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+	opacity: 0.92;
+}
+
+.ref-composer-git-branch-name {
+	max-width: min(200px, 48vw);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ref-composer-git-branch-chev {
+	display: block;
+	width: 10px;
+	height: 10px;
+	flex-shrink: 0;
+	opacity: 0.75;
+}
+
+/* Git 分支选择器（输入区右下角触发器上方） */
+.ref-git-branch-dd {
+	position: fixed;
+	z-index: 2200;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow-x: hidden;
+	overflow-y: auto;
+	border-radius: 14px;
+	border: 1px solid var(--void-border);
+	background: var(--void-bg-1);
+	box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+
+:root[data-color-scheme='light'] .ref-git-branch-dd {
+	box-shadow:
+		0 4px 24px color-mix(in srgb, black 10%, transparent),
+		0 0 0 1px color-mix(in srgb, var(--void-border) 40%, transparent);
+}
+
+.ref-git-branch-dd--above {
+	box-shadow: 0 -12px 60px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-color-scheme='light'] .ref-git-branch-dd--above {
+	box-shadow:
+		0 -8px 32px color-mix(in srgb, black 8%, transparent),
+		0 0 0 1px color-mix(in srgb, var(--void-border) 40%, transparent);
+}
+
+.ref-git-branch-dd-search {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 10px 10px 6px;
+	padding: 0 10px;
+	height: 34px;
+	border-radius: 10px;
+	background: var(--void-bg-2);
+	border: 1px solid var(--void-border-soft);
+}
+
+.ref-git-branch-dd-search-ico {
+	flex-shrink: 0;
+	opacity: 0.55;
+	color: var(--void-fg-3);
+}
+
+.ref-git-branch-dd-search-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 100%;
+	border: none;
+	background: transparent;
+	color: var(--void-fg-0);
+	font-size: 12px;
+	font-family: inherit;
+	outline: none;
+}
+
+.ref-git-branch-dd-search-input::placeholder {
+	color: var(--void-fg-3);
+}
+
+.ref-git-branch-dd-section-label {
+	flex-shrink: 0;
+	padding: 8px 14px 4px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: var(--void-fg-3);
+	text-transform: none;
+}
+
+.ref-git-branch-dd-list {
+	flex: 0 1 auto;
+	min-height: min(120px, 28vh);
+	max-height: min(280px, 42vh);
+	overflow-x: hidden;
+	overflow-y: auto;
+	padding: 2px 8px 8px;
+}
+
+.ref-git-branch-dd-muted {
+	padding: 12px 12px 8px;
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--void-fg-3);
+}
+
+.ref-git-branch-dd-err {
+	color: color-mix(in srgb, var(--void-danger, #f87171) 92%, var(--void-fg-2));
+}
+
+.ref-git-branch-dd-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	margin: 0;
+	padding: 9px 10px;
+	border: none;
+	border-radius: 10px;
+	background: transparent;
+	color: var(--void-fg-0);
+	font-size: 12px;
+	font-weight: 500;
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+	outline: none;
+	transition: background 0.12s ease;
+}
+
+.ref-git-branch-dd-row:hover:not(:disabled),
+.ref-git-branch-dd-row:focus-visible {
+	background: var(--void-bg-2);
+}
+
+.ref-git-branch-dd-row:disabled {
+	opacity: 0.55;
+	cursor: wait;
+}
+
+.ref-git-branch-dd-row.is-current {
+	background: color-mix(in srgb, var(--void-fg-0) 5%, transparent);
+}
+
+.ref-git-branch-dd-row-ico {
+	flex-shrink: 0;
+	opacity: 0.72;
+	color: var(--void-fg-2);
+}
+
+.ref-git-branch-dd-row-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ref-git-branch-dd-row-check {
+	flex-shrink: 0;
+	color: var(--void-ring);
+	opacity: 0.95;
+}
+
+.ref-git-branch-dd-row-check-spacer {
+	width: 14px;
+	flex-shrink: 0;
+}
+
+.ref-git-branch-dd-sep {
+	flex-shrink: 0;
+	height: 1px;
+	margin: 0 10px;
+	background: var(--void-border-soft);
+}
+
+.ref-git-branch-dd-footer {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: calc(100% - 16px);
+	margin: 6px 8px 10px;
+	padding: 10px 10px;
+	border: none;
+	border-radius: 10px;
+	background: transparent;
+	color: var(--void-fg-0);
+	font-size: 12px;
+	font-weight: 500;
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: background 0.12s ease;
+}
+
+.ref-git-branch-dd-footer:hover:not(:disabled) {
+	background: var(--void-bg-2);
+}
+
+.ref-git-branch-dd-footer:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.ref-git-branch-dd-footer-ico {
+	flex-shrink: 0;
+	opacity: 0.65;
+	color: var(--void-fg-2);
+}
+
+.ref-git-branch-dd-create {
+	flex-shrink: 0;
+	padding: 4px 10px 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.ref-git-branch-dd-create-input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 8px 10px;
+	border-radius: 10px;
+	border: 1px solid var(--void-border);
+	background: var(--void-bg-2);
+	color: var(--void-fg-0);
+	font-size: 12px;
+	font-family: inherit;
+	outline: none;
+}
+
+.ref-git-branch-dd-create-input:focus {
+	border-color: color-mix(in srgb, var(--void-ring) 45%, var(--void-border));
+}
+
+.ref-git-branch-dd-create-input::placeholder {
+	color: var(--void-fg-3);
+}
+
+.ref-git-branch-dd-create-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.ref-git-branch-dd-btn-secondary,
+.ref-git-branch-dd-btn-primary {
+	padding: 6px 12px;
+	border-radius: 8px;
+	font-size: 12px;
+	font-weight: 500;
+	font-family: inherit;
+	cursor: pointer;
+	border: 1px solid transparent;
+}
+
+.ref-git-branch-dd-btn-secondary {
+	background: transparent;
+	color: var(--void-fg-2);
+	border-color: var(--void-border-soft);
+}
+
+.ref-git-branch-dd-btn-secondary:hover:not(:disabled) {
+	background: var(--void-bg-2);
+	color: var(--void-fg-0);
+}
+
+.ref-git-branch-dd-btn-primary {
+	background: color-mix(in srgb, var(--void-ring) 22%, var(--void-bg-3));
+	color: var(--void-fg-0);
+	border-color: color-mix(in srgb, var(--void-ring) 40%, var(--void-border));
+}
+
+.ref-git-branch-dd-btn-primary:hover:not(:disabled) {
+	filter: brightness(1.06);
+}
+
+.ref-git-branch-dd-btn-primary:disabled,
+.ref-git-branch-dd-btn-secondary:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
 }
 
 .ref-composer-hero-body {

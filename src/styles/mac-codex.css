@@ -3245,8 +3245,17 @@
 	padding: 20px 30px 22px;
 }
 
+/* Agent：须写在 agent-layout padding shorthand 之后。有/无对话底距一致 */
+:root[data-ui-style='mac-codex'] .ref-center--agent-layout.ref-center--chat {
+	padding-bottom: max(14px, env(safe-area-inset-bottom, 0px));
+}
+
+:root[data-ui-style='mac-codex'] .ref-center--agent-layout.ref-center--empty-agent {
+	padding-bottom: max(14px, env(safe-area-inset-bottom, 0px));
+}
+
 :root[data-ui-style='mac-codex'] .ref-center--empty-agent {
-	--ref-center-composer-lift: clamp(10px, 3vh, 36px);
+	--ref-center-composer-lift: 0px;
 }
 
 :root[data-ui-style='mac-codex'] .ref-center--empty-agent .ref-hero-spacer {
@@ -3254,7 +3263,7 @@
 }
 
 :root[data-ui-style='mac-codex'] .ref-center--empty-agent .ref-command-stack {
-	margin-bottom: clamp(8px, 1.8vh, 16px);
+	margin-bottom: 0;
 }
 
 :root[data-ui-style='mac-codex'] .ref-center--agent-layout .ref-context-block--agent {

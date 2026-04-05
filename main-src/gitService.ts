@@ -193,6 +193,55 @@ export async function gitPush(): Promise<void> {
 	await git(['push']);
 }
 
+/** 本地分支列表（按最近提交排序）；`current` 为 `git branch --show-current`，detached 时可能为空 */
+export async function gitListLocalBranches(): Promise<{ branches: string[]; current: string }> {
+	try {
+		const out = await git(['-c', 'color.ui=false', 'branch', '--list', '--sort=-committerdate']);
+		const branches: string[] = [];
+		let currentFromStar = '';
+		for (const line of out.split(/\r?\n/)) {
+			const trimmed = line.trim();
+			if (!trimmed) {
+				continue;
+			}
+			const isCur = trimmed.startsWith('*');
+			const name = trimmed.replace(/^\*\s+/, '').trim();
+			if (!name || name.startsWith('(')) {
+				continue;
+			}
+			if (isCur) {
+				currentFromStar = name;
+			}
+			branches.push(name);
+		}
+		const current = currentFromStar || (await gitBranch());
+		return { branches, current };
+	} catch {
+		return { branches: [], current: '' };
+	}
+}
+
+function assertSafeBranchSegment(name: string): string {
+	const n = name.trim();
+	if (!n || n.length > 240) {
+		throw new Error('Invalid branch name');
+	}
+	if (/[\n\r\0]/.test(n) || n.startsWith('-') || n.includes('..')) {
+		throw new Error('Invalid branch name');
+	}
+	return n;
+}
+
+export async function gitSwitchBranch(branch: string): Promise<void> {
+	const b = assertSafeBranchSegment(branch);
+	await git(['switch', '--', b]);
+}
+
+export async function gitCreateBranchAndSwitch(name: string): Promise<void> {
+	const n = assertSafeBranchSegment(name);
+	await git(['switch', '-c', '--', n]);
+}
+
 function isBinaryBuffer(buf: Buffer): boolean {
 	const n = Math.min(buf.length, 8000);
 	for (let i = 0; i < n; i++) {
