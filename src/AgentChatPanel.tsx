@@ -7,6 +7,7 @@ import {
 	type RefObject,
 	type SetStateAction,
 } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { ChatMarkdown } from './ChatMarkdown';
 import { AgentReviewPanel } from './AgentReviewPanel';
 import { AgentFileChangesPanel } from './AgentFileChanges';
@@ -130,6 +131,9 @@ export type AgentChatPanelProps = {
 	agentPlanSummaryCard: ReactNode;
 };
 
+/** 达到条数后启用虚拟列表（与 .ref-messages-track 的 gap 对齐，减轻长对话 DOM 压力） */
+const MESSAGE_LIST_VIRTUAL_THRESHOLD = 48;
+
 export const AgentChatPanel = memo(function AgentChatPanel({
 	layout = 'agent-center',
 	t,
@@ -210,11 +214,26 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	agentPlanSummaryCard,
 }: AgentChatPanelProps) {
 	const isEditorRail = layout === 'editor-rail';
+	const conversationRenderKey = messagesThreadId ?? currentId ?? 'no-thread';
+	const messageTrackGap = isEditorRail ? 20 : 22;
+	const virtualListEnabled =
+		hasConversation && displayMessages.length >= MESSAGE_LIST_VIRTUAL_THRESHOLD;
 
-	const renderChatMessageList = (): ReactNode[] => {
-		const t0 = import.meta.env.DEV ? performance.now() : 0;
-		const nodes = displayMessages.map((m, i) => {
-			const convoKey = messagesThreadId ?? currentId ?? 'no-thread';
+	const virtualizer = useVirtualizer({
+		count: virtualListEnabled ? displayMessages.length : 0,
+		getScrollElement: () => messagesViewportRef.current,
+		estimateSize: () => 140,
+		overscan: 12,
+		gap: messageTrackGap,
+		getItemKey: (index) => `${conversationRenderKey}-${index}`,
+	});
+
+	const messageNodeAtIndex = (i: number): ReactNode => {
+			const m = displayMessages[i];
+			if (!m) {
+				return null;
+			}
+			const convoKey = conversationRenderKey;
 			const isLast = i === displayMessages.length - 1;
 			const stAt = streamStartedAtRef.current;
 			const ftAt = firstTokenAtRef.current;
@@ -374,7 +393,11 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 					{thoughtBlock && thoughtAfterBody ? thoughtBlock : null}
 				</div>
 			);
-		});
+	};
+
+	const buildFlatMessageList = (): ReactNode[] => {
+		const t0 = import.meta.env.DEV ? performance.now() : 0;
+		const nodes = displayMessages.map((_, i) => messageNodeAtIndex(i)) as ReactNode[];
 		if (import.meta.env.DEV) {
 			const elapsed = performance.now() - t0;
 			if (elapsed > 12) {
@@ -386,16 +409,50 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		return nodes;
 	};
 
-	const conversationRenderKey = messagesThreadId ?? currentId ?? 'no-thread';
 	const messagesEl = hasConversation ? (
-		<div className="ref-messages" ref={messagesViewportRef} onScroll={onMessagesScroll}>
-			<div
-				key={`messages-track-${conversationRenderKey}`}
-				className="ref-messages-track"
-				ref={messagesTrackRef}
-			>
-				{renderChatMessageList()}
-			</div>
+		<div
+			className={`ref-messages${virtualListEnabled ? ' ref-messages--virtual' : ''}`}
+			ref={messagesViewportRef}
+			onScroll={onMessagesScroll}
+		>
+			{virtualListEnabled ? (
+				<div
+					key={`messages-track-${conversationRenderKey}`}
+					ref={messagesTrackRef}
+					className="ref-messages-track ref-messages-track--virtual"
+					style={{
+						height: `${virtualizer.getTotalSize()}px`,
+						position: 'relative',
+						width: '100%',
+					}}
+				>
+					{virtualizer.getVirtualItems().map((vi) => (
+						<div
+							key={vi.key}
+							data-index={vi.index}
+							ref={virtualizer.measureElement}
+							className="ref-msg-virtual-row"
+							style={{
+								position: 'absolute',
+								top: 0,
+								left: 0,
+								width: '100%',
+								transform: `translateY(${vi.start}px)`,
+							}}
+						>
+							{messageNodeAtIndex(vi.index)}
+						</div>
+					))}
+				</div>
+			) : (
+				<div
+					key={`messages-track-${conversationRenderKey}`}
+					className="ref-messages-track"
+					ref={messagesTrackRef}
+				>
+					{buildFlatMessageList()}
+				</div>
+			)}
 		</div>
 	) : null;
 

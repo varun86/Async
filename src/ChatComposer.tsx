@@ -1,4 +1,12 @@
-import { type Dispatch, type KeyboardEvent, type ReactNode, type RefObject, type SetStateAction } from 'react';
+import {
+	type Dispatch,
+	type KeyboardEvent,
+	type ReactNode,
+	type RefObject,
+	type SetStateAction,
+	useContext,
+} from 'react';
+import { ComposerActionsContext } from './ComposerActionsContext';
 import { ComposerModeIcon, composerModeLabel, type ComposerMode } from './ComposerPlusMenu';
 import { ComposerRichInput } from './ComposerRichInput';
 import { type ComposerSegment } from './composerSegments';
@@ -47,10 +55,11 @@ interface ChatComposerProps {
 	setModelPickerOpen: Dispatch<SetStateAction<boolean>>;
 	setPlusMenuOpen: Dispatch<SetStateAction<boolean>>;
 	setModelPickerAnchorSlot: (slot: ComposerAnchorSlot) => void;
-	onAbort: () => void;
-	onSend: () => void;
-	onNewThread: () => void;
-	onExplorerOpenFile: (rel: string) => void;
+	/** 未传时尝试使用 ComposerActionsContext（App 根已提供） */
+	onAbort?: () => void;
+	onSend?: () => void;
+	onNewThread?: () => void;
+	onExplorerOpenFile?: (rel: string) => void;
 	persistComposerAttachments: (files: File[]) => Promise<string[]>;
 	syncComposerOverlays: (root: HTMLElement, slot: AtComposerSlot) => void;
 	setResendFromUserIndex: Dispatch<SetStateAction<number | null>>;
@@ -102,6 +111,14 @@ export function ChatComposer({
 	atMentionKeyDown,
 }: ChatComposerProps) {
 	const { t } = useI18n();
+	const injected = useContext(ComposerActionsContext);
+	const onSendFn = injected?.onSend ?? onSend;
+	const onAbortFn = injected?.onAbort ?? onAbort;
+	const onNewThreadFn = injected?.onNewThread ?? onNewThread;
+	const onExplorerOpenFileFn = injected?.onExplorerOpenFile ?? onExplorerOpenFile;
+	if (!onSendFn || !onAbortFn || !onNewThreadFn || !onExplorerOpenFileFn) {
+		throw new Error('ChatComposer requires onSend/onAbort/onNewThread/onExplorerOpenFile or ComposerActionsProvider');
+	}
 	const isHero = variant === 'editor-hero';
 	const richRef =
 		slot === 'hero'
@@ -136,12 +153,12 @@ export function ChatComposer({
 		}
 		if (e.key === 'Tab' && e.shiftKey) {
 			e.preventDefault();
-			onNewThread();
+			onNewThreadFn();
 			return;
 		}
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
-			onSend();
+			onSendFn();
 		}
 	};
 
@@ -162,7 +179,7 @@ export function ChatComposer({
 					onSegmentsChange={setSegments}
 					className={isHero ? 'ref-capsule-input' : 'ref-capsule-input ref-capsule-input--stacked-chat'}
 					placeholder={inputPlaceholder}
-					onFilePreview={(rel) => onExplorerOpenFile(rel)}
+					onFilePreview={(rel) => onExplorerOpenFileFn(rel)}
 					onComposerAttachFiles={persistComposerAttachments}
 					onRichInput={(root) => syncComposerOverlays(root, slot)}
 					onRichSelect={(root) => syncComposerOverlays(root, slot)}
@@ -235,7 +252,7 @@ export function ChatComposer({
 						title={awaitingReply ? t('app.stopGeneration') : t('app.send')}
 						aria-label={awaitingReply ? t('app.stopGeneration') : t('app.send')}
 						disabled={!awaitingReply && !canSend}
-						onClick={() => (awaitingReply ? onAbort() : onSend())}
+						onClick={() => (awaitingReply ? onAbortFn() : onSendFn())}
 					>
 						{awaitingReply ? <IconStop className="ref-send-icon" /> : <IconArrowUp className="ref-send-icon" />}
 					</button>

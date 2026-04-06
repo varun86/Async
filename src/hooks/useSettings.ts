@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import type { SettingsNavId } from '../SettingsPage';
 import type { EditorSettings } from '../EditorSettingsPanel';
 import { defaultEditorSettings } from '../EditorSettingsPanel';
-import { normalizeIndexingSettings, type IndexingSettingsState } from '../indexingSettingsTypes';
+import type { IndexingSettingsState } from '../indexingSettingsTypes';
 import type { McpServerConfig, McpServerStatus } from '../mcpTypes';
 import {
 	coerceDefaultModel,
@@ -71,11 +71,10 @@ export function useSettings(
 	const [workspaceDiskSkills, setWorkspaceDiskSkills] = useState<AgentSkill[]>([]);
 	const [diskSkillsRefreshTicker, setDiskSkillsRefreshTicker] = useState(0);
 
-	// ── Editor / MCP / Indexing ──
+	// ── Editor / MCP ──
 	const [editorSettings, setEditorSettings] = useState<EditorSettings>(() => defaultEditorSettings());
 	const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
 	const [mcpStatuses, setMcpStatuses] = useState<McpServerStatus[]>([]);
-	const [indexingSettings, setIndexingSettings] = useState<IndexingSettingsState>(() => normalizeIndexingSettings());
 
 	// ── Settings page UI ──
 	const [settingsPageOpen, setSettingsPageOpen] = useState(false);
@@ -243,7 +242,6 @@ export function useSettings(
 		if (st?.editor) {
 			setEditorSettings({ ...defaultEditorSettings(), ...st.editor });
 		}
-		setIndexingSettings(normalizeIndexingSettings(st?.indexing));
 	}, []);
 
 	useEffect(() => {
@@ -318,11 +316,10 @@ export function useSettings(
 		refreshWorkspaceDiskSkills,
 		mergedAgentCustomization,
 		onChangeMergedAgentCustomization,
-		// Editor / MCP / Indexing
+		// Editor / MCP
 		editorSettings, setEditorSettings,
 		mcpServers, setMcpServers,
 		mcpStatuses, setMcpStatuses,
-		indexingSettings, setIndexingSettings,
 		// Settings page
 		settingsPageOpen, setSettingsPageOpen,
 		settingsInitialNav,

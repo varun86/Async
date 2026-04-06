@@ -1,8 +1,9 @@
 import Editor, { DiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNS } from 'monaco-editor';
-import { memo, type MouseEventHandler, type ReactNode } from 'react';
+import { memo, type MouseEventHandler } from 'react';
 import { BrandLogo } from './BrandLogo';
 import { ChatMarkdown } from './ChatMarkdown';
+import { EditorFileBreadcrumb } from './EditorFileBreadcrumb';
 import {
 	EditorTabBar,
 	type EditorTab,
@@ -20,13 +21,12 @@ import type { ModelPickerItem } from './ModelPickerDropdown';
 import { PtyTerminalView } from './PtyTerminalView';
 import { VoidSelect } from './VoidSelect';
 
-type Props = {
+export type EditorMainPanelProps = {
 	t: TFunction;
 	openTabs: EditorTab[];
 	activeTabId: string | null;
 	onSelectTab: (id: string) => void;
 	onCloseTab: (id: string) => void;
-	renderFileBreadcrumb: (filePath: string) => ReactNode;
 	showEditorPlanDocumentInCenter: boolean;
 	planFileRelPath: string | null;
 	planFilePath: string | null;
@@ -83,7 +83,6 @@ export const EditorMainPanel = memo(function EditorMainPanel({
 	activeTabId,
 	onSelectTab,
 	onCloseTab,
-	renderFileBreadcrumb,
 	showEditorPlanDocumentInCenter,
 	planFileRelPath,
 	planFilePath,
@@ -126,7 +125,7 @@ export const EditorMainPanel = memo(function EditorMainPanel({
 	appendEditorTerminal,
 	closeEditorTerminalPanel,
 	onEditorTerminalSessionExit,
-}: Props) {
+}: EditorMainPanelProps) {
 	return (
 		<main
 			className="ref-center ref-center--editor-workspace ref-center--editor-shell"
@@ -207,7 +206,7 @@ export const EditorMainPanel = memo(function EditorMainPanel({
 						<>
 							<div className="ref-editor-bc-toolbar-row">
 								<div className="ref-editor-bc-toolbar-inner">
-									{renderFileBreadcrumb(filePath)}
+									<EditorFileBreadcrumb filePath={filePath} />
 									<div className="ref-editor-bc-actions">
 										{markdownPaneMode != null ? (
 											<div
