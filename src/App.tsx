@@ -29,13 +29,9 @@ import {
 	type TurnTokenUsage,
 } from './ipcTypes';
 import { applyLiveAgentChatPayload } from './liveAgentBlocks';
-import { AgentReviewPanel } from './AgentReviewPanel';
-import { AgentFileChangesPanel } from './AgentFileChanges';
-import { AgentFilePreviewPanel } from './AgentFilePreviewPanel';
 import { buildAgentFilePreviewHunks } from './agentFilePreviewDiff';
 import {
 	agentChangeKeyFromDiff,
-	assistantMessageUsesAgentToolProtocol,
 	segmentAssistantContentUnified,
 	collectFileChanges,
 	countDiffAddDel,
@@ -87,16 +83,8 @@ import {
 	type UserModelEntry,
 } from './modelCatalog';
 import { ComposerPlusMenu, type ComposerMode } from './ComposerPlusMenu';
-import { ComposerThoughtBlock } from './ComposerThoughtBlock';
 import { ComposerAtMenu } from './ComposerAtMenu';
 import { ComposerSlashMenu } from './ComposerSlashMenu';
-import { PlanQuestionDialog } from './PlanQuestionDialog';
-import { SkillScopeDialog } from './SkillScopeDialog';
-import { RuleWizardDialog } from './RuleWizardDialog';
-import { SubagentScopeDialog } from './SubagentScopeDialog';
-import { ToolApprovalInlineCard } from './ToolApprovalCard';
-import { AgentMistakeLimitDialog } from './AgentMistakeLimitDialog';
-import { PlanReviewPanel } from './PlanReviewPanel';
 import { flattenAssistantTextPartsForSearch } from './agentStructuredMessage';
 import {
 	parseQuestions,
@@ -122,7 +110,6 @@ import { getAtMentionRange } from './composerAtMention';
 import { textBeforeCaretForAt } from './composerRichDom';
 import { useComposerAtMention, type AtComposerSlot } from './useComposerAtMention';
 import { useComposerSlashCommand } from './useComposerSlashCommand';
-import { UserMessageRich } from './UserMessageRich';
 import { BrandLogo } from './BrandLogo';
 import {
 	defaultAgentCustomization,
@@ -139,7 +126,6 @@ import { defaultEditorSettings, editorSettingsToMonacoOptions, type EditorSettin
 import type { McpServerConfig, McpServerStatus } from './mcpTypes';
 import { EditorTabBar, tabIdFromPath, type MarkdownTabView } from './EditorTabBar';
 import {
-	initialMarkdownViewForTab,
 	isMarkdownEditorPath,
 	markdownViewForTab,
 	stripLeadingYamlFrontmatter,
@@ -156,17 +142,20 @@ import { voidShellDebugLog } from './tabCloseDebug';
 import {
 	classifyGitUnavailableReason,
 	gitBranchTriggerTitle,
-	gitUnavailableCopy,
 	type GitUnavailableReason,
 } from './gitAvailability';
-import { deriveOriginalContentFromUnifiedDiff } from './editorInlineDiff';
 import {
-	IconArrowDown, IconExplorer, IconCloudOutline, IconServerOutline,
+	IconExplorer, IconCloudOutline, IconServerOutline,
 	IconGitSCM, IconSearch, IconRefresh, IconDoc, IconChevron,
 	IconPlus, IconCloseSmall, IconPencil, IconTrash, IconCheckCircle, IconSettings,
-	IconPlugin, IconHistory, IconDotsHorizontal, IconArrowUpRight, IconEye,
+	IconHistory, IconDotsHorizontal, IconArrowUpRight,
 } from './icons';
 import { useGitIntegration } from './hooks/useGitIntegration';
+import { useFileOperations, type AgentConversationFileOpenOptions } from './hooks/useFileOperations';
+import { useWorkspaceActions } from './hooks/useWorkspaceActions';
+import { useAgentChatPanelProps } from './hooks/useAgentChatPanelProps';
+import { useAgentRightSidebarProps } from './hooks/useAgentRightSidebarProps';
+import { useAgentLeftSidebarProps } from './hooks/useAgentLeftSidebarProps';
 import { useWorkspaceManager } from './hooks/useWorkspaceManager';
 import { useThreads } from './hooks/useThreads';
 import { type ThreadInfo } from './threadTypes';
@@ -180,9 +169,11 @@ import {
 	EDITOR_TERMINAL_H_MIN,
 	EDITOR_TERMINAL_HEIGHT_KEY,
 } from './hooks/useEditorTabs';
-import { ChatComposer, type ComposerAnchorSlot } from './ChatComposer';
+import { AgentChatPanel } from './AgentChatPanel';
+import { AgentLeftSidebar } from './AgentLeftSidebar';
+import { AgentRightSidebar } from './AgentRightSidebar';
+import type { ComposerAnchorSlot } from './ChatComposer';
 import { EditorLeftSidebar } from './EditorLeftSidebar';
-import { changeBadgeLabel, GitUnavailableState } from './gitBadge';
 
 const SettingsPage = lazy(() => import('./SettingsPage').then((m) => ({ default: m.SettingsPage })));
 
@@ -203,7 +194,6 @@ type AgentRightSidebarView = 'git' | 'plan' | 'file';
 type EditorLeftSidebarView = 'explorer' | 'search' | 'git';
 import {
 	useI18n,
-	isChatAssistantErrorLine,
 	translateChatError,
 	normalizeLocale,
 	type AppLocale,
@@ -258,8 +248,6 @@ function stripMarkdownSection(markdown: string, headingPattern: string): string 
 	return markdown.replace(regex, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 type DiffPreview = { diff: string; isBinary: boolean; additions: number; deletions: number };
-type AgentConversationFileOpenOptions = { diff?: string | null; allowReviewActions?: boolean };
-
 const SIDEBAR_LAYOUT_KEY = 'async:sidebar-widths-v1';
 const SHELL_LAYOUT_MODE_KEY = 'async:shell-layout-mode-v1';
 function sameStringArray(a: string[], b: string[]): boolean {
@@ -415,31 +403,6 @@ function readSidebarLayout(): { left: number; right: number } {
 
 function shellCommandPermissionMode(agent: AgentCustomization | undefined): CommandPermissionMode {
 	return agent?.confirmShellCommands === false ? 'always' : 'ask';
-}
-
-function GitDiffLines({ diff, t }: { diff: string; t: TFunction }) {
-	const lines = diff.split('\n');
-	return (
-		<div className="ref-git-card-diff" role="region" aria-label={t('git.diffPreview')}>
-			{lines.map((line, i) => {
-				let mod = 'ref-git-diff-line';
-				if (line.startsWith('+') && !line.startsWith('+++')) {
-					mod += ' is-add';
-				} else if (line.startsWith('-') && !line.startsWith('---')) {
-					mod += ' is-del';
-				} else if (line.startsWith('@@')) {
-					mod += ' is-hunk';
-				} else if (line.startsWith('diff ') || line.startsWith('index ')) {
-					mod += ' is-meta';
-				}
-				return (
-					<div key={i} className={mod}>
-						{line || '\u00a0'}
-					</div>
-				);
-			})}
-		</div>
-	);
 }
 
 function threadFileBasename(rel: string): string {
@@ -880,14 +843,6 @@ export default function App() {
 	}, [scrollEditorExplorerToTop]);
 	const [agentWorkspaceOrder, setAgentWorkspaceOrder] = useState<string[]>([]);
 	const [uiZoom, setUiZoom] = useState(1);
-	const [workspaceMenuPath, setWorkspaceMenuPath] = useState<string | null>(null);
-	const [workspaceMenuPosition, setWorkspaceMenuPosition] = useState<{ top: number; left: number } | null>(null);
-	const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
-	const workspaceMenuAnchorRef = useRef<HTMLButtonElement | null>(null);
-	const [editingWorkspacePath, setEditingWorkspacePath] = useState<string | null>(null);
-	const [editingWorkspaceNameDraft, setEditingWorkspaceNameDraft] = useState('');
-	const workspaceNameDraftRef = useRef('');
-	const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
 	const {
 		openTabs,
 		setOpenTabs,
@@ -978,28 +933,6 @@ export default function App() {
 	const composerGitBranchAnchorRef = useRef<HTMLButtonElement>(null);
 	const [plusMenuAnchorSlot, setPlusMenuAnchorSlot] = useState<ComposerAnchorSlot>('bottom');
 	const [modelPickerAnchorSlot, setModelPickerAnchorSlot] = useState<ComposerAnchorSlot>('bottom');
-
-
-	const clearWorkspaceConversationState = useCallback(() => {
-		streamThreadRef.current = null;
-		streamStartedAtRef.current = null;
-		firstTokenAtRef.current = null;
-		planBuildPendingMarkerRef.current = null;
-		resetThreadState();
-		resetAgentReviewState();
-		resetComposerState();
-		setLastTurnUsage(null);
-		setAwaitingReply(false);
-		setStreaming('');
-		setParsedPlan(null);
-		setPlanFilePath(null);
-		setPlanFileRelPath(null);
-		setExecutedPlanKeys([]);
-		setPlanQuestion(null);
-		setPlanQuestionRequestId(null);
-		setEditingWorkspacePath(null);
-		setEditingWorkspaceNameDraft('');
-	}, [resetThreadState, resetAgentReviewState, resetComposerState]);
 
 	const respondToolApproval = useCallback(
 		async (approved: boolean) => {
@@ -1173,11 +1106,6 @@ export default function App() {
 		currentWorkspaceThreadCount,
 	]);
 
-	const activeWorkspaceMenuItem = useMemo(
-		() => agentSidebarWorkspaces.find((item) => item.path === workspaceMenuPath) ?? null,
-		[agentSidebarWorkspaces, workspaceMenuPath]
-	);
-
 	const hasConversation = messages.length > 0 || !!streaming;
 	const changeCount = gitChangedPaths.length;
 	const gitUnavailableReason: GitUnavailableReason = gitStatusOk
@@ -1284,6 +1212,61 @@ export default function App() {
 			subAgentBgToastTimerRef.current = null;
 		}, 4200);
 	}, []);
+
+	const {
+		workspaceMenuPath,
+		workspaceMenuPosition,
+		workspaceMenuRef,
+		editingWorkspacePath,
+		editingWorkspaceNameDraft,
+		setEditingWorkspaceNameDraft,
+		workspaceNameDraftRef,
+		workspaceNameInputRef,
+		closeWorkspaceMenu,
+		openWorkspaceMenu,
+		revealWorkspaceInOs,
+		removeWorkspaceFromSidebar,
+		beginWorkspaceAliasEdit,
+		cancelWorkspaceAliasEdit,
+		commitWorkspaceAliasEdit,
+		handleWorkspacePrimaryAction,
+	} = useWorkspaceActions({
+		shell,
+		t,
+		flashComposerAttachErr,
+		showTransientToast,
+		workspaceAliases,
+		setWorkspaceAliases,
+		setCollapsedAgentWorkspacePaths,
+		setHiddenAgentWorkspacePaths,
+		setFolderRecents,
+		setHomeRecents,
+	});
+
+	const activeWorkspaceMenuItem = useMemo(
+		() => agentSidebarWorkspaces.find((item) => item.path === workspaceMenuPath) ?? null,
+		[agentSidebarWorkspaces, workspaceMenuPath]
+	);
+
+	const clearWorkspaceConversationState = useCallback(() => {
+		streamThreadRef.current = null;
+		streamStartedAtRef.current = null;
+		firstTokenAtRef.current = null;
+		planBuildPendingMarkerRef.current = null;
+		resetThreadState();
+		resetAgentReviewState();
+		resetComposerState();
+		setLastTurnUsage(null);
+		setAwaitingReply(false);
+		setStreaming('');
+		setParsedPlan(null);
+		setPlanFilePath(null);
+		setPlanFileRelPath(null);
+		setExecutedPlanKeys([]);
+		setPlanQuestion(null);
+		setPlanQuestionRequestId(null);
+		cancelWorkspaceAliasEdit();
+	}, [resetThreadState, resetAgentReviewState, resetComposerState, cancelWorkspaceAliasEdit]);
 
 	const executeSkillCreatorSend = useCallback(
 		async (scope: 'user' | 'project', pending: { tailSegments: ComposerSegment[]; targetThreadId: string }) => {
@@ -2196,12 +2179,6 @@ export default function App() {
 		[shell, applyWorkspacePath]
 	);
 
-	const toggleWorkspaceCollapsed = useCallback((path: string) => {
-		setCollapsedAgentWorkspacePaths((prev) =>
-			prev.includes(path) ? prev.filter((item) => item !== path) : [...prev, path]
-		);
-	}, []);
-
 	const writeClipboardText = useCallback(
 		async (text: string) => {
 			if (shell) {
@@ -2313,128 +2290,6 @@ export default function App() {
 			}
 		},
 		[flashComposerAttachErr, runDomEditCommand, runMonacoEditCommand, writeClipboardText]
-	);
-
-	const closeWorkspaceMenu = useCallback(() => {
-		setWorkspaceMenuPath(null);
-		setWorkspaceMenuPosition(null);
-		workspaceMenuAnchorRef.current = null;
-	}, []);
-
-	const openWorkspaceMenu = useCallback((path: string, anchor: HTMLButtonElement) => {
-		workspaceMenuAnchorRef.current = anchor;
-		setWorkspaceMenuPath(path);
-	}, []);
-
-	const revealWorkspaceInOs = useCallback(
-		async (path: string) => {
-			if (!shell) {
-				return;
-			}
-			try {
-				const r = (await shell.invoke('shell:revealAbsolutePath', path)) as { ok?: boolean; error?: string };
-				if (!r?.ok) {
-					flashComposerAttachErr(r?.error ?? t('explorer.errReveal'));
-				}
-			} catch (e) {
-				flashComposerAttachErr(e instanceof Error ? e.message : String(e));
-			}
-			closeWorkspaceMenu();
-		},
-		[shell, flashComposerAttachErr, t, closeWorkspaceMenu]
-	);
-
-	const renameWorkspaceAlias = useCallback(
-		(path: string, nextName?: string) => {
-			const fallback = workspacePathDisplayName(path);
-			const trimmed = (nextName ?? '').trim();
-			setWorkspaceAliases((prev) => {
-				const updated = { ...prev };
-				if (!trimmed || trimmed === fallback) {
-					delete updated[path];
-				} else {
-					updated[path] = trimmed;
-				}
-				return updated;
-			});
-			showTransientToast(true, trimmed ? t('app.workspaceRenamedToast', { name: trimmed }) : t('app.workspaceNameResetToast'));
-		},
-		[t, showTransientToast]
-	);
-
-	const removeWorkspaceFromSidebar = useCallback(
-		async (path: string) => {
-			setWorkspaceAliases((prev) => {
-				if (!(path in prev)) {
-					return prev;
-				}
-				const updated = { ...prev };
-				delete updated[path];
-				return updated;
-			});
-			setCollapsedAgentWorkspacePaths((prev) => prev.filter((item) => item !== path));
-			setHiddenAgentWorkspacePaths((prev) => (prev.includes(path) ? prev : [...prev, path]));
-			setFolderRecents((prev) => prev.filter((item) => item !== path));
-			setHomeRecents((prev) => prev.filter((item) => item !== path));
-			if (editingWorkspacePath === path) {
-				setEditingWorkspacePath(null);
-				setEditingWorkspaceNameDraft('');
-				workspaceNameDraftRef.current = '';
-			}
-			if (shell) {
-				try {
-					await shell.invoke('workspace:removeRecent', path);
-				} catch {
-					/* ignore */
-				}
-			}
-			closeWorkspaceMenu();
-			showTransientToast(true, t('app.workspaceRemovedToast'));
-		},
-		[editingWorkspacePath, shell, showTransientToast, t, closeWorkspaceMenu]
-	);
-
-	const beginWorkspaceAliasEdit = useCallback(
-		(path: string) => {
-			const fallback = workspacePathDisplayName(path);
-			const currentName = workspaceAliases[path]?.trim() || fallback;
-			closeWorkspaceMenu();
-			setEditingWorkspacePath(path);
-			setEditingWorkspaceNameDraft(currentName);
-			workspaceNameDraftRef.current = currentName;
-		},
-		[workspaceAliases, closeWorkspaceMenu]
-	);
-
-	const cancelWorkspaceAliasEdit = useCallback(() => {
-		setEditingWorkspacePath(null);
-		setEditingWorkspaceNameDraft('');
-		workspaceNameDraftRef.current = '';
-	}, []);
-
-	const commitWorkspaceAliasEdit = useCallback(() => {
-		if (!editingWorkspacePath) {
-			return;
-		}
-		const path = editingWorkspacePath;
-		const fallback = workspacePathDisplayName(path);
-		const currentName = workspaceAliases[path]?.trim() || fallback;
-		const draft = workspaceNameDraftRef.current.trim();
-		setEditingWorkspacePath(null);
-		setEditingWorkspaceNameDraft('');
-		workspaceNameDraftRef.current = '';
-		if (draft === currentName) {
-			return;
-		}
-		renameWorkspaceAlias(path, draft);
-	}, [editingWorkspacePath, workspaceAliases, renameWorkspaceAlias]);
-
-	const handleWorkspacePrimaryAction = useCallback(
-		(path: string) => {
-			closeWorkspaceMenu();
-			toggleWorkspaceCollapsed(path);
-		},
-		[toggleWorkspaceCollapsed, closeWorkspaceMenu]
 	);
 
 	const onNewThread = async () => {
@@ -2735,17 +2590,6 @@ export default function App() {
 			el.select();
 		}
 	}, [editingThreadId]);
-
-	useLayoutEffect(() => {
-		if (!editingWorkspacePath) {
-			return;
-		}
-		const el = workspaceNameInputRef.current;
-		if (el) {
-			el.focus();
-			el.select();
-		}
-	}, [editingWorkspacePath]);
 
 	const onSend = async (
 		textOverride?: string,
@@ -3413,257 +3257,59 @@ export default function App() {
 		return e ? e.displayName.trim() || e.requestName || defaultModel : defaultModel;
 	}, [defaultModel, modelEntries, t]);
 
-	const setEditorInlineDiffState = useCallback((relPath: string, state: EditorInlineDiffState | null) => {
-		const normalizedRel = normalizeWorkspaceRelPath(relPath);
-		setEditorInlineDiffByPath((prev) => {
-			if (!state) {
-				if (!(normalizedRel in prev)) {
-					return prev;
-				}
-				const next = { ...prev };
-				delete next[normalizedRel];
-				return next;
-			}
-			return {
-				...prev,
-				[normalizedRel]: {
-					...state,
-					filePath: normalizedRel,
-				},
-			};
-		});
-	}, []);
-
-	const resolveEditorInlineDiff = useCallback(
-		async (
-			relPath: string,
-			content: string,
-			revealLine?: number,
-			revealEndLine?: number,
-			options?: AgentConversationFileOpenOptions
-		): Promise<EditorInlineDiffState | null> => {
-			if (!shell) {
-				return null;
-			}
-			const normalizedRel = normalizeWorkspaceRelPath(relPath);
-			const safeRevealLine =
-				typeof revealLine === 'number' && Number.isFinite(revealLine) && revealLine > 0
-					? Math.floor(revealLine)
-					: undefined;
-			const safeRevealEndLine =
-				typeof revealEndLine === 'number' && Number.isFinite(revealEndLine) && revealEndLine > 0
-					? Math.floor(revealEndLine)
-					: undefined;
-			const sourceDiff = typeof options?.diff === 'string' ? options.diff.trim() : '';
-			const sourceAllowsReviewActions = options?.allowReviewActions === true;
-			const isGitChanged = gitChangedPaths.some((path) => workspaceRelPathsEqual(path, normalizedRel));
-
-			let previewDiff = sourceDiff;
-			let originalContent = previewDiff ? deriveOriginalContentFromUnifiedDiff(content, previewDiff) : null;
-			let reviewMode: EditorInlineDiffState['reviewMode'] = 'readonly';
-
-			if (currentId && sourceAllowsReviewActions) {
-				try {
-					const snapshotResult = (await shell.invoke('agent:getFileSnapshot', currentId, normalizedRel)) as
-						| { ok: true; hasSnapshot: false }
-						| { ok: true; hasSnapshot: true; previousContent: string | null }
-						| { ok?: false };
-					if (snapshotResult?.ok && snapshotResult.hasSnapshot) {
-						originalContent = snapshotResult.previousContent ?? '';
-						previewDiff = createTwoFilesPatch(
-							`a/${normalizedRel}`,
-							`b/${normalizedRel}`,
-							originalContent,
-							content,
-							'',
-							'',
-							{ context: 3 }
-						).trim();
-						reviewMode = 'snapshot';
-					}
-				} catch {
-					/* ignore */
-				}
-			}
-
-			if ((!previewDiff || !originalContent) && gitStatusOk && isGitChanged) {
-				try {
-					const fullDiffResult = (await shell.invoke('git:diffPreview', {
-						relPath: normalizedRel,
-						full: true,
-					})) as
-						| { ok: true; preview: DiffPreview }
-						| { ok: false; error?: string };
-					if (fullDiffResult.ok && fullDiffResult.preview && !fullDiffResult.preview.isBinary) {
-						const gitPreviewDiff = String(fullDiffResult.preview.diff ?? '').trim();
-						if (gitPreviewDiff) {
-							const gitOriginal = deriveOriginalContentFromUnifiedDiff(content, gitPreviewDiff);
-							if (gitOriginal !== null) {
-								previewDiff = gitPreviewDiff;
-								originalContent = gitOriginal;
-								reviewMode = 'readonly';
-							}
-						}
-					}
-				} catch {
-					/* ignore */
-				}
-			}
-
-			if (!previewDiff || originalContent === null) {
-				return null;
-			}
-
-			return {
-				filePath: normalizedRel,
-				originalContent,
-				diff: previewDiff,
-				revealLine: safeRevealLine,
-				revealEndLine: safeRevealEndLine,
-				reviewMode,
-			};
-		},
-		[currentId, gitChangedPaths, gitStatusOk, shell]
-	);
-
-	const loadFileIntoEditor = useCallback(
-		async (
-			relPath: string,
-			revealLine?: number,
-			revealEndLine?: number,
-			options?: AgentConversationFileOpenOptions
-		) => {
-			if (!shell) {
-				return;
-			}
-			const requestId = ++editorLoadRequestRef.current;
-			const normalizedRel = normalizeWorkspaceRelPath(relPath);
-			try {
-				const r = (await shell.invoke('fs:readFile', normalizedRel)) as { ok: boolean; content?: string };
-				if (requestId !== editorLoadRequestRef.current) {
-					return;
-				}
-				if (r.ok && r.content !== undefined) {
-					setEditorValue(r.content);
-					const inlineDiff = await resolveEditorInlineDiff(
-						normalizedRel,
-						r.content,
-						revealLine,
-						revealEndLine,
-						options
-					);
-					if (requestId !== editorLoadRequestRef.current) {
-						return;
-					}
-					setEditorInlineDiffState(normalizedRel, inlineDiff);
-				} else {
-					setEditorValue('');
-					setEditorInlineDiffState(normalizedRel, null);
-				}
-			} catch (err) {
-				if (requestId !== editorLoadRequestRef.current) {
-					return;
-				}
-				setEditorValue(t('app.readFileFailed', { detail: String(err) }));
-				setEditorInlineDiffState(normalizedRel, null);
-			}
-		},
-		[resolveEditorInlineDiff, setEditorInlineDiffState, shell, t]
-	);
-
-	const onLoadFile = async () => {
-		if (!shell || !filePath.trim()) {
-			return;
-		}
-		try {
-			const r = (await shell.invoke('fs:readFile', filePath.trim())) as { ok: boolean; content?: string };
-			if (r.ok && r.content !== undefined) {
-				setEditorValue(r.content);
-				const inlineDiff = await resolveEditorInlineDiff(filePath.trim(), r.content);
-				setEditorInlineDiffState(filePath.trim(), inlineDiff);
-			}
-		} catch (e) {
-			setEditorValue(t('app.readFileFailed', { detail: String(e) }));
-			setEditorInlineDiffState(filePath.trim(), null);
-		}
-	};
-
-	const onSaveFile = async () => {
-		if (!shell || !filePath.trim()) {
-			return;
-		}
-		await shell.invoke('fs:writeFile', filePath.trim(), editorValue);
-		// Mark tab as clean
-		setOpenTabs((prev) => prev.map((tab) => tab.filePath === filePath.trim() ? { ...tab, dirty: false } : tab));
-		// Show save toast
-		setSaveToastKey((k) => k + 1);
-		setSaveToastVisible(true);
-		setTimeout(() => setSaveToastVisible(false), 1900);
-		await refreshGit();
-		const inlineDiff = await resolveEditorInlineDiff(filePath.trim(), editorValue);
-		setEditorInlineDiffState(filePath.trim(), inlineDiff);
-	};
-
-	/** Open a file in the tab bar (or activate existing tab) and load it into the editor */
-	const openFileInTab = useCallback(
-		async (
-			rel: string,
-			revealLine?: number,
-			revealEndLine?: number,
-			opts?: ({ background?: boolean } & AgentConversationFileOpenOptions)
-		) => {
-			if (!shell) return;
-			const tid = tabIdFromPath(rel);
-			const background = opts?.background === true;
-			setOpenTabs((prev) => {
-				if (prev.some((t2) => t2.id === tid)) {
-					return prev;
-				}
-				const mdView = initialMarkdownViewForTab(rel);
-				return [
-					...prev,
-					{
-						id: tid,
-						filePath: rel,
-						dirty: false,
-						...(mdView != null ? { markdownView: mdView } : {}),
-					},
-				];
-			});
-			if (background) {
-				return;
-			}
-			setActiveTabId(tid);
-			setFilePath(rel);
-			if (layoutMode === 'agent') {
-				setLayoutMode('editor');
-			}
-			const s =
-				typeof revealLine === 'number' && Number.isFinite(revealLine) && revealLine > 0
-					? Math.floor(revealLine)
-					: null;
-			const e =
-				typeof revealEndLine === 'number' && Number.isFinite(revealEndLine) && revealEndLine > 0
-					? Math.floor(revealEndLine)
-					: null;
-			if (s != null) {
-				const hi = e != null && e > 0 ? e : s;
-				pendingEditorHighlightRangeRef.current = {
-					start: Math.min(s, hi),
-					end: Math.max(s, hi),
-				};
-			} else {
-				pendingEditorHighlightRangeRef.current = null;
-			}
-			try {
-				await loadFileIntoEditor(rel, revealLine, revealEndLine, opts);
-			} catch (err) {
-				setEditorValue(t('app.readFileFailed', { detail: String(err) }));
-				setEditorInlineDiffState(rel, null);
-			}
-		},
-		[layoutMode, loadFileIntoEditor, setEditorInlineDiffState, shell, t]
-	);
+	const {
+		onLoadFile,
+		onSaveFile,
+		openFileInTab,
+		onCloseTab,
+		onSelectTab,
+		appendEditorTerminal,
+		closeEditorTerminalPanel,
+		closeWorkspaceFolder,
+		fileMenuNewFile,
+		fileMenuOpenFile,
+		fileMenuOpenFolder,
+		fileMenuSaveAs,
+		fileMenuRevertFile,
+		fileMenuCloseEditor,
+		fileMenuNewWindow,
+		fileMenuQuit,
+		closeEditorTerminalSession,
+		spawnEditorTerminal,
+	} = useFileOperations({
+		shell,
+		t,
+		workspace,
+		layoutMode,
+		setLayoutMode,
+		currentId,
+		gitChangedPaths,
+		gitStatusOk,
+		refreshGit,
+		refreshThreads,
+		clearWorkspaceConversationState,
+		setWorkspace,
+		setWorkspacePickerOpen,
+		applyWorkspacePath,
+		openTabs,
+		setOpenTabs,
+		activeTabId,
+		setActiveTabId,
+		filePath,
+		setFilePath,
+		editorValue,
+		setEditorValue,
+		setEditorInlineDiffByPath,
+		setSaveToastKey,
+		setSaveToastVisible,
+		editorLoadRequestRef,
+		pendingEditorHighlightRangeRef,
+		editorTerminalCreateLockRef,
+		setEditorTerminalSessions,
+		setActiveEditorTerminalId,
+		setEditorTerminalVisible,
+		setTerminalMenuOpen,
+	});
 
 	const openAgentSidebarFilePreview = useCallback(
 		async (
@@ -4054,48 +3700,6 @@ export default function App() {
 			return false;
 		}
 	}, [shell]);
-
-	const onCloseTab = useCallback(
-		(tabId: string) => {
-			voidShellDebugLog('editor-file-tab-close', {
-				tabId,
-				activeTabId,
-				openTabIds: openTabs.map((t2) => t2.id),
-			});
-			const idx = openTabs.findIndex((t2) => t2.id === tabId);
-			if (idx < 0) {
-				voidShellDebugLog('editor-file-tab-close-miss', { tabId, activeTabId });
-				return;
-			}
-			const nextTabs = openTabs.filter((t2) => t2.id !== tabId);
-			setOpenTabs(nextTabs);
-			setEditorInlineDiffState(tabId.replace(/^tab:/, ''), null);
-
-			if (tabId !== activeTabId) {
-				return;
-			}
-			const newActive = nextTabs[Math.min(idx, nextTabs.length - 1)] ?? null;
-			setActiveTabId(newActive?.id ?? null);
-			if (newActive) {
-				setFilePath(newActive.filePath);
-				void loadFileIntoEditor(newActive.filePath);
-			} else {
-				setFilePath('');
-				setEditorValue('');
-			}
-		},
-		[openTabs, activeTabId, loadFileIntoEditor]
-	);
-
-	const onSelectTab = useCallback(async (tabId: string) => {
-		setActiveTabId(tabId);
-		const tab = openTabs.find((t2) => t2.id === tabId);
-		if (tab) {
-			setFilePath(tab.filePath);
-			pendingEditorHighlightRangeRef.current = null;
-			void loadFileIntoEditor(tab.filePath);
-		}
-	}, [openTabs, loadFileIntoEditor]);
 
 	// Cmd+S / Ctrl+S keyboard shortcut
 	useEffect(() => {
@@ -4625,33 +4229,6 @@ export default function App() {
 		setQuickOpenOpen(true);
 	}, []);
 
-	const appendEditorTerminal = useCallback(async (opts?: { cwdRel?: string }) => {
-		if (editorTerminalCreateLockRef.current || !shell) {
-			return;
-		}
-		editorTerminalCreateLockRef.current = true;
-		try {
-			const r = (await shell.invoke(
-				'terminal:ptyCreate',
-				opts?.cwdRel != null && opts.cwdRel !== '' ? { cwdRel: opts.cwdRel } : undefined
-			)) as {
-				ok: boolean;
-				id?: string;
-				error?: string;
-			};
-			if (!r.ok || !r.id) {
-				return;
-			}
-			setEditorTerminalSessions((prev) => {
-				const n = prev.length + 1;
-				return [...prev, { id: r.id!, title: t('app.terminalTabN', { n: String(n) }) }];
-			});
-			setActiveEditorTerminalId(r.id);
-		} finally {
-			editorTerminalCreateLockRef.current = false;
-		}
-	}, [shell, t]);
-
 	const workspaceExplorerActions = useMemo((): WorkspaceExplorerActions | null => {
 		if (!shell || !workspace) {
 			return null;
@@ -4903,152 +4480,6 @@ export default function App() {
 		);
 	}, [editorTerminalSessions]);
 
-	const closeEditorTerminalPanel = useCallback(() => {
-		setEditorTerminalSessions((prev) => {
-			for (const s of prev) {
-				void shell?.invoke('terminal:ptyKill', s.id);
-			}
-			return [];
-		});
-		setActiveEditorTerminalId(null);
-		setEditorTerminalVisible(false);
-	}, [shell]);
-
-	const closeWorkspaceFolder = useCallback(async () => {
-		if (!shell) {
-			setWorkspacePickerOpen(true);
-			return;
-		}
-		await shell.invoke('workspace:closeFolder');
-		clearWorkspaceConversationState();
-		closeEditorTerminalPanel();
-		setWorkspace(null);
-		setOpenTabs([]);
-		setActiveTabId(null);
-		setFilePath('');
-		setEditorValue('');
-		pendingEditorHighlightRangeRef.current = null;
-		await refreshThreads();
-		await refreshGit();
-	}, [shell, clearWorkspaceConversationState, closeEditorTerminalPanel, refreshThreads, refreshGit]);
-
-	const fileMenuNewFile = useCallback(async () => {
-		if (!shell || !workspace) {
-			return;
-		}
-		const r = (await shell.invoke('fs:pickSaveFile', {
-			defaultName: 'Untitled.txt',
-			title: t('app.fileMenu.newFileSaveTitle'),
-		})) as { ok?: boolean; relPath?: string };
-		if (!r?.ok || !r.relPath) {
-			return;
-		}
-		await shell.invoke('fs:writeFile', r.relPath, '');
-		await openFileInTab(r.relPath);
-	}, [shell, workspace, t, openFileInTab]);
-
-	const fileMenuOpenFile = useCallback(async () => {
-		if (!shell || !workspace) {
-			return;
-		}
-		const r = (await shell.invoke('fs:pickOpenFile')) as { ok?: boolean; relPath?: string };
-		if (r?.ok && r.relPath) {
-			await openFileInTab(r.relPath);
-		}
-	}, [shell, workspace, openFileInTab]);
-
-	const fileMenuOpenFolder = useCallback(async () => {
-		if (!shell) {
-			setWorkspacePickerOpen(true);
-			return;
-		}
-		const r = (await shell.invoke('workspace:pickFolder')) as { ok?: boolean; path?: string };
-		if (r?.ok && r.path) {
-			await applyWorkspacePath(r.path);
-		}
-	}, [shell, applyWorkspacePath]);
-
-	const fileMenuSaveAs = useCallback(async () => {
-		if (!shell || !workspace) {
-			return;
-		}
-		const defaultName = filePath.trim()
-			? (filePath.trim().split(/[/\\]/).pop() ?? 'Untitled.txt')
-			: 'Untitled.txt';
-		const r = (await shell.invoke('fs:pickSaveFile', {
-			defaultName,
-			title: t('app.fileMenu.saveAsDialogTitle'),
-		})) as { ok?: boolean; relPath?: string };
-		if (!r?.ok || !r.relPath) {
-			return;
-		}
-		const savedRel = r.relPath;
-		await shell.invoke('fs:writeFile', savedRel, editorValue);
-		const newTid = tabIdFromPath(savedRel);
-		const mdViewSaveAs = initialMarkdownViewForTab(savedRel);
-		setOpenTabs((prev) => {
-			const idx = activeTabId
-				? prev.findIndex((t2) => t2.id === activeTabId)
-				: filePath.trim()
-					? prev.findIndex((t2) => t2.filePath === filePath.trim())
-					: -1;
-			if (idx >= 0) {
-				const next = [...prev];
-				next[idx] = {
-					id: newTid,
-					filePath: savedRel,
-					dirty: false,
-					...(mdViewSaveAs != null ? { markdownView: mdViewSaveAs } : {}),
-				};
-				return next;
-			}
-			return [
-				...prev,
-				{
-					id: newTid,
-					filePath: savedRel,
-					dirty: false,
-					...(mdViewSaveAs != null ? { markdownView: mdViewSaveAs } : {}),
-				},
-			];
-		});
-		setActiveTabId(newTid);
-		setFilePath(savedRel);
-		setSaveToastKey((k) => k + 1);
-		setSaveToastVisible(true);
-		setTimeout(() => setSaveToastVisible(false), 1900);
-		await refreshGit();
-	}, [shell, workspace, filePath, editorValue, activeTabId, t, refreshGit]);
-
-	const fileMenuRevertFile = useCallback(async () => {
-		if (!shell || !filePath.trim()) {
-			return;
-		}
-		try {
-			const r = (await shell.invoke('fs:readFile', filePath.trim())) as { ok?: boolean; content?: string };
-			if (r?.ok && r.content !== undefined) {
-				setEditorValue(r.content);
-				const p = filePath.trim();
-				setOpenTabs((prev) => prev.map((tab) => (tab.filePath === p ? { ...tab, dirty: false } : tab)));
-			}
-		} catch {
-			/* ignore */
-		}
-	}, [shell, filePath]);
-
-	const fileMenuCloseEditor = useCallback(() => {
-		if (activeTabId) {
-			onCloseTab(activeTabId);
-		}
-	}, [activeTabId, onCloseTab]);
-
-	const fileMenuNewWindow = useCallback(async () => {
-		if (!shell) {
-			return;
-		}
-		await shell.invoke('app:newWindow');
-	}, [shell]);
-
 	const windowMenuMinimize = useCallback(async () => {
 		if (!shell) {
 			return;
@@ -5074,28 +4505,6 @@ export default function App() {
 		await shell.invoke('app:windowClose');
 	}, [shell]);
 
-	const fileMenuQuit = useCallback(async () => {
-		if (shell) {
-			await shell.invoke('app:quit');
-		} else {
-			window.close();
-		}
-	}, [shell]);
-
-	const closeEditorTerminalSession = useCallback(
-		(id: string) => {
-			void shell?.invoke('terminal:ptyKill', id);
-			setEditorTerminalSessions((prev) => {
-				const next = prev.filter((s) => s.id !== id);
-				if (next.length === 0) {
-					setEditorTerminalVisible(false);
-				}
-				return next;
-			});
-		},
-		[shell]
-	);
-
 	const onEditorTerminalSessionExit = useCallback((id: string) => {
 		setEditorTerminalSessions((prev) => {
 			const next = prev.filter((s) => s.id !== id);
@@ -5104,13 +4513,7 @@ export default function App() {
 			}
 			return next;
 		});
-	}, []);
-
-	const spawnEditorTerminal = useCallback(() => {
-		setEditorTerminalVisible(true);
-		setTerminalMenuOpen(false);
-		void appendEditorTerminal();
-	}, [appendEditorTerminal]);
+	}, [setEditorTerminalSessions, setEditorTerminalVisible]);
 
 	useEffect(() => {
 		if (!terminalMenuOpen) {
@@ -5970,64 +5373,6 @@ export default function App() {
 		return () => document.removeEventListener('mousedown', onDoc);
 	}, [editorThreadHistoryOpen, editorChatMoreOpen]);
 
-	useEffect(() => {
-		if (!workspaceMenuPath) {
-			return;
-		}
-		const onDoc = (e: MouseEvent) => {
-			const node = e.target as Node;
-			if (workspaceMenuRef.current?.contains(node)) {
-				return;
-			}
-			closeWorkspaceMenu();
-		};
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') {
-				closeWorkspaceMenu();
-			}
-		};
-		document.addEventListener('mousedown', onDoc);
-		window.addEventListener('keydown', onKey);
-		return () => {
-			document.removeEventListener('mousedown', onDoc);
-			window.removeEventListener('keydown', onKey);
-		};
-	}, [workspaceMenuPath, closeWorkspaceMenu]);
-
-	useLayoutEffect(() => {
-		if (!workspaceMenuPath || !workspaceMenuAnchorRef.current) {
-			return;
-		}
-		const updateMenuPosition = () => {
-			const anchor = workspaceMenuAnchorRef.current;
-			if (!anchor) {
-				return;
-			}
-			const rect = anchor.getBoundingClientRect();
-			const estimatedMenuHeight = 280;
-			let top = rect.bottom + 8;
-			if (top + estimatedMenuHeight > window.innerHeight - 12) {
-				top = Math.max(12, rect.top - estimatedMenuHeight - 8);
-			}
-			setWorkspaceMenuPosition({
-				top,
-				left: Math.max(248, Math.min(rect.right, window.innerWidth - 16)),
-			});
-		};
-		const scheduleUpdate = () => {
-			requestAnimationFrame(updateMenuPosition);
-		};
-		updateMenuPosition();
-		window.addEventListener('resize', scheduleUpdate);
-		document.addEventListener('scroll', scheduleUpdate, true);
-		const unsubLayout = window.asyncShell?.subscribeLayout?.(scheduleUpdate);
-		return () => {
-			window.removeEventListener('resize', scheduleUpdate);
-			document.removeEventListener('scroll', scheduleUpdate, true);
-			unsubLayout?.();
-		};
-	}, [workspaceMenuPath]);
-
 	const beginResizeLeft = useCallback(
 		(e: React.MouseEvent) => {
 			e.preventDefault();
@@ -6236,447 +5581,15 @@ export default function App() {
 		atMentionKeyDown: atMention.handleAtKeyDown,
 	} as const;
 
-	const renderChatMessageList = (): ReactNode[] => {
-		const t0 = import.meta.env.DEV ? performance.now() : 0;
-		const nodes = displayMessages.map((m, i) => {
-			const convoKey = messagesThreadId ?? currentId ?? 'no-thread';
-			const isLast = i === displayMessages.length - 1;
-			const stAt = streamStartedAtRef.current;
-			const ftAt = firstTokenAtRef.current;
-			const showLiveThought = isLast && m.role === 'assistant' && awaitingReply;
-			const agentOrPlanStreaming =
-				(composerMode === 'agent' || composerMode === 'plan') && awaitingReply && isLast;
-			const frozenSec =
-				!awaitingReply && isLast && m.role === 'assistant' && currentId
-					? thoughtSecondsByThread[currentId]
-					: undefined;
-
-			let thoughtBlock: ReactNode = null;
-			let liveThoughtMeta:
-				| {
-						phase: 'thinking' | 'streaming' | 'done';
-						elapsedSeconds: number;
-						streamingThinking?: string;
-						tokenUsage?: TurnTokenUsage | null;
-				  }
-				| null = null;
-			/** 仅在非 live inline 路径下使用外层 thoughtBlock */
-			let thoughtAfterBody = false;
-			if (showLiveThought && stAt) {
-				void thinkingTick;
-				const assistantTurnHasOutput =
-					streaming.trim().length > 0 ||
-					streamingToolPreview != null ||
-					(agentOrPlanStreaming && liveAssistantBlocks.blocks.length > 0);
-				const phase = assistantTurnHasOutput ? 'streaming' : 'thinking';
-				// Agent/Plan 的思考走 ChatMarkdown 内联 liveThoughtMeta；Ask/Debug 用外层 ComposerThoughtBlock。
-				// 若此处在出字后把 thoughtAfterBody 设为 true，Ask 下整块「深度思考」会被挤到回复下方，体验差。
-				thoughtAfterBody =
-					assistantTurnHasOutput && composerMode !== 'ask' && composerMode !== 'debug';
-				const elapsed =
-					phase === 'thinking'
-						? Math.max(0, (Date.now() - stAt) / 1000)
-						: ftAt
-							? Math.max(0, (ftAt - stAt) / 1000)
-							: Math.max(0, (Date.now() - stAt) / 1000);
-				if (agentOrPlanStreaming) {
-					liveThoughtMeta = {
-						phase,
-						elapsedSeconds: elapsed,
-						streamingThinking,
-					};
-				} else {
-					thoughtBlock = (
-						<ComposerThoughtBlock
-							phase={phase}
-							elapsedSeconds={elapsed}
-							streamingThinking={streamingThinking}
-						/>
-					);
-				}
-			} else if (frozenSec != null) {
-				thoughtAfterBody = true;
-				thoughtBlock = (
-					<ComposerThoughtBlock
-						phase="done"
-						elapsedSeconds={frozenSec}
-						tokenUsage={isLast ? lastTurnUsage : undefined}
-					/>
-				);
-			}
-
-			const pendingEmptyAssistant =
-				m.role === 'assistant' &&
-				m.content.trim() === '' &&
-				awaitingReply &&
-				isLast &&
-				streamingToolPreview == null &&
-				!(agentOrPlanStreaming && (liveAssistantBlocks.blocks.length > 0 || liveThoughtMeta != null));
-			const userMessageIndex = i < messages.length && m.role === 'user' ? i : -1;
-			const isEditingThisUser = userMessageIndex >= 0 && resendFromUserIndex === userMessageIndex;
-
-			if (m.role === 'user' && isEditingThisUser) {
-				const inner = (
-					<div ref={inlineResendRootRef} className="ref-msg-slot ref-msg-slot--composer">
-						<ChatComposer
-							{...sharedComposerProps}
-							slot="inline"
-							segments={inlineResendSegments}
-							setSegments={setInlineResendSegments}
-							canSend={canSendInlineResend}
-							extraClass="ref-capsule--inline-edit"
-							showGitBranchRow={false}
-						/>
-					</div>
-				);
-				return i === lastUserMessageIndex ? (
-					<div key={`u-edit-${convoKey}-${i}`} className="ref-msg-sticky-user-wrap">
-						{inner}
-					</div>
-				) : (
-					<Fragment key={`u-edit-${convoKey}-${i}`}>{inner}</Fragment>
-				);
-			}
-
-			if (m.role === 'user') {
-				const userSegs = userMessageToSegments(m.content, workspaceFileList);
-				const inner = (
-					<div className="ref-msg-slot ref-msg-slot--user">
-						<button
-							type="button"
-							className="ref-msg-user"
-							disabled={awaitingReply}
-							title={
-								awaitingReply ? t('app.userMsgGenerating') : t('app.userMsgEditHint')
-							}
-							onClick={() => {
-								if (awaitingReply) {
-									return;
-								}
-								setPlanQuestion(null);
-								setPlanQuestionRequestId(null);
-								setResendFromUserIndex(userMessageIndex);
-								setInlineResendSegments(userMessageToSegments(m.content, workspaceFileList));
-							}}
-						>
-							<UserMessageRich
-								segments={userSegs}
-								onFileClick={(rel) => void onExplorerOpenFile(rel)}
-							/>
-						</button>
-					</div>
-				);
-				return i === lastUserMessageIndex ? (
-					<div key={`u-${convoKey}-${i}`} className="ref-msg-sticky-user-wrap">
-						{inner}
-					</div>
-				) : (
-					<Fragment key={`u-${convoKey}-${i}`}>{inner}</Fragment>
-				);
-			}
-
-			return (
-				<div key={`a-${convoKey}-${i}`} className="ref-msg-slot ref-msg-slot--assistant">
-					{thoughtBlock && !thoughtAfterBody ? thoughtBlock : null}
-					<div className="ref-msg-assistant-body">
-						{pendingEmptyAssistant ? (
-							<span className="ref-bubble-pending" aria-hidden>
-								<span className="ref-bubble-pending-dot" />
-								<span className="ref-bubble-pending-dot" />
-								<span className="ref-bubble-pending-dot" />
-							</span>
-						) : (
-							<ChatMarkdown
-								content={m.content}
-								agentUi={
-									composerMode === 'plan' ||
-									composerMode === 'agent' ||
-									assistantMessageUsesAgentToolProtocol(m.content)
-								}
-								assistantBubbleVariant={
-									m.role === 'assistant' && isChatAssistantErrorLine(m.content, t)
-										? 'error'
-										: 'default'
-								}
-								planUi={composerMode === 'plan'}
-								workspaceRoot={workspace}
-								onOpenAgentFile={(rel, line, end, options) =>
-									void onAgentConversationOpenFile(rel, line, end, options)
-								}
-								onRunCommand={(cmd) => {
-									shell?.invoke('terminal:execLine', cmd).catch(console.error);
-								}}
-								streamingToolPreview={
-									agentOrPlanStreaming ? streamingToolPreview : null
-								}
-								showAgentWorking={agentOrPlanStreaming}
-								liveAgentBlocksState={agentOrPlanStreaming ? liveAssistantBlocks : null}
-								liveThoughtMeta={agentOrPlanStreaming ? liveThoughtMeta : null}
-								revertedPaths={revertedFiles}
-								revertedChangeKeys={revertedChangeKeys}
-								allowAgentFileActions={
-									composerMode === 'agent' && !awaitingReply && i === lastAssistantMessageIndex
-								}
-							/>
-						)}
-					</div>
-					{thoughtBlock && thoughtAfterBody ? thoughtBlock : null}
-				</div>
-			);
-		});
-		if (import.meta.env.DEV) {
-			const elapsed = performance.now() - t0;
-			if (elapsed > 12) {
-				// eslint-disable-next-line no-console
-				console.log(
-					`[perf] renderChatMessageList: ${elapsed.toFixed(1)}ms, messages=${displayMessages.length}, workspaceFiles=${workspaceFileList.length}, awaiting=${awaitingReply}`
-				);
-			}
-		}
-		return nodes;
-	};
-
-	const renderAgentConversationBelowContext = (
-		layout: 'agent-center' | 'editor-rail' = 'agent-center'
-	): ReactNode => {
-		const isEditorRail = layout === 'editor-rail';
-		const conversationRenderKey = messagesThreadId ?? currentId ?? 'no-thread';
-
-		const messagesEl = hasConversation ? (
-			<div className="ref-messages" ref={messagesViewportRef} onScroll={onMessagesScroll}>
-				<div
-					key={`messages-track-${conversationRenderKey}`}
-					className="ref-messages-track"
-					ref={messagesTrackRef}
-				>
-					{renderChatMessageList()}
-				</div>
-			</div>
-		) : null;
-
-		const editorRailHeroComposer =
-			isEditorRail && !hasConversation ? (
-				<ChatComposer
-					{...sharedComposerProps}
-					slot="hero"
-					variant="editor-hero"
-					segments={composerSegments}
-					setSegments={setComposerSegments}
-					canSend={canSendComposer}
-					showGitBranchRow={false}
-				/>
-			) : null;
-
-		const editorContextStrip = isEditorRail ? (
-			<div className="ref-editor-rail-context-strip">
-				<IconDoc className="ref-context-icon" />
-				<span className="ref-editor-rail-context-local">{t('app.editorChatContextLocal')}</span>
-				<IconChevron className="ref-editor-rail-context-chev" aria-hidden />
-				<span className="ref-editor-rail-context-path" title={workspace ?? undefined}>
-					{workspace ? workspaceBasename : t('app.noWorkspace')}
-				</span>
-			</div>
-		) : null;
-
-		const sharedOverlays = (
-			<>
-				{hasConversation && pendingAgentPatches.length > 0 ? (
-					<AgentReviewPanel
-						patches={pendingAgentPatches}
-						workspaceRoot={workspace}
-						busy={agentReviewBusy}
-						onOpenFile={(rel, line, end, options) =>
-							void onAgentConversationOpenFile(rel, line, end, {
-								...options,
-								allowReviewActions: true,
-							})
-						}
-						onApplyOne={(id) => void onApplyAgentPatchOne(id)}
-						onApplyAll={() => void onApplyAgentPatchesAll()}
-						onDiscard={onDiscardAgentReview}
-					/>
-				) : null}
-
-				{hasConversation && planQuestion && composerMode === 'plan' ? (
-					<PlanQuestionDialog
-						question={planQuestion}
-						onSubmit={onPlanQuestionSubmit}
-						onSkip={onPlanQuestionSkip}
-					/>
-				) : null}
-
-				{wizardPending?.kind === 'create-skill' ? (
-					<SkillScopeDialog
-						workspaceOpen={!!workspace}
-						onCancel={() => setWizardPending(null)}
-						onConfirm={(scope) => {
-							const p = wizardPending;
-							setWizardPending(null);
-							if (p?.kind === 'create-skill') {
-								void executeSkillCreatorSend(scope, p);
-							}
-						}}
-					/>
-				) : null}
-				{wizardPending?.kind === 'create-rule' ? (
-					<RuleWizardDialog
-						onCancel={() => setWizardPending(null)}
-						onConfirm={(ruleScope, globPattern) => {
-							const p = wizardPending;
-							setWizardPending(null);
-							if (p?.kind === 'create-rule') {
-								void executeRuleWizardSend(ruleScope, globPattern, p);
-							}
-						}}
-					/>
-				) : null}
-				{wizardPending?.kind === 'create-subagent' ? (
-					<SubagentScopeDialog
-						workspaceOpen={!!workspace}
-						onCancel={() => setWizardPending(null)}
-						onConfirm={(scope) => {
-							const p = wizardPending;
-							setWizardPending(null);
-							if (p?.kind === 'create-subagent') {
-								void executeSubagentWizardSend(scope, p);
-							}
-						}}
-					/>
-				) : null}
-
-				<AgentMistakeLimitDialog
-					open={mistakeLimitRequest !== null}
-					payload={mistakeLimitRequest}
-					onContinue={() => void respondMistakeLimit('continue')}
-					onStop={() => void respondMistakeLimit('stop')}
-					onSendHint={(hint) => void respondMistakeLimit('hint', hint)}
-					title={t('agent.mistakeLimit.title')}
-					body={
-						mistakeLimitRequest
-							? t('agent.mistakeLimit.body', {
-									count: mistakeLimitRequest.consecutiveFailures,
-									threshold: mistakeLimitRequest.threshold,
-								})
-							: ''
-					}
-					continueLabel={t('agent.mistakeLimit.continue')}
-					stopLabel={t('agent.mistakeLimit.stop')}
-					hintFieldLabel={t('agent.mistakeLimit.hintField')}
-					sendHintLabel={t('agent.mistakeLimit.sendHint')}
-					hintPlaceholder={t('agent.mistakeLimit.hintPlaceholder')}
-				/>
-
-				{isEditorRail &&
-				hasConversation &&
-				agentPlanEffectivePlan &&
-				composerMode === 'plan' &&
-				!editorPlanReviewDismissed ? (
-					<PlanReviewPanel
-						plan={agentPlanEffectivePlan}
-						planFileDisplayPath={planFileRelPath ?? planFilePath}
-						initialBuildModelId={defaultModel}
-						modelItems={modelPickerItems}
-						planBuilt={planReviewIsBuilt}
-						buildDisabled={awaitingReply}
-						onBuild={onPlanBuild}
-						onClose={onPlanReviewClose}
-						onTodoToggle={onPlanTodoToggle}
-					/>
-				) : null}
-			</>
-		);
-
-		const commandStack = (
-			<div className="ref-command-stack">
-				{toolApprovalRequest ? (
-					<ToolApprovalInlineCard
-						payload={toolApprovalRequest}
-						onAllow={() => void respondToolApproval(true)}
-						onDeny={() => void respondToolApproval(false)}
-						title={
-							toolApprovalRequest.toolName === 'execute_command'
-								? t('agent.toolApproval.titleShell')
-								: t('agent.toolApproval.titleWrite')
-						}
-						allowLabel={t('agent.toolApproval.allow')}
-						denyLabel={t('agent.toolApproval.deny')}
-					/>
-				) : null}
-				{hasConversation && composerMode === 'agent' && agentFileChanges.length > 0 && !awaitingReply && !fileChangesDismissed ? (
-					<AgentFileChangesPanel
-						files={agentFileChanges}
-						onOpenFile={(rel, line, end, options) =>
-							void onAgentConversationOpenFile(rel, line, end, {
-								...options,
-								allowReviewActions: true,
-							})
-						}
-						onKeepAll={onKeepAllEdits}
-						onRevertAll={() => void onRevertAllEdits()}
-						onKeepFile={(rel) => void onKeepFileEdit(rel)}
-						onRevertFile={(rel) => void onRevertFileEdit(rel)}
-					/>
-				) : null}
-				{hasConversation ? (
-					<div className={`ref-scroll-jump-anchor ${showScrollToBottomButton ? 'is-visible' : ''}`} aria-hidden={!showScrollToBottomButton}>
-						<button
-							type="button"
-							className="ref-scroll-jump-btn"
-							tabIndex={showScrollToBottomButton ? 0 : -1}
-							title={t('app.jumpToLatest')}
-							aria-label={t('app.jumpToLatest')}
-							onClick={() => scrollMessagesToBottom('smooth')}
-						>
-							<IconArrowDown className="ref-scroll-jump-btn-icon" />
-						</button>
-					</div>
-				) : null}
-				{!isEditorRail ? agentPlanSummaryCard : null}
-				{hasConversation || !isEditorRail ? (
-					<ChatComposer
-						{...sharedComposerProps}
-						slot="bottom"
-						segments={composerSegments}
-						setSegments={setComposerSegments}
-						canSend={canSendComposer}
-						showGitBranchRow={!isEditorRail}
-					/>
-				) : null}
-			</div>
-		);
-
-		if (isEditorRail) {
-			return (
-				<>
-					<div className="ref-editor-chat-body">
-						{!hasConversation ? (
-							<>
-								{editorRailHeroComposer}
-								{editorContextStrip}
-								<div className="ref-editor-rail-message-spring" aria-hidden />
-							</>
-						) : (
-							<>
-								{editorContextStrip}
-								{messagesEl}
-							</>
-						)}
-					</div>
-					{sharedOverlays}
-					{commandStack}
-				</>
-			);
-		}
-
-		return (
-			<>
-				{messagesEl}
-				{!hasConversation ? <div className="ref-hero-spacer" /> : null}
-				{sharedOverlays}
-				{commandStack}
-			</>
-		);
-	};
+	const onStartInlineResend = useCallback(
+		(userMessageIndex: number, content: string) => {
+			setPlanQuestion(null);
+			setPlanQuestionRequestId(null);
+			setResendFromUserIndex(userMessageIndex);
+			setInlineResendSegments(userMessageToSegments(content, workspaceFileList));
+		},
+		[workspaceFileList]
+	);
 
 	const plusMenuAnchorRefForDropdown =
 		plusMenuAnchorSlot === 'hero'
@@ -6802,20 +5715,32 @@ export default function App() {
 		);
 	};
 
+	const agentLeftSidebarProps = useAgentLeftSidebarProps({
+		t,
+		agentSidebarWorkspaces,
+		todayThreads,
+		archivedThreads,
+		renderThreadItem,
+		editingWorkspacePath,
+		editingWorkspaceNameDraft,
+		setEditingWorkspaceNameDraft,
+		workspaceNameDraftRef,
+		workspaceNameInputRef,
+		commitWorkspaceAliasEdit,
+		cancelWorkspaceAliasEdit,
+		handleWorkspacePrimaryAction,
+		workspaceMenuPath,
+		closeWorkspaceMenu,
+		openWorkspaceMenu,
+		onNewThread: () => void onNewThread(),
+		onNewThreadForWorkspace,
+		setWorkspacePickerOpen,
+		openQuickOpen,
+		openSettingsPage,
+	});
+
 	/** 未打开工作区时：Agent / Editor 均显示同一套欢迎页（打开项目、最近项目等） */
 	const isEditorHomeMode = !workspace;
-	const agentFilePreviewTitle =
-		agentFilePreview?.relPath?.split('/').pop() || agentFilePreview?.relPath || t('app.filePreview');
-	const gitCardOpenAria = layoutMode === 'agent' ? t('app.gitPreviewAria') : t('app.gitOpenInEditorAria');
-	const gitCardOpenTitle = layoutMode === 'agent' ? t('app.gitPreviewTitle') : t('app.gitOpenTitle');
-	const agentRightSidebarTitle =
-		agentRightSidebarView === 'git'
-			? changeCount > 0
-				? t('app.gitUncommitted', { count: String(changeCount) })
-				: t('app.gitNoChanges')
-			: agentRightSidebarView === 'plan'
-				? agentPlanPreviewTitle || t('app.planSidebarWaiting')
-				: agentFilePreviewTitle;
 	const agentPlanSummaryCard =
 		!awaitingReply && agentPlanEffectivePlan && composerMode === 'plan' ? (
 			<section className="ref-plan-brief-card" aria-label={t('plan.review.label')}>
@@ -6857,318 +5782,140 @@ export default function App() {
 				</div>
 			</section>
 		) : null;
-	const agentPlanSidebarPanel = (
-		<div className="ref-agent-plan-doc-shell">
-			{agentPlanPreviewMarkdown ? (
-				<section className="ref-agent-plan-doc" aria-label={t('app.tabPlan')}>
-					<div className="ref-agent-plan-doc-toolbar">
-						<div className="ref-agent-plan-doc-title-stack">
-							<span className="ref-agent-plan-doc-label">{t('app.tabPlan')}</span>
-							<span className="ref-agent-plan-doc-title">{agentPlanPreviewTitle || t('app.planSidebarWaiting')}</span>
-							{planFileRelPath || planFilePath ? (
-								<span className="ref-agent-plan-doc-path">{planFileRelPath ?? planFilePath}</span>
-							) : null}
-						</div>
-						<div className="ref-agent-plan-doc-toolbar-actions">
-							<div className="ref-right-icon-tabs" aria-label={t('app.rightSidebarViews')}>
-								<button
-									type="button"
-									aria-label={t('app.tabPlan')}
-									title={t('app.tabPlan')}
-									className="ref-right-icon-tab is-active"
-									onClick={() => openAgentRightSidebarView('plan')}
-								>
-									<IconDoc />
-								</button>
-								<button
-									type="button"
-									aria-label={t('app.tabGit')}
-									title={t('app.tabGit')}
-									className="ref-right-icon-tab"
-									onClick={() => openAgentRightSidebarView('git')}
-								>
-									<IconGitSCM />
-								</button>
-								<button
-									type="button"
-									aria-label={t('common.close')}
-									title={t('common.close')}
-									className="ref-right-icon-tab"
-									onClick={() => setAgentRightSidebarOpen(false)}
-								>
-									<IconCloseSmall />
-								</button>
-							</div>
-						</div>
-					</div>
-					<div className="ref-agent-plan-doc-scroll">
-						<div className="ref-agent-plan-doc-surface">
-							<div className="ref-agent-plan-doc-surface-tools">
-								<VoidSelect
-									variant="compact"
-									className="ref-agent-plan-model-inline"
-									ariaLabel={t('plan.review.model')}
-									value={agentPlanBuildModelId}
-									disabled={modelPickerItems.length === 0}
-									onChange={setAgentPlanBuildModelId}
-									options={[
-										{ value: '', label: t('plan.review.pickModel'), disabled: true },
-										...modelPickerItems.map((m) => ({
-											value: m.id,
-											label: m.label,
-										})),
-									]}
-								/>
-								<button
-									type="button"
-									className="ref-agent-plan-build-btn"
-									disabled={
-										awaitingReply ||
-										!agentPlanEffectivePlan ||
-										!agentPlanBuildModelId.trim() ||
-										modelPickerItems.length === 0
-									}
-									onClick={() => onPlanBuild(agentPlanBuildModelId)}
-								>
-									{t('plan.review.build')}
-								</button>
-								{planReviewIsBuilt ? (
-									<span className="ref-agent-plan-built-chip" role="status">{t('app.planEditorBuilt')}</span>
-								) : null}
-							</div>
-							<div className="ref-agent-plan-doc-markdown ref-agent-plan-preview-markdown">
-								<ChatMarkdown content={agentPlanDocumentMarkdown} />
-							</div>
-							<div className="ref-agent-plan-doc-todos">
-								<div className="ref-agent-plan-doc-todos-head">
-									<div className="ref-agent-plan-doc-todos-title-wrap">
-										<span className="ref-agent-plan-doc-todos-title">{t('plan.review.todo', { done: String(agentPlanTodoDoneCount), total: String(agentPlanTodos.length) })}</span>
-										<span className="ref-agent-plan-doc-todos-note">{t('plan.review.label')}</span>
-									</div>
-									<button
-										type="button"
-										className="ref-agent-plan-doc-add-todo-btn ref-agent-plan-add-todo-btn"
-										disabled={!agentPlanEffectivePlan}
-										onClick={onPlanAddTodo}
-									>
-										{t('plan.review.addTodo')}
-									</button>
-								</div>
-								{planTodoDraftOpen ? (
-									<div className="ref-agent-plan-doc-todo-draft">
-										<input
-											ref={planTodoDraftInputRef}
-											type="text"
-											className="ref-agent-plan-doc-todo-draft-input"
-											value={planTodoDraftText}
-											placeholder={t('plan.review.addTodoPrompt')}
-											onChange={(e) => setPlanTodoDraftText(e.target.value)}
-											onKeyDown={(e) => {
-												if (e.key === 'Enter') {
-													e.preventDefault();
-													onPlanAddTodoSubmit();
-												} else if (e.key === 'Escape') {
-													e.preventDefault();
-													onPlanAddTodoCancel();
-												}
-											}}
-										/>
-										<div className="ref-agent-plan-doc-todo-draft-actions">
-											<button
-												type="button"
-												className="ref-plan-brief-review-btn"
-												onClick={onPlanAddTodoCancel}
-											>
-												{t('common.cancel')}
-											</button>
-											<button
-												type="button"
-												className="ref-agent-plan-build-btn ref-agent-plan-build-btn--draft"
-												disabled={!planTodoDraftText.trim()}
-												onClick={onPlanAddTodoSubmit}
-											>
-												{t('common.save')}
-											</button>
-										</div>
-									</div>
-								) : null}
-								<div className="ref-agent-plan-doc-todos-list">
-									{agentPlanTodos.length > 0 ? (
-										agentPlanTodos.map((todo) => (
-											<button
-												key={todo.id}
-												type="button"
-												className={`ref-plan-todo ${todo.status === 'completed' ? 'is-done' : ''}`}
-												onClick={() => onPlanTodoToggle(todo.id)}
-											>
-												<input type="checkbox" checked={todo.status === 'completed'} readOnly tabIndex={-1} />
-												<span className="ref-plan-todo-text">{todo.content}</span>
-											</button>
-										))
-									) : (
-										<div className="ref-agent-plan-doc-empty-todos">{t('plan.review.todoEmpty')}</div>
-									)}
-								</div>
-							</div>
-						</div>
-					</div>
-				</section>
-			) : (
-				<section className="ref-agent-plan-status-card ref-agent-plan-status-card--doc" aria-live="polite">
-					<div className="ref-agent-plan-doc-toolbar">
-						<div className="ref-agent-plan-doc-title-stack">
-							<span className="ref-agent-plan-doc-label">{t('app.tabPlan')}</span>
-							<span className="ref-agent-plan-status-title">{t('app.planSidebarWaiting')}</span>
-						</div>
-						<div className="ref-right-icon-tabs" aria-label={t('app.rightSidebarViews')}>
-							<button
-								type="button"
-								aria-label={t('app.tabGit')}
-								title={t('app.tabGit')}
-								className="ref-right-icon-tab"
-								onClick={() => openAgentRightSidebarView('git')}
-							>
-								<IconGitSCM />
-							</button>
-							<button
-								type="button"
-								aria-label={t('common.close')}
-								title={t('common.close')}
-								className="ref-right-icon-tab"
-								onClick={() => setAgentRightSidebarOpen(false)}
-							>
-								<IconCloseSmall />
-							</button>
-						</div>
-					</div>
-					<div className="ref-agent-plan-status-main">
-						<div className="ref-agent-plan-status-title">{t('app.planSidebarWaiting')}</div>
-						<p className="ref-agent-plan-status-body">{t('app.planSidebarDescription')}</p>
-					</div>
-				</section>
-			)}
-		</div>
-	);
-	const agentFileSidebarPanel = agentFilePreview ? (
-		<div className="ref-agent-review-shell">
-			<div className="ref-agent-review-head">
-				<div className="ref-agent-review-title-stack">
-					<span className="ref-agent-review-kicker">{t('app.filePreview')}</span>
-					<span className="ref-agent-review-title">{agentFilePreviewTitle}</span>
-				</div>
-				<div className="ref-right-icon-tabs" aria-label={t('app.rightSidebarViews')}>
-					{hasAgentPlanSidebarContent ? (
-						<button
-							type="button"
-							aria-label={t('app.tabPlan')}
-							title={t('app.tabPlan')}
-							className="ref-right-icon-tab"
-							onClick={() => openAgentRightSidebarView('plan')}
-						>
-							<IconDoc />
-						</button>
-					) : null}
-					<button
-						type="button"
-						aria-label={t('app.tabGit')}
-						title={t('app.tabGit')}
-						className="ref-right-icon-tab"
-						onClick={() => openAgentRightSidebarView('git')}
-					>
-						<IconGitSCM />
-					</button>
-					<button
-						type="button"
-						aria-label={t('common.close')}
-						title={t('common.close')}
-						className="ref-right-icon-tab"
-						onClick={() => setAgentRightSidebarOpen(false)}
-					>
-						<IconCloseSmall />
-					</button>
-				</div>
-			</div>
-			<div className="ref-right-panel-stage">
-				<AgentFilePreviewPanel
-					filePath={agentFilePreview.relPath}
-					content={agentFilePreview.content}
-					diff={agentFilePreview.diff}
-					loading={agentFilePreview.loading}
-					readError={agentFilePreview.readError}
-					isBinary={agentFilePreview.isBinary}
-					revealLine={agentFilePreview.revealLine}
-					revealEndLine={agentFilePreview.revealEndLine}
-					onOpenInEditor={() =>
-						void openFileInTab(
-							agentFilePreview.relPath,
-							agentFilePreview.revealLine,
-							agentFilePreview.revealEndLine,
-							{
-								diff: agentFilePreview.diff,
-								allowReviewActions: agentFilePreview.reviewMode === 'snapshot',
-							}
-						)
-					}
-					onAcceptHunk={
-						agentFilePreview.reviewMode === 'snapshot'
-							? (patch) => void onAcceptAgentFilePreviewHunk(patch)
-							: undefined
-					}
-					onRevertHunk={
-						agentFilePreview.reviewMode === 'snapshot'
-							? (patch) => void onRevertAgentFilePreviewHunk(patch)
-							: undefined
-					}
-					busyHunkPatch={agentFilePreviewBusyPatch}
-				/>
-			</div>
-		</div>
-	) : (
-		<div className="ref-agent-review-shell">
-			<div className="ref-agent-review-head">
-				<div className="ref-agent-review-title-stack">
-					<span className="ref-agent-review-kicker">{t('app.filePreview')}</span>
-					<span className="ref-agent-review-title">{t('app.filePreview')}</span>
-				</div>
-				<div className="ref-right-icon-tabs" aria-label={t('app.rightSidebarViews')}>
-					{hasAgentPlanSidebarContent ? (
-						<button
-							type="button"
-							aria-label={t('app.tabPlan')}
-							title={t('app.tabPlan')}
-							className="ref-right-icon-tab"
-							onClick={() => openAgentRightSidebarView('plan')}
-						>
-							<IconDoc />
-						</button>
-					) : null}
-					<button
-						type="button"
-						aria-label={t('app.tabGit')}
-						title={t('app.tabGit')}
-						className="ref-right-icon-tab"
-						onClick={() => openAgentRightSidebarView('git')}
-					>
-						<IconGitSCM />
-					</button>
-					<button
-						type="button"
-						aria-label={t('common.close')}
-						title={t('common.close')}
-						className="ref-right-icon-tab"
-						onClick={() => setAgentRightSidebarOpen(false)}
-					>
-						<IconCloseSmall />
-					</button>
-				</div>
-			</div>
-			<div className="ref-right-panel-stage">
-				<div className="ref-agent-file-preview-state ref-agent-file-preview-state--empty">
-					{t('app.selectFileToView')}
-				</div>
-			</div>
-		</div>
-	);
+
+	const agentChatPanelProps = useAgentChatPanelProps({
+		t,
+		hasConversation,
+		displayMessages,
+		persistedMessageCount: messages.length,
+		messagesThreadId,
+		currentId,
+		lastAssistantMessageIndex,
+		lastUserMessageIndex,
+		messagesViewportRef,
+		messagesTrackRef,
+		inlineResendRootRef,
+		onMessagesScroll,
+		awaitingReply,
+		thinkingTick,
+		streamStartedAtRef,
+		firstTokenAtRef,
+		thoughtSecondsByThread,
+		lastTurnUsage,
+		composerMode,
+		streaming,
+		streamingThinking,
+		streamingToolPreview,
+		liveAssistantBlocks,
+		workspace,
+		workspaceBasename,
+		workspaceFileList,
+		revertedFiles,
+		revertedChangeKeys,
+		resendFromUserIndex,
+		inlineResendSegments,
+		setInlineResendSegments,
+		composerSegments,
+		setComposerSegments,
+		canSendComposer,
+		canSendInlineResend,
+		sharedComposerProps,
+		onStartInlineResend,
+		shell,
+		onExplorerOpenFile,
+		onAgentConversationOpenFile,
+		pendingAgentPatches,
+		agentReviewBusy,
+		onApplyAgentPatchOne,
+		onApplyAgentPatchesAll,
+		onDiscardAgentReview,
+		planQuestion,
+		onPlanQuestionSubmit,
+		onPlanQuestionSkip,
+		wizardPending,
+		setWizardPending,
+		executeSkillCreatorSend,
+		executeRuleWizardSend,
+		executeSubagentWizardSend,
+		mistakeLimitRequest,
+		respondMistakeLimit,
+		agentPlanEffectivePlan,
+		editorPlanReviewDismissed,
+		planFileRelPath,
+		planFilePath,
+		defaultModel,
+		modelPickerItems,
+		planReviewIsBuilt,
+		onPlanBuild,
+		onPlanReviewClose,
+		onPlanTodoToggle,
+		toolApprovalRequest,
+		respondToolApproval,
+		agentFileChanges,
+		fileChangesDismissed,
+		onKeepAllEdits,
+		onRevertAllEdits,
+		onKeepFileEdit,
+		onRevertFileEdit,
+		showScrollToBottomButton,
+		scrollMessagesToBottom,
+		agentPlanSummaryCard,
+	});
+
+
+	const agentRightSidebarProps = useAgentRightSidebarProps({
+		t,
+		open: agentRightSidebarOpen,
+		view: agentRightSidebarView,
+		hasAgentPlanSidebarContent,
+		setAgentRightSidebarOpen,
+		openAgentRightSidebarView,
+		onExplorerOpenFile,
+		planPreviewTitle: agentPlanPreviewTitle ?? '',
+		planPreviewMarkdown: agentPlanPreviewMarkdown,
+		planDocumentMarkdown: agentPlanDocumentMarkdown,
+		planFileRelPath,
+		planFilePath,
+		agentPlanBuildModelId,
+		setAgentPlanBuildModelId,
+		modelPickerItems,
+		awaitingReply,
+		agentPlanEffectivePlan,
+		onPlanBuild,
+		planReviewIsBuilt,
+		agentPlanTodoDoneCount,
+		agentPlanTodos,
+		onPlanAddTodo,
+		planTodoDraftOpen,
+		planTodoDraftInputRef,
+		planTodoDraftText,
+		setPlanTodoDraftText,
+		onPlanAddTodoSubmit,
+		onPlanAddTodoCancel,
+		onPlanTodoToggle,
+		agentFilePreview,
+		openFileInTab,
+		onAcceptAgentFilePreviewHunk,
+		onRevertAgentFilePreviewHunk,
+		agentFilePreviewBusyPatch,
+		changeCount,
+		gitUnavailableReason,
+		gitLines,
+		refreshGit,
+		gitBranch,
+		diffTotals,
+		gitChangedPaths,
+		diffPreviews,
+		gitPathStatus,
+		diffLoading,
+		commitMsg,
+		setCommitMsg,
+		onCommitOnly,
+		onCommitAndPush,
+		gitActionError,
+	});
+
+
 
 	return (
 		<div className={`ref-shell ${layoutMode === 'agent' ? 'ref-shell--agent-layout' : ''}`}>
@@ -7718,250 +6465,7 @@ export default function App() {
 					aria-label={t('app.projectAndAgent')}
 				>
 					{layoutMode === 'agent' ? (
-					<div className="ref-left-agent-nest">
-						<div className="ref-left-scroll">
-							<div className="ref-project-block ref-project-block--agent">
-								<nav className="ref-agent-nav-list" aria-label={t('app.projectAndAgent')}>
-									<button type="button" className="ref-agent-nav-item" onClick={() => void onNewThread()}>
-										<IconPlus className="ref-agent-nav-item-icon" />
-										<span>{t('app.newAgent')}</span>
-									</button>
-									<button
-										type="button"
-										className="ref-agent-nav-item"
-										onClick={() => openSettingsPage('plugins')}
-									>
-										<IconPlugin className="ref-agent-nav-item-icon" />
-										<span>{t('settings.nav.plugins')}</span>
-									</button>
-								</nav>
-
-								<div className="ref-agent-sidebar-section">
-									<div className="ref-agent-sidebar-section-head">
-										<span className="ref-agent-sidebar-section-title">{t('app.sidebarThreads')}</span>
-										<div className="ref-agent-sidebar-section-actions">
-											<button
-												type="button"
-												className="ref-agent-sidebar-icon-btn"
-												title={t('app.openWorkspace')}
-												aria-label={t('app.openWorkspace')}
-												onClick={() => setWorkspacePickerOpen(true)}
-											>
-												<IconExplorer />
-											</button>
-											<button
-												type="button"
-												className="ref-agent-sidebar-icon-btn"
-												title={t('common.search')}
-												aria-label={t('common.search')}
-												onClick={() => openQuickOpen()}
-											>
-												<IconSearch />
-											</button>
-										</div>
-									</div>
-
-									<div className="ref-agent-workspace-stack">
-										{agentSidebarWorkspaces.length === 0 ? (
-											<div className="ref-agent-empty-workspace" role="status">
-												<span className="ref-agent-empty-workspace-icon" aria-hidden>
-													<IconExplorer />
-												</span>
-												<div className="ref-agent-empty-workspace-copy">
-													<span className="ref-agent-empty-workspace-title">{t('app.openWorkspace')}</span>
-													<p className="ref-agent-empty-workspace-body">{t('app.explorerPlaceholder')}</p>
-												</div>
-												<button
-													type="button"
-													className="ref-agent-empty-workspace-btn"
-													onClick={() => setWorkspacePickerOpen(true)}
-												>
-													<IconExplorer />
-													<span>{t('app.openWorkspace')}</span>
-												</button>
-											</div>
-										) : (
-											agentSidebarWorkspaces.map((ws) => {
-												const hasThreads = ws.isCurrent && ws.threadCount > 0;
-												const showThreads = !ws.isCollapsed;
-												const isEditingWorkspace = editingWorkspacePath === ws.path;
-												return (
-													<div
-														key={ws.path}
-														className={`ref-agent-workspace-group ${ws.isCurrent ? 'is-active' : ''} ${
-															ws.isCollapsed ? 'is-collapsed' : ''
-														} ${workspaceMenuPath === ws.path ? 'is-menu-open' : ''}`}
-													>
-														<div className={`ref-agent-workspace-row-shell ${ws.isCurrent ? 'is-active' : ''}`}>
-															{isEditingWorkspace ? (
-																<div className={`ref-agent-workspace-row is-editing ${ws.isCurrent ? 'is-active' : ''}`}>
-																	<span
-																		className={`ref-agent-workspace-disclosure ${
-																			showThreads ? 'is-open' : ''
-																		} is-visible`}
-																		aria-hidden
-																	>
-																		<IconChevron className="ref-agent-workspace-disclosure-icon" />
-																	</span>
-																	<span className="ref-agent-workspace-row-icon" aria-hidden>
-																		<IconExplorer />
-																	</span>
-																	<span className="ref-agent-workspace-row-copy">
-																		<input
-																			ref={workspaceNameInputRef}
-																			type="text"
-																			className="ref-agent-workspace-title-input"
-																			value={editingWorkspaceNameDraft}
-																			aria-label={t('app.workspaceMenuEditNamePrompt')}
-																			onChange={(e) => {
-																				const v = e.target.value;
-																				setEditingWorkspaceNameDraft(v);
-																				workspaceNameDraftRef.current = v;
-																			}}
-																			onClick={(e) => e.stopPropagation()}
-																			onKeyDown={(e) => {
-																				if (e.key === 'Enter') {
-																					e.preventDefault();
-																					commitWorkspaceAliasEdit();
-																				} else if (e.key === 'Escape') {
-																					e.preventDefault();
-																					cancelWorkspaceAliasEdit();
-																				}
-																			}}
-																			onBlur={commitWorkspaceAliasEdit}
-																		/>
-																		<span
-																			className="ref-agent-workspace-row-subtitle"
-																			title={ws.parent || ws.path}
-																		>
-																			{ws.parent || ws.path}
-																		</span>
-																	</span>
-																	{ws.threadCount > 0 ? (
-																		<span className="ref-agent-workspace-row-badge">{ws.threadCount}</span>
-																	) : null}
-																</div>
-															) : (
-																<button
-																	type="button"
-																	className={`ref-agent-workspace-row ${ws.isCurrent ? 'is-active' : ''}`}
-																	onClick={() => handleWorkspacePrimaryAction(ws.path)}
-																	aria-expanded={!ws.isCollapsed}
-																>
-																	<span
-																		className={`ref-agent-workspace-disclosure ${
-																			showThreads ? 'is-open' : ''
-																		} is-visible`}
-																		aria-hidden
-																	>
-																		<IconChevron className="ref-agent-workspace-disclosure-icon" />
-																	</span>
-																	<span className="ref-agent-workspace-row-icon" aria-hidden>
-																		<IconExplorer />
-																	</span>
-																	<span className="ref-agent-workspace-row-copy">
-																		<span className="ref-agent-workspace-row-label" title={ws.path}>
-																			{ws.name}
-																		</span>
-																		<span
-																			className="ref-agent-workspace-row-subtitle"
-																			title={ws.parent || ws.path}
-																		>
-																			{ws.parent || ws.path}
-																		</span>
-																	</span>
-																	{ws.threadCount > 0 ? (
-																		<span className="ref-agent-workspace-row-badge">{ws.threadCount}</span>
-																	) : null}
-																</button>
-															)}
-
-															<div className="ref-agent-workspace-actions">
-																<button
-																	type="button"
-																	className="ref-agent-workspace-action-btn"
-																	title={t('app.newAgent')}
-																	aria-label={t('app.newAgent')}
-																	onClick={(e) => {
-																		e.stopPropagation();
-																		void onNewThreadForWorkspace(ws.path);
-																	}}
-																>
-																	<IconPlus />
-																</button>
-																<button
-																	type="button"
-																	className={`ref-agent-workspace-action-btn ${
-																		workspaceMenuPath === ws.path ? 'is-active' : ''
-																	}`}
-																	title={t('app.editorChatMoreAria')}
-																	aria-label={t('app.editorChatMoreAria')}
-																	aria-haspopup="menu"
-																	aria-expanded={workspaceMenuPath === ws.path}
-																	onClick={(e) => {
-																		e.stopPropagation();
-																		const anchor = e.currentTarget;
-																		if (workspaceMenuPath === ws.path) {
-																			closeWorkspaceMenu();
-																		} else {
-																			openWorkspaceMenu(ws.path, anchor);
-																		}
-																	}}
-																>
-																	<IconDotsHorizontal />
-																</button>
-															</div>
-														</div>
-
-														<div className={`ref-collapse-grid ${showThreads ? 'is-open' : ''}`}>
-															<div className="ref-collapse-inner">
-																{hasThreads ? (
-																	<div className="ref-agent-thread-tree" aria-hidden={!showThreads}>
-																		<div className="ref-agent-thread-cluster">
-																			<div className="ref-thread-section-label ref-thread-section-label--nested">
-																				{t('app.today')}
-																			</div>
-																			<div className="ref-thread-list ref-thread-list--nested">
-																				{todayThreads.map(renderThreadItem)}
-																			</div>
-																		</div>
-																		{archivedThreads.length > 0 ? (
-																			<div className="ref-agent-thread-cluster">
-																				<div className="ref-thread-section-label ref-thread-section-label--archived ref-thread-section-label--nested">
-																					{t('app.archived')}
-																				</div>
-																				<div className="ref-thread-list ref-thread-list--nested">
-																					{archivedThreads.map(renderThreadItem)}
-																				</div>
-																			</div>
-																		) : null}
-																	</div>
-																) : (
-																	<div className="ref-agent-workspace-empty" aria-hidden={!showThreads}>
-																		{t('app.noThreads')}
-																	</div>
-																)}
-															</div>
-														</div>
-													</div>
-												);
-											})
-										)}
-									</div>
-								</div>
-							</div>
-						</div>
-						<div className="ref-left-footer ref-left-footer--agent">
-							<button
-								type="button"
-								className="ref-agent-settings-link"
-								onClick={() => openSettingsPage('general')}
-							>
-								<IconSettings className="ref-agent-settings-link-icon" />
-								<span>{t('app.settings')}</span>
-							</button>
-						</div>
-					</div>
+						<AgentLeftSidebar {...agentLeftSidebarProps} />
 					) : (
 				/* ═══ Editor 布局：左侧 = 文件树 ═══ */
 				<EditorLeftSidebar
@@ -8058,7 +6562,7 @@ export default function App() {
 						</button>
 					</div>
 
-					{renderAgentConversationBelowContext()}
+					<AgentChatPanel layout="agent-center" {...agentChatPanelProps} />
 				</main>
 				) : (
 				/* ═══ Editor：中间 = 标签 + 面包屑 + 编辑器（扁平，贴近 VS Code）；底部终端可关 ═══ */
@@ -8418,163 +6922,7 @@ export default function App() {
 				/>
 
 				{layoutMode === 'agent' ? (
-				<aside
-					id="agent-right-sidebar"
-					className={`ref-right ref-right--agent-layout ${agentRightSidebarOpen ? 'is-open' : 'is-collapsed'}`}
-					aria-label={t('app.rightSidebar')}
-					aria-hidden={!agentRightSidebarOpen}
-				>
-					{agentRightSidebarView === 'plan' ? (
-						agentPlanSidebarPanel
-					) : agentRightSidebarView === 'file' ? (
-						agentFileSidebarPanel
-					) : (
-						<div className="ref-agent-review-shell">
-							<div className="ref-agent-review-head">
-								<div className="ref-agent-review-title-stack">
-									<span className="ref-agent-review-kicker">{t('app.tabGit')}</span>
-									<span className="ref-agent-review-title">{agentRightSidebarTitle}</span>
-								</div>
-								<div className="ref-right-icon-tabs" aria-label={t('app.rightSidebarViews')}>
-									{hasAgentPlanSidebarContent ? (
-										<button
-											type="button"
-											aria-label={t('app.tabPlan')}
-											title={t('app.tabPlan')}
-											className="ref-right-icon-tab"
-											onClick={() => openAgentRightSidebarView('plan')}
-										>
-											<IconDoc />
-										</button>
-									) : null}
-									<button
-										type="button"
-										aria-label={t('app.tabGit')}
-										title={t('app.tabGit')}
-										className="ref-right-icon-tab is-active"
-										onClick={() => openAgentRightSidebarView('git')}
-									>
-										<IconGitSCM />
-									</button>
-									<button
-										type="button"
-										aria-label={t('common.close')}
-										title={t('common.close')}
-										className="ref-right-icon-tab"
-										onClick={() => setAgentRightSidebarOpen(false)}
-									>
-										<IconCloseSmall />
-									</button>
-								</div>
-							</div>
-
-							<div className="ref-right-panel-stage">
-								<div className="ref-right-panel-view ref-right-panel-view--agent">
-									<div className="ref-right-git-stack">
-										<div className="ref-right-toolbar">
-											<button type="button" className="ref-icon-tile" aria-label={t('app.gitRefreshAria')} onClick={() => void refreshGit()}>
-												<IconRefresh />
-											</button>
-											<span className="ref-local-label">{t('app.gitLocal')}</span>
-											<span className="ref-branch-chip">{gitBranch || 'master'}</span>
-										</div>
-										<div className="ref-git-summary ref-git-summary--rich">
-											{gitUnavailableReason !== 'none' ? (
-												<span className="ref-git-count ref-git-count--muted">
-													{gitUnavailableCopy(t, gitUnavailableReason).title}
-												</span>
-											) : changeCount > 0 ? (
-												<span className="ref-git-count">{t('app.gitUncommitted', { count: String(changeCount) })}</span>
-											) : (
-												<span className="ref-git-count ref-git-count--muted">{t('app.gitNoChanges')}</span>
-											)}
-											{gitUnavailableReason === 'none' && diffTotals.additions > 0 ? (
-												<span className="ref-git-stat-add">+{diffTotals.additions}</span>
-											) : null}
-											{gitUnavailableReason === 'none' && diffTotals.deletions > 0 ? (
-												<span className="ref-git-stat-del">-{diffTotals.deletions}</span>
-											) : null}
-										</div>
-										<div className="ref-git-body">
-											{gitUnavailableReason !== 'none' ? (
-												<GitUnavailableState t={t} reason={gitUnavailableReason} detail={gitLines[0] ?? ''} />
-											) : changeCount > 0 ? (
-												<div className="ref-git-cards">
-													{gitChangedPaths.map((rel) => {
-														const pr = diffPreviews[rel];
-														const st = gitPathStatus[rel];
-														const badge = st ? changeBadgeLabel(st.label, t) : t('app.gitChangedFallback');
-														return (
-															<div key={rel} className="ref-git-card">
-																<div className="ref-git-card-head">
-																	<span className="ref-git-card-name" title={rel}>
-																		{rel.includes('/') ? rel.slice(rel.lastIndexOf('/') + 1) : rel}
-																	</span>
-																	<span className="ref-git-card-badge">{badge}</span>
-																	<button
-																		type="button"
-																		className="ref-git-card-open"
-																		aria-label={gitCardOpenAria}
-																		title={gitCardOpenTitle}
-																		onClick={() =>
-																			void onExplorerOpenFile(rel, undefined, undefined, {
-																				diff: pr?.diff ?? null,
-																				allowReviewActions: true,
-																			})
-																		}
-																	>
-																		<IconEye />
-																	</button>
-																</div>
-																<div className="ref-git-card-body">
-																	{diffLoading && !pr ? (
-																		<div className="ref-git-card-skel">{t('app.gitDiffLoading')}</div>
-																	) : null}
-																	{pr?.isBinary ? (
-																		<div className="ref-git-binary-msg">{pr.diff || t('app.gitBinary')}</div>
-																	) : null}
-																	{pr && !pr.isBinary && pr.diff ? <GitDiffLines diff={pr.diff} t={t} /> : null}
-																	{pr && !pr.isBinary && !pr.diff ? (
-																		<div className="ref-git-binary-msg">{t('app.gitNoPreview')}</div>
-																	) : null}
-																</div>
-															</div>
-														);
-													})}
-												</div>
-											) : null}
-											{gitUnavailableReason === 'none' ? (
-												<>
-													<input
-														className="ref-commit-field"
-														placeholder={t('app.commitPlaceholder')}
-														value={commitMsg}
-														onChange={(e) => setCommitMsg(e.target.value)}
-													/>
-													<div className="ref-commit-actions">
-														<button type="button" className="ref-commit-btn" onClick={() => void onCommitOnly()}>
-															{t('app.commit')}
-														</button>
-														<button
-															type="button"
-															className="ref-commit-btn-secondary"
-															onClick={() => void onCommitAndPush()}
-														>
-															{t('app.commitPush')}
-														</button>
-													</div>
-												</>
-											) : null}
-											{gitUnavailableReason === 'none' && gitActionError ? (
-												<p className="ref-git-action-error">{gitActionError}</p>
-											) : null}
-										</div>
-									</div>
-								</div>
-							</div>
-						</div>
-					)}
-				</aside>
+				<AgentRightSidebar {...agentRightSidebarProps} />
 				) : (
 				/* ═══ Editor 布局：右侧 = Agent 对话（与 Agent 布局同一套消息与输入） ═══ */
 				<aside
@@ -8745,7 +7093,7 @@ export default function App() {
 								</div>
 							</div>
 						</div>
-						{renderAgentConversationBelowContext('editor-rail')}
+						<AgentChatPanel layout="editor-rail" {...agentChatPanelProps} />
 					</div>
 				</aside>
 				)}

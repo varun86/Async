@@ -65,7 +65,7 @@ Recent commits have mostly focused on making the agent path feel more robust and
 ---
 
 ## Screenshots (partial)
-
+ 
 ### Agent Layout
 <p align="center">
   <img src="docs/assets/workspace_1.png" width="3062" alt="Async Agent Layout" />

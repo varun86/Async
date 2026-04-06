@@ -1,0 +1,631 @@
+import {
+	Fragment,
+	memo,
+	type ComponentProps,
+	type Dispatch,
+	type ReactNode,
+	type RefObject,
+	type SetStateAction,
+} from 'react';
+import { ChatMarkdown } from './ChatMarkdown';
+import { AgentReviewPanel } from './AgentReviewPanel';
+import { AgentFileChangesPanel } from './AgentFileChanges';
+import { ChatComposer } from './ChatComposer';
+import { PlanQuestionDialog } from './PlanQuestionDialog';
+import { SkillScopeDialog } from './SkillScopeDialog';
+import { RuleWizardDialog } from './RuleWizardDialog';
+import { SubagentScopeDialog } from './SubagentScopeDialog';
+import { ToolApprovalInlineCard, type ToolApprovalPayload } from './ToolApprovalCard';
+import { AgentMistakeLimitDialog, type MistakeLimitPayload } from './AgentMistakeLimitDialog';
+import { PlanReviewPanel } from './PlanReviewPanel';
+import { ComposerThoughtBlock } from './ComposerThoughtBlock';
+import { UserMessageRich } from './UserMessageRich';
+import { assistantMessageUsesAgentToolProtocol, type FileChangeSummary } from './agentChatSegments';
+import { userMessageToSegments, type ComposerSegment, type SlashCommandId } from './composerSegments';
+import type { TFunction } from './i18n';
+import { isChatAssistantErrorLine } from './i18n';
+import { type AgentPendingPatch, type TurnTokenUsage } from './ipcTypes';
+import { type LiveAgentBlocksState } from './liveAgentBlocks';
+import { IconArrowDown, IconChevron, IconDoc } from './icons';
+import { type ParsedPlan, type PlanQuestion } from './planParser';
+import { type ChatMessage } from './threadTypes';
+
+type SharedComposerProps = Omit<
+	ComponentProps<typeof ChatComposer>,
+	'slot' | 'variant' | 'segments' | 'setSegments' | 'canSend' | 'extraClass' | 'showGitBranchRow'
+>;
+
+type WizardPending = {
+	kind: SlashCommandId;
+	tailSegments: ComposerSegment[];
+	targetThreadId: string;
+} | null;
+
+export type AgentChatPanelProps = {
+	layout?: 'agent-center' | 'editor-rail';
+	t: TFunction;
+	hasConversation: boolean;
+	displayMessages: ChatMessage[];
+	persistedMessageCount: number;
+	messagesThreadId: string | null;
+	currentId: string | null;
+	lastAssistantMessageIndex: number;
+	lastUserMessageIndex: number;
+	messagesViewportRef: RefObject<HTMLDivElement | null>;
+	messagesTrackRef: RefObject<HTMLDivElement | null>;
+	inlineResendRootRef: RefObject<HTMLDivElement | null>;
+	onMessagesScroll: () => void;
+	awaitingReply: boolean;
+	thinkingTick: number;
+	streamStartedAtRef: RefObject<number | null>;
+	firstTokenAtRef: RefObject<number | null>;
+	thoughtSecondsByThread: Record<string, number>;
+	lastTurnUsage: TurnTokenUsage | null;
+	composerMode: ComponentProps<typeof ChatComposer>['composerMode'];
+	streaming: string;
+	streamingThinking: string;
+	streamingToolPreview: ComponentProps<typeof ChatMarkdown>['streamingToolPreview'];
+	liveAssistantBlocks: LiveAgentBlocksState;
+	workspace: string | null;
+	workspaceBasename: string;
+	workspaceFileList: string[];
+	revertedFiles: ReadonlySet<string>;
+	revertedChangeKeys: ReadonlySet<string>;
+	resendFromUserIndex: number | null;
+	inlineResendSegments: ComposerSegment[];
+	setInlineResendSegments: Dispatch<SetStateAction<ComposerSegment[]>>;
+	composerSegments: ComposerSegment[];
+	setComposerSegments: Dispatch<SetStateAction<ComposerSegment[]>>;
+	canSendComposer: boolean;
+	canSendInlineResend: boolean;
+	sharedComposerProps: SharedComposerProps;
+	onStartInlineResend: (userMessageIndex: number, content: string) => void;
+	onOpenWorkspaceFile: (rel: string) => void;
+	onOpenAgentConversationFile: (
+		rel: string,
+		line?: number,
+		end?: number,
+		options?: { diff?: string | null; allowReviewActions?: boolean }
+	) => void;
+	onRunCommand: (cmd: string) => void;
+	pendingAgentPatches: AgentPendingPatch[];
+	agentReviewBusy: boolean;
+	onApplyAgentPatchOne: (id: string) => void;
+	onApplyAgentPatchesAll: () => void;
+	onDiscardAgentReview: () => void;
+	planQuestion: PlanQuestion | null;
+	onPlanQuestionSubmit: (answer: string) => void;
+	onPlanQuestionSkip: () => void;
+	wizardPending: WizardPending;
+	setWizardPending: Dispatch<SetStateAction<WizardPending>>;
+	executeSkillCreatorSend: (scope: 'user' | 'project', pending: NonNullable<WizardPending>) => void;
+	executeRuleWizardSend: (
+		ruleScope: 'always' | 'glob' | 'manual',
+		globPattern: string | undefined,
+		pending: NonNullable<WizardPending>
+	) => void;
+	executeSubagentWizardSend: (scope: 'user' | 'project', pending: NonNullable<WizardPending>) => void;
+	mistakeLimitRequest: MistakeLimitPayload | null;
+	respondMistakeLimit: (action: 'continue' | 'stop' | 'hint', hint?: string) => void;
+	agentPlanEffectivePlan: ParsedPlan | null;
+	editorPlanReviewDismissed: boolean;
+	planFileRelPath: string | null;
+	planFilePath: string | null;
+	defaultModel: string;
+	modelPickerItems: ComponentProps<typeof PlanReviewPanel>['modelItems'];
+	planReviewIsBuilt: boolean;
+	onPlanBuild: (modelId: string) => void;
+	onPlanReviewClose: () => void;
+	onPlanTodoToggle: (id: string) => void;
+	toolApprovalRequest: ToolApprovalPayload | null;
+	respondToolApproval: (allow: boolean) => void;
+	agentFileChanges: FileChangeSummary[];
+	fileChangesDismissed: boolean;
+	onKeepAllEdits: () => void;
+	onRevertAllEdits: () => void;
+	onKeepFileEdit: (rel: string) => void;
+	onRevertFileEdit: (rel: string) => void;
+	showScrollToBottomButton: boolean;
+	scrollMessagesToBottom: (behavior?: ScrollBehavior) => void;
+	agentPlanSummaryCard: ReactNode;
+};
+
+export const AgentChatPanel = memo(function AgentChatPanel({
+	layout = 'agent-center',
+	t,
+	hasConversation,
+	displayMessages,
+	persistedMessageCount,
+	messagesThreadId,
+	currentId,
+	lastAssistantMessageIndex,
+	lastUserMessageIndex,
+	messagesViewportRef,
+	messagesTrackRef,
+	inlineResendRootRef,
+	onMessagesScroll,
+	awaitingReply,
+	thinkingTick,
+	streamStartedAtRef,
+	firstTokenAtRef,
+	thoughtSecondsByThread,
+	lastTurnUsage,
+	composerMode,
+	streaming,
+	streamingThinking,
+	streamingToolPreview,
+	liveAssistantBlocks,
+	workspace,
+	workspaceBasename,
+	workspaceFileList,
+	revertedFiles,
+	revertedChangeKeys,
+	resendFromUserIndex,
+	inlineResendSegments,
+	setInlineResendSegments,
+	composerSegments,
+	setComposerSegments,
+	canSendComposer,
+	canSendInlineResend,
+	sharedComposerProps,
+	onStartInlineResend,
+	onOpenWorkspaceFile,
+	onOpenAgentConversationFile,
+	onRunCommand,
+	pendingAgentPatches,
+	agentReviewBusy,
+	onApplyAgentPatchOne,
+	onApplyAgentPatchesAll,
+	onDiscardAgentReview,
+	planQuestion,
+	onPlanQuestionSubmit,
+	onPlanQuestionSkip,
+	wizardPending,
+	setWizardPending,
+	executeSkillCreatorSend,
+	executeRuleWizardSend,
+	executeSubagentWizardSend,
+	mistakeLimitRequest,
+	respondMistakeLimit,
+	agentPlanEffectivePlan,
+	editorPlanReviewDismissed,
+	planFileRelPath,
+	planFilePath,
+	defaultModel,
+	modelPickerItems,
+	planReviewIsBuilt,
+	onPlanBuild,
+	onPlanReviewClose,
+	onPlanTodoToggle,
+	toolApprovalRequest,
+	respondToolApproval,
+	agentFileChanges,
+	fileChangesDismissed,
+	onKeepAllEdits,
+	onRevertAllEdits,
+	onKeepFileEdit,
+	onRevertFileEdit,
+	showScrollToBottomButton,
+	scrollMessagesToBottom,
+	agentPlanSummaryCard,
+}: AgentChatPanelProps) {
+	const isEditorRail = layout === 'editor-rail';
+
+	const renderChatMessageList = (): ReactNode[] => {
+		const t0 = import.meta.env.DEV ? performance.now() : 0;
+		const nodes = displayMessages.map((m, i) => {
+			const convoKey = messagesThreadId ?? currentId ?? 'no-thread';
+			const isLast = i === displayMessages.length - 1;
+			const stAt = streamStartedAtRef.current;
+			const ftAt = firstTokenAtRef.current;
+			const showLiveThought = isLast && m.role === 'assistant' && awaitingReply;
+			const agentOrPlanStreaming =
+				(composerMode === 'agent' || composerMode === 'plan') && awaitingReply && isLast;
+			const frozenSec =
+				!awaitingReply && isLast && m.role === 'assistant' && currentId
+					? thoughtSecondsByThread[currentId]
+					: undefined;
+
+			let thoughtBlock: ReactNode = null;
+			let liveThoughtMeta: ComponentProps<typeof ChatMarkdown>['liveThoughtMeta'] = null;
+			let thoughtAfterBody = false;
+			if (showLiveThought && stAt) {
+				void thinkingTick;
+				const assistantTurnHasOutput =
+					streaming.trim().length > 0 ||
+					streamingToolPreview != null ||
+					(agentOrPlanStreaming && liveAssistantBlocks.blocks.length > 0);
+				const phase = assistantTurnHasOutput ? 'streaming' : 'thinking';
+				thoughtAfterBody =
+					assistantTurnHasOutput && composerMode !== 'ask' && composerMode !== 'debug';
+				const elapsed =
+					phase === 'thinking'
+						? Math.max(0, (Date.now() - stAt) / 1000)
+						: ftAt
+							? Math.max(0, (ftAt - stAt) / 1000)
+							: Math.max(0, (Date.now() - stAt) / 1000);
+				if (agentOrPlanStreaming) {
+					liveThoughtMeta = {
+						phase,
+						elapsedSeconds: elapsed,
+						streamingThinking,
+					};
+				} else {
+					thoughtBlock = (
+						<ComposerThoughtBlock
+							phase={phase}
+							elapsedSeconds={elapsed}
+							streamingThinking={streamingThinking}
+						/>
+					);
+				}
+			} else if (frozenSec != null) {
+				thoughtAfterBody = true;
+				thoughtBlock = (
+					<ComposerThoughtBlock
+						phase="done"
+						elapsedSeconds={frozenSec}
+						tokenUsage={isLast ? lastTurnUsage : undefined}
+					/>
+				);
+			}
+
+			const pendingEmptyAssistant =
+				m.role === 'assistant' &&
+				m.content.trim() === '' &&
+				awaitingReply &&
+				isLast &&
+				streamingToolPreview == null &&
+				!(agentOrPlanStreaming && (liveAssistantBlocks.blocks.length > 0 || liveThoughtMeta != null));
+			const userMessageIndex = i < persistedMessageCount && m.role === 'user' ? i : -1;
+			const isEditingThisUser = userMessageIndex >= 0 && resendFromUserIndex === userMessageIndex;
+
+			if (m.role === 'user' && isEditingThisUser) {
+				const inner = (
+					<div ref={inlineResendRootRef} className="ref-msg-slot ref-msg-slot--composer">
+						<ChatComposer
+							{...sharedComposerProps}
+							slot="inline"
+							segments={inlineResendSegments}
+							setSegments={setInlineResendSegments}
+							canSend={canSendInlineResend}
+							extraClass="ref-capsule--inline-edit"
+							showGitBranchRow={false}
+						/>
+					</div>
+				);
+				return i === lastUserMessageIndex ? (
+					<div key={`u-edit-${convoKey}-${i}`} className="ref-msg-sticky-user-wrap">
+						{inner}
+					</div>
+				) : (
+					<Fragment key={`u-edit-${convoKey}-${i}`}>{inner}</Fragment>
+				);
+			}
+
+			if (m.role === 'user') {
+				const userSegs = userMessageToSegments(m.content, workspaceFileList);
+				const inner = (
+					<div className="ref-msg-slot ref-msg-slot--user">
+						<button
+							type="button"
+							className="ref-msg-user"
+							disabled={awaitingReply}
+							title={awaitingReply ? t('app.userMsgGenerating') : t('app.userMsgEditHint')}
+							onClick={() => {
+								if (awaitingReply) {
+									return;
+								}
+								onStartInlineResend(userMessageIndex, m.content);
+							}}
+						>
+							<UserMessageRich segments={userSegs} onFileClick={onOpenWorkspaceFile} />
+						</button>
+					</div>
+				);
+				return i === lastUserMessageIndex ? (
+					<div key={`u-${convoKey}-${i}`} className="ref-msg-sticky-user-wrap">
+						{inner}
+					</div>
+				) : (
+					<Fragment key={`u-${convoKey}-${i}`}>{inner}</Fragment>
+				);
+			}
+
+			return (
+				<div key={`a-${convoKey}-${i}`} className="ref-msg-slot ref-msg-slot--assistant">
+					{thoughtBlock && !thoughtAfterBody ? thoughtBlock : null}
+					<div className="ref-msg-assistant-body">
+						{pendingEmptyAssistant ? (
+							<span className="ref-bubble-pending" aria-hidden>
+								<span className="ref-bubble-pending-dot" />
+								<span className="ref-bubble-pending-dot" />
+								<span className="ref-bubble-pending-dot" />
+							</span>
+						) : (
+							<ChatMarkdown
+								content={m.content}
+								agentUi={
+									composerMode === 'plan' ||
+									composerMode === 'agent' ||
+									assistantMessageUsesAgentToolProtocol(m.content)
+								}
+								assistantBubbleVariant={
+									m.role === 'assistant' && isChatAssistantErrorLine(m.content, t)
+										? 'error'
+										: 'default'
+								}
+								planUi={composerMode === 'plan'}
+								workspaceRoot={workspace}
+								onOpenAgentFile={onOpenAgentConversationFile}
+								onRunCommand={onRunCommand}
+								streamingToolPreview={agentOrPlanStreaming ? streamingToolPreview : null}
+								showAgentWorking={agentOrPlanStreaming}
+								liveAgentBlocksState={agentOrPlanStreaming ? liveAssistantBlocks : null}
+								liveThoughtMeta={agentOrPlanStreaming ? liveThoughtMeta : null}
+								revertedPaths={revertedFiles}
+								revertedChangeKeys={revertedChangeKeys}
+								allowAgentFileActions={
+									composerMode === 'agent' && !awaitingReply && i === lastAssistantMessageIndex
+								}
+							/>
+						)}
+					</div>
+					{thoughtBlock && thoughtAfterBody ? thoughtBlock : null}
+				</div>
+			);
+		});
+		if (import.meta.env.DEV) {
+			const elapsed = performance.now() - t0;
+			if (elapsed > 12) {
+				console.log(
+					`[perf] renderChatMessageList: ${elapsed.toFixed(1)}ms, messages=${displayMessages.length}, workspaceFiles=${workspaceFileList.length}, awaiting=${awaitingReply}`
+				);
+			}
+		}
+		return nodes;
+	};
+
+	const conversationRenderKey = messagesThreadId ?? currentId ?? 'no-thread';
+	const messagesEl = hasConversation ? (
+		<div className="ref-messages" ref={messagesViewportRef} onScroll={onMessagesScroll}>
+			<div
+				key={`messages-track-${conversationRenderKey}`}
+				className="ref-messages-track"
+				ref={messagesTrackRef}
+			>
+				{renderChatMessageList()}
+			</div>
+		</div>
+	) : null;
+
+	const editorRailHeroComposer =
+		isEditorRail && !hasConversation ? (
+			<ChatComposer
+				{...sharedComposerProps}
+				slot="hero"
+				variant="editor-hero"
+				segments={composerSegments}
+				setSegments={setComposerSegments}
+				canSend={canSendComposer}
+				showGitBranchRow={false}
+			/>
+		) : null;
+
+	const editorContextStrip = isEditorRail ? (
+		<div className="ref-editor-rail-context-strip">
+			<IconDoc className="ref-context-icon" />
+			<span className="ref-editor-rail-context-local">{t('app.editorChatContextLocal')}</span>
+			<IconChevron className="ref-editor-rail-context-chev" aria-hidden />
+			<span className="ref-editor-rail-context-path" title={workspace ?? undefined}>
+				{workspace ? workspaceBasename : t('app.noWorkspace')}
+			</span>
+		</div>
+	) : null;
+
+	const sharedOverlays = (
+		<>
+			{hasConversation && pendingAgentPatches.length > 0 ? (
+				<AgentReviewPanel
+					patches={pendingAgentPatches}
+					workspaceRoot={workspace}
+					busy={agentReviewBusy}
+					onOpenFile={(rel, line, end, options) =>
+						onOpenAgentConversationFile(rel, line, end, {
+							...options,
+							allowReviewActions: true,
+						})
+					}
+					onApplyOne={onApplyAgentPatchOne}
+					onApplyAll={onApplyAgentPatchesAll}
+					onDiscard={onDiscardAgentReview}
+				/>
+			) : null}
+
+			{hasConversation && planQuestion && composerMode === 'plan' ? (
+				<PlanQuestionDialog
+					question={planQuestion}
+					onSubmit={onPlanQuestionSubmit}
+					onSkip={onPlanQuestionSkip}
+				/>
+			) : null}
+
+			{wizardPending?.kind === 'create-skill' ? (
+				<SkillScopeDialog
+					workspaceOpen={!!workspace}
+					onCancel={() => setWizardPending(null)}
+					onConfirm={(scope) => {
+						const p = wizardPending;
+						setWizardPending(null);
+						if (p?.kind === 'create-skill') {
+							void executeSkillCreatorSend(scope, p);
+						}
+					}}
+				/>
+			) : null}
+			{wizardPending?.kind === 'create-rule' ? (
+				<RuleWizardDialog
+					onCancel={() => setWizardPending(null)}
+					onConfirm={(ruleScope, globPattern) => {
+						const p = wizardPending;
+						setWizardPending(null);
+						if (p?.kind === 'create-rule') {
+							void executeRuleWizardSend(ruleScope, globPattern, p);
+						}
+					}}
+				/>
+			) : null}
+			{wizardPending?.kind === 'create-subagent' ? (
+				<SubagentScopeDialog
+					workspaceOpen={!!workspace}
+					onCancel={() => setWizardPending(null)}
+					onConfirm={(scope) => {
+						const p = wizardPending;
+						setWizardPending(null);
+						if (p?.kind === 'create-subagent') {
+							void executeSubagentWizardSend(scope, p);
+						}
+					}}
+				/>
+			) : null}
+
+			<AgentMistakeLimitDialog
+				open={mistakeLimitRequest !== null}
+				payload={mistakeLimitRequest}
+				onContinue={() => void respondMistakeLimit('continue')}
+				onStop={() => void respondMistakeLimit('stop')}
+				onSendHint={(hint) => void respondMistakeLimit('hint', hint)}
+				title={t('agent.mistakeLimit.title')}
+				body={
+					mistakeLimitRequest
+						? t('agent.mistakeLimit.body', {
+								count: mistakeLimitRequest.consecutiveFailures,
+								threshold: mistakeLimitRequest.threshold,
+							})
+						: ''
+				}
+				continueLabel={t('agent.mistakeLimit.continue')}
+				stopLabel={t('agent.mistakeLimit.stop')}
+				hintFieldLabel={t('agent.mistakeLimit.hintField')}
+				sendHintLabel={t('agent.mistakeLimit.sendHint')}
+				hintPlaceholder={t('agent.mistakeLimit.hintPlaceholder')}
+			/>
+
+			{isEditorRail &&
+			hasConversation &&
+			agentPlanEffectivePlan &&
+			composerMode === 'plan' &&
+			!editorPlanReviewDismissed ? (
+				<PlanReviewPanel
+					plan={agentPlanEffectivePlan}
+					planFileDisplayPath={planFileRelPath ?? planFilePath}
+					initialBuildModelId={defaultModel}
+					modelItems={modelPickerItems}
+					planBuilt={planReviewIsBuilt}
+					buildDisabled={awaitingReply}
+					onBuild={onPlanBuild}
+					onClose={onPlanReviewClose}
+					onTodoToggle={onPlanTodoToggle}
+				/>
+			) : null}
+		</>
+	);
+
+	const commandStack = (
+		<div className="ref-command-stack">
+			{toolApprovalRequest ? (
+				<ToolApprovalInlineCard
+					payload={toolApprovalRequest}
+					onAllow={() => void respondToolApproval(true)}
+					onDeny={() => void respondToolApproval(false)}
+					title={
+						toolApprovalRequest.toolName === 'execute_command'
+							? t('agent.toolApproval.titleShell')
+							: t('agent.toolApproval.titleWrite')
+					}
+					allowLabel={t('agent.toolApproval.allow')}
+					denyLabel={t('agent.toolApproval.deny')}
+				/>
+			) : null}
+			{hasConversation &&
+			composerMode === 'agent' &&
+			agentFileChanges.length > 0 &&
+			!awaitingReply &&
+			!fileChangesDismissed ? (
+				<AgentFileChangesPanel
+					files={agentFileChanges}
+					onOpenFile={(rel, line, end, options) =>
+						onOpenAgentConversationFile(rel, line, end, {
+							...options,
+							allowReviewActions: true,
+						})
+					}
+					onKeepAll={onKeepAllEdits}
+					onRevertAll={() => void onRevertAllEdits()}
+					onKeepFile={(rel) => void onKeepFileEdit(rel)}
+					onRevertFile={(rel) => void onRevertFileEdit(rel)}
+				/>
+			) : null}
+			{hasConversation ? (
+				<div
+					className={`ref-scroll-jump-anchor ${showScrollToBottomButton ? 'is-visible' : ''}`}
+					aria-hidden={!showScrollToBottomButton}
+				>
+					<button
+						type="button"
+						className="ref-scroll-jump-btn"
+						tabIndex={showScrollToBottomButton ? 0 : -1}
+						title={t('app.jumpToLatest')}
+						aria-label={t('app.jumpToLatest')}
+						onClick={() => scrollMessagesToBottom('smooth')}
+					>
+						<IconArrowDown className="ref-scroll-jump-btn-icon" />
+					</button>
+				</div>
+			) : null}
+			{!isEditorRail ? agentPlanSummaryCard : null}
+			{hasConversation || !isEditorRail ? (
+				<ChatComposer
+					{...sharedComposerProps}
+					slot="bottom"
+					segments={composerSegments}
+					setSegments={setComposerSegments}
+					canSend={canSendComposer}
+					showGitBranchRow={!isEditorRail}
+				/>
+			) : null}
+		</div>
+	);
+
+	if (isEditorRail) {
+		return (
+			<>
+				<div className="ref-editor-chat-body">
+					{!hasConversation ? (
+						<>
+							{editorRailHeroComposer}
+							{editorContextStrip}
+							<div className="ref-editor-rail-message-spring" aria-hidden />
+						</>
+					) : (
+						<>
+							{editorContextStrip}
+							{messagesEl}
+						</>
+					)}
+				</div>
+				{sharedOverlays}
+				{commandStack}
+			</>
+		);
+	}
+
+	return (
+		<>
+			{messagesEl}
+			{!hasConversation ? <div className="ref-hero-spacer" /> : null}
+			{sharedOverlays}
+			{commandStack}
+		</>
+	);
+});
