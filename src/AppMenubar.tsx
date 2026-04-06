@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useClickOutside } from './hooks/useClickOutside';
-import { useAppContext } from './AppContext';
+import { useAppShell, useAppShellT, useAppWorkspace } from './AppContext';
 import { MenubarFileMenu } from './MenubarFileMenu';
 import { MenubarWindowMenu } from './MenubarWindowMenu';
 import { quickOpenPrimaryShortcutLabel, saveShortcutLabel } from './quickOpenPalette';
@@ -69,7 +69,9 @@ export interface AppMenubarProps {
  * so the parent App does NOT re-render when menus toggle.
  */
 export const AppMenubar = memo(function AppMenubar(props: AppMenubarProps) {
-	const { t, shell, workspace } = useAppContext();
+	const shell = useAppShell();
+	const workspace = useAppWorkspace();
+	const t = useAppShellT();
 	const {
 		layoutMode,
 		folderRecents, canSave, canEditorClose, canCloseFolder,

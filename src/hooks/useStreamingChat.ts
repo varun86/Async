@@ -57,6 +57,8 @@ type StreamingSendRuntime = {
 	clearPlanQuestion: () => void;
 	clearMistakeLimitRequest: () => void;
 	planBuildPendingMarkerRef: MutableRefObject<{ threadId: string; pathKey: string } | null>;
+	setAwaitingReply: Dispatch<SetStateAction<boolean>>;
+	streamStartedAtRef: MutableRefObject<number | null>;
 };
 
 type StreamingSubscriptionRuntime = {
@@ -278,7 +280,8 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 			})) as { ok?: boolean };
 
 			if (!result?.ok) {
-				rt.resetStreamingSession();
+				rt.setAwaitingReply(false);
+				rt.streamStartedAtRef.current = null;
 				rt.setResendFromUserIndex(resendIdx);
 				rt.setInlineResendSegments(userMessageToSegments(text, rt.workspaceFileList));
 				void rt.loadMessages(targetThreadId);
@@ -306,9 +309,10 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 		rt.planBuildPendingMarkerRef.current = null;
 		rt.clearMistakeLimitRequest();
 		await rt.shell.invoke('chat:abort', rt.currentId);
+		// 与 App 原逻辑一致：不 resetStreamingSession，由后端 done/error 收尾正文流式状态
 		rt.clearStreamingToolPreviewNow();
 		rt.resetLiveAgentBlocks();
-		rt.resetStreamingSession({ clearThread: false });
+		rt.setAwaitingReply(false);
 	}, []);
 
 	return {
@@ -507,7 +511,8 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 				if (payload.usage) {
 					rt.setLastTurnUsage(payload.usage);
 				}
-				rt.resetStreamingSession();
+				// 与 App 一致：done 后保留 streamThreadRef，避免与旧实现行为漂移
+				rt.resetStreamingSession({ clearThread: false });
 				rt.setStreamingThinking('');
 				rt.setToolApprovalRequest(null);
 				rt.setMistakeLimitRequest(null);
@@ -599,7 +604,7 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 			} else if (payload.type === 'error') {
 				rt.recordThoughtSeconds(payload.threadId, 0.3);
 				rt.planBuildPendingMarkerRef.current = null;
-				rt.resetStreamingSession();
+				rt.resetStreamingSession({ clearThread: false });
 				rt.setStreamingThinking('');
 				rt.setToolApprovalRequest(null);
 				rt.setMistakeLimitRequest(null);

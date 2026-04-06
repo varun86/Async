@@ -22,7 +22,8 @@ import { PlanReviewPanel } from './PlanReviewPanel';
 import { ComposerThoughtBlock } from './ComposerThoughtBlock';
 import { UserMessageRich } from './UserMessageRich';
 import { assistantMessageUsesAgentToolProtocol, type FileChangeSummary } from './agentChatSegments';
-import { userMessageToSegments, type ComposerSegment, type SlashCommandId } from './composerSegments';
+import { userMessageToSegments, type ComposerSegment } from './composerSegments';
+import type { WizardPending } from './hooks/useWizardPending';
 import type { TFunction } from './i18n';
 import { isChatAssistantErrorLine } from './i18n';
 import { type AgentPendingPatch, type TurnTokenUsage } from './ipcTypes';
@@ -35,12 +36,6 @@ type SharedComposerProps = Omit<
 	ComponentProps<typeof ChatComposer>,
 	'slot' | 'variant' | 'segments' | 'setSegments' | 'canSend' | 'extraClass' | 'showGitBranchRow'
 >;
-
-type WizardPending = {
-	kind: SlashCommandId;
-	tailSegments: ComposerSegment[];
-	targetThreadId: string;
-} | null;
 
 export type AgentChatPanelProps = {
 	layout?: 'agent-center' | 'editor-rail';
@@ -97,15 +92,15 @@ export type AgentChatPanelProps = {
 	planQuestion: PlanQuestion | null;
 	onPlanQuestionSubmit: (answer: string) => void;
 	onPlanQuestionSkip: () => void;
-	wizardPending: WizardPending;
-	setWizardPending: Dispatch<SetStateAction<WizardPending>>;
-	executeSkillCreatorSend: (scope: 'user' | 'project', pending: NonNullable<WizardPending>) => void;
+	wizardPending: WizardPending | null;
+	setWizardPending: Dispatch<SetStateAction<WizardPending | null>>;
+	executeSkillCreatorSend: (scope: 'user' | 'project', pending: WizardPending) => void;
 	executeRuleWizardSend: (
 		ruleScope: 'always' | 'glob' | 'manual',
 		globPattern: string | undefined,
-		pending: NonNullable<WizardPending>
+		pending: WizardPending
 	) => void;
-	executeSubagentWizardSend: (scope: 'user' | 'project', pending: NonNullable<WizardPending>) => void;
+	executeSubagentWizardSend: (scope: 'user' | 'project', pending: WizardPending) => void;
 	mistakeLimitRequest: MistakeLimitPayload | null;
 	respondMistakeLimit: (action: 'continue' | 'stop' | 'hint', hint?: string) => void;
 	agentPlanEffectivePlan: ParsedPlan | null;

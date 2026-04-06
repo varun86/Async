@@ -10,6 +10,7 @@ import {
 	useState,
 	useTransition,
 	type ReactNode,
+	type RefObject,
 } from 'react';
 import type { editor as MonacoEditorNS } from 'monaco-editor';
 import { createTwoFilesPatch } from 'diff';
@@ -86,7 +87,6 @@ import {
 	segmentsTrimmedEmpty,
 	userMessageToSegments,
 	type ComposerSegment,
-	type SlashCommandId,
 } from './composerSegments';
 import { getAtMentionRange } from './composerAtMention';
 import { textBeforeCaretForAt } from './composerRichDom';
@@ -129,7 +129,13 @@ import {
 import { useGitIntegration } from './hooks/useGitIntegration';
 import { useSettings } from './hooks/useSettings';
 import { usePlanSystem } from './hooks/usePlanSystem';
-import { useStreamingChat, useStreamingChatSubscription } from './hooks/useStreamingChat';
+import {
+	useStreamingChat,
+	useStreamingChatControls,
+	useStreamingChatSubscription,
+} from './hooks/useStreamingChat';
+import { useMenubarMenuReducer } from './hooks/useMenubarMenuReducer';
+import { useWizardPending } from './hooks/useWizardPending';
 import { useFileOperations, type AgentConversationFileOpenOptions } from './hooks/useFileOperations';
 import { useWorkspaceActions } from './hooks/useWorkspaceActions';
 import { useAgentChatPanelProps } from './hooks/useAgentChatPanelProps';
@@ -146,6 +152,7 @@ import { AgentChatPanel } from './AgentChatPanel';
 import { AgentLeftSidebar } from './AgentLeftSidebar';
 import { AgentRightSidebar } from './AgentRightSidebar';
 import type { ComposerAnchorSlot } from './ChatComposer';
+import { AppProvider } from './AppContext';
 import { ComposerActionsProvider } from './ComposerActionsContext';
 import { EditorLeftSidebar } from './EditorLeftSidebar';
 
@@ -565,12 +572,21 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	// ─────────────────────────────────────────────────────────────────────────
 
 	const {
-		streaming, setStreaming,
-		awaitingReply, setAwaitingReply,
-		thinkingTick, thoughtSecondsByThread,
-		subAgentBgToast, showTransientToast,
-		beginStream, markFirstToken, recordThoughtSeconds, resetStreamingSession,
-		streamThreadRef, streamStartedAtRef, firstTokenAtRef,
+		streaming,
+		awaitingReply,
+		thinkingTick,
+		thoughtSecondsByThread,
+		subAgentBgToast,
+		showTransientToast,
+		beginStream,
+		markFirstToken,
+		recordThoughtSeconds,
+		resetStreamingSession,
+		streamThreadRef,
+		streamStartedAtRef,
+		firstTokenAtRef,
+		setStreaming,
+		setAwaitingReply,
 	} = useStreamingChat();
 	const {
 		agentReviewPendingByThread,
@@ -632,12 +648,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		resetPlanState,
 	} = usePlanSystem(shell, currentId, currentIdRef, messages, messagesThreadId, messagesRef, workspace, streaming, defaultModel);
 
-	/** /create-skill | /create-rule | /create-subagent 发送前向导 */
-	const [wizardPending, setWizardPending] = useState<{
-		kind: SlashCommandId;
-		tailSegments: ComposerSegment[];
-		targetThreadId: string;
-	} | null>(null);
+	const { wizardPending, setWizardPending } = useWizardPending();
 	const [agentRightSidebarOpen, setAgentRightSidebarOpen] = useState(false);
 	const [agentRightSidebarView, setAgentRightSidebarView] = useState<AgentRightSidebarView>('git');
 	const [commitMsg, setCommitMsg] = useState('');
@@ -676,6 +687,74 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		resetComposerState,
 	} = useComposer();
 
+	const clearPlanQuestion = useCallback(() => {
+		setPlanQuestion(null);
+		setPlanQuestionRequestId(null);
+	}, [setPlanQuestion, setPlanQuestionRequestId]);
+
+	const { sendMessage, abortActiveStream } = useStreamingChatControls({
+		shell,
+		currentId,
+		setCurrentId,
+		loadMessages,
+		refreshThreads,
+		defaultModel,
+		composerMode,
+		workspaceFileList,
+		resendFromUserIndex,
+		setResendFromUserIndex,
+		setInlineResendSegments,
+		setComposerSegments,
+		setMessages,
+		setStreamingThinking,
+		clearStreamingToolPreviewNow,
+		resetLiveAgentBlocks,
+		beginStream,
+		resetStreamingSession,
+		flashComposerAttachErr,
+		t,
+		clearAgentReviewForThread,
+		clearPlanQuestion,
+		clearMistakeLimitRequest: () => setMistakeLimitRequest(null),
+		planBuildPendingMarkerRef,
+		setAwaitingReply,
+		streamStartedAtRef,
+	});
+
+	useStreamingChatSubscription({
+		shell,
+		composerMode,
+		streamThreadRef,
+		streamingToolPreviewClearTimerRef,
+		setStreamingToolPreview,
+		setLiveAssistantBlocks,
+		markFirstToken,
+		setStreaming,
+		setStreamingThinking,
+		setToolApprovalRequest,
+		setPlanQuestion,
+		setPlanQuestionRequestId,
+		setMistakeLimitRequest,
+		t,
+		showTransientToast,
+		recordThoughtSeconds,
+		setLastTurnUsage,
+		resetStreamingSession,
+		clearStreamingToolPreviewNow,
+		resetLiveAgentBlocks,
+		setFileChangesDismissed,
+		setDismissedFiles,
+		planBuildPendingMarkerRef,
+		currentIdRef,
+		setExecutedPlanKeys,
+		setAgentReviewPendingByThread,
+		setMessages,
+		setParsedPlan,
+		setPlanFilePath,
+		setPlanFileRelPath,
+		loadMessages,
+		refreshThreads,
+	});
 
 	const [layoutMode, setLayoutMode] = useState<LayoutMode>(() =>
 		layoutPinnedBySurface && appSurface ? appSurface : readStoredShellLayoutModeFromKey(shellLayoutStorageKey)
@@ -736,16 +815,22 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	const [quickOpenSeed, setQuickOpenSeed] = useState('');
 	const [, setSidebarSearchDraft] = useState('');
 	const editorTerminalCreateLockRef = useRef(false);
-	const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
 	const terminalMenuRef = useRef<HTMLDivElement>(null);
-	const [fileMenuOpen, setFileMenuOpen] = useState(false);
 	const fileMenuRef = useRef<HTMLDivElement>(null);
-	const [editMenuOpen, setEditMenuOpen] = useState(false);
 	const editMenuRef = useRef<HTMLDivElement>(null);
-	const [viewMenuOpen, setViewMenuOpen] = useState(false);
 	const viewMenuRef = useRef<HTMLDivElement>(null);
-	const [windowMenuOpen, setWindowMenuOpen] = useState(false);
 	const windowMenuRef = useRef<HTMLDivElement>(null);
+	const {
+		fileMenuOpen,
+		editMenuOpen,
+		viewMenuOpen,
+		windowMenuOpen,
+		terminalMenuOpen,
+		menus: menubarMenus,
+		toggleMenubarMenu,
+		setMenubarMenu,
+		setTerminalMenuOpen,
+	} = useMenubarMenuReducer();
 	const [windowMaximized, setWindowMaximized] = useState(false);
 	const [editorThreadHistoryOpen, setEditorThreadHistoryOpen] = useState(false);
 	const [editorChatMoreOpen, setEditorChatMoreOpen] = useState(false);
@@ -1592,357 +1677,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	}, [shell, currentId, loadMessages]);
 
 	useEffect(() => {
-		if (!shell) {
-			return;
-		}
-		const unsub = shell.subscribeChat((raw: unknown) => {
-			const payload = raw as ChatStreamPayload;
-			if (payload.threadId !== streamThreadRef.current) {
-				return;
-			}
-			const trackLiveBlocks = composerMode === 'agent' || composerMode === 'plan';
-
-			/** 工具参数必须每条 IPC 立即进块：多工具并行时单槽 rAF 合并会丢更新，导致无流式卡片 / 执行参数残缺。 */
-			const applyToolInputDeltaUi = (p: {
-				name: string;
-				partialJson: string;
-				index: number;
-			}) => {
-				if (streamingToolPreviewClearTimerRef.current !== null) {
-					window.clearTimeout(streamingToolPreviewClearTimerRef.current);
-					streamingToolPreviewClearTimerRef.current = null;
-				}
-				setStreamingToolPreview({
-					name: p.name,
-					partialJson: p.partialJson,
-					index: p.index,
-				});
-				if (trackLiveBlocks) {
-					setLiveAssistantBlocks((st) =>
-						applyLiveAgentChatPayload(st, {
-							type: 'tool_input_delta',
-							name: p.name,
-							partialJson: p.partialJson,
-							index: p.index,
-						})
-					);
-				}
-			};
-
-			if (payload.type === 'delta') {
-				const subParent = payload.parentToolCallId;
-				if (subParent) {
-					const deltaText = payload.text;
-					setStreaming((s) => {
-						const inner = escapeSubAgentXmlText(deltaText);
-						const p = escapeStreamAttr(subParent);
-						const d = payload.nestingDepth ?? 1;
-						return `${s}<sub_agent_delta parent="${p}" depth="${d}">${inner}</sub_agent_delta>`;
-					});
-					if (trackLiveBlocks) {
-						setLiveAssistantBlocks((st) =>
-							applyLiveAgentChatPayload(st, {
-								type: 'delta',
-								text: deltaText,
-								parentToolCallId: subParent,
-								nestingDepth: payload.nestingDepth,
-							})
-						);
-					}
-				} else {
-					if (payload.text.length > 0 && firstTokenAtRef.current === null) {
-						firstTokenAtRef.current = Date.now();
-					}
-					setStreaming((s) => s + payload.text);
-					if (trackLiveBlocks) {
-						setLiveAssistantBlocks((st) =>
-							applyLiveAgentChatPayload(st, {
-								type: 'delta',
-								text: payload.text,
-							})
-						);
-					}
-				}
-			} else if (payload.type === 'tool_input_delta') {
-				if (payload.parentToolCallId) {
-					// 嵌套工具参数流式预览易与主线程混淆，仅写入正文标记
-				} else {
-					applyToolInputDeltaUi({
-						name: payload.name,
-						partialJson: payload.partialJson,
-						index: payload.index,
-					});
-				}
-			} else if (payload.type === 'thinking_delta') {
-				const parentToolCallId = payload.parentToolCallId;
-				if (parentToolCallId) {
-					setStreaming((s) => {
-						const inner = escapeSubAgentXmlText(payload.text);
-						const p = escapeStreamAttr(parentToolCallId);
-						const d = payload.nestingDepth ?? 1;
-						return `${s}<sub_agent_thinking parent="${p}" depth="${d}">${inner}</sub_agent_thinking>`;
-					});
-					if (trackLiveBlocks) {
-						setLiveAssistantBlocks((st) =>
-							applyLiveAgentChatPayload(st, {
-								type: 'thinking_delta',
-								text: payload.text,
-								parentToolCallId,
-								nestingDepth: payload.nestingDepth,
-							})
-						);
-					}
-				} else {
-					setStreamingThinking((s) => s + payload.text);
-					if (trackLiveBlocks) {
-						setLiveAssistantBlocks((st) =>
-							applyLiveAgentChatPayload(st, {
-								type: 'thinking_delta',
-								text: payload.text,
-							})
-						);
-					}
-				}
-			} else if (payload.type === 'tool_call') {
-				if (!payload.parentToolCallId) {
-					if (streamingToolPreviewClearTimerRef.current !== null) {
-						window.clearTimeout(streamingToolPreviewClearTimerRef.current);
-						streamingToolPreviewClearTimerRef.current = null;
-					}
-					// 不在此处清除 streamingToolPreview：
-					// tool_call 与最后一帧 tool_input_delta 可能被 React 18 自动批量更新合并，
-					// 导致流式预览帧从未渲染（卡片直到 tool_result 后才出现）。
-					// 改为在 tool_result 或 done 事件中清除，
-					// 期间 dropParsedStreamingFileEditWhilePreview 自动去重。
-				}
-				const nest =
-					payload.parentToolCallId != null
-						? ` sub_parent="${escapeStreamAttr(payload.parentToolCallId)}" sub_depth="${payload.nestingDepth ?? 1}"`
-						: '';
-				const marker = `\n<tool_call tool="${payload.name}"${nest}>${payload.args}</tool_call>\n`;
-				setStreaming((s) => s + marker);
-				if (trackLiveBlocks && !payload.parentToolCallId) {
-					setLiveAssistantBlocks((st) =>
-						applyLiveAgentChatPayload(st, {
-							type: 'tool_call',
-							name: payload.name,
-							args: payload.args,
-							toolCallId: payload.toolCallId,
-						})
-					);
-				}
-			} else if (payload.type === 'tool_result') {
-				if (!payload.parentToolCallId) {
-					setStreamingToolPreview(null);
-				}
-				const truncated = payload.result.length > 3000 ? payload.result.slice(0, 3000) + '\n... (truncated)' : payload.result;
-				const safe = truncated.split('</tool_result>').join('</tool\u200c_result>');
-				const marker = `<tool_result tool="${payload.name}" success="${payload.success}">${safe}</tool_result>\n`;
-				setStreaming((s) => s + marker);
-				if (trackLiveBlocks && !payload.parentToolCallId) {
-					setLiveAssistantBlocks((st) =>
-						applyLiveAgentChatPayload(st, {
-							type: 'tool_result',
-							name: payload.name,
-							result: truncated,
-							success: payload.success,
-							toolCallId: payload.toolCallId,
-						})
-					);
-				}
-			} else if (payload.type === 'tool_progress') {
-				if (trackLiveBlocks && !payload.parentToolCallId) {
-					setLiveAssistantBlocks((st) =>
-						applyLiveAgentChatPayload(st, {
-							type: 'tool_progress',
-							name: payload.name,
-							phase: payload.phase,
-							detail: payload.detail,
-						})
-					);
-				}
-			} else if (payload.type === 'tool_approval_request') {
-				setToolApprovalRequest({
-					approvalId: payload.approvalId,
-					toolName: payload.toolName,
-					command: payload.command,
-					path: payload.path,
-				});
-			} else if (payload.type === 'plan_question_request') {
-				setPlanQuestion(payload.question);
-				setPlanQuestionRequestId(payload.requestId);
-			} else if (payload.type === 'agent_mistake_limit') {
-				setMistakeLimitRequest({
-					recoveryId: payload.recoveryId,
-					consecutiveFailures: payload.consecutiveFailures,
-					threshold: payload.threshold,
-				});
-			} else if (payload.type === 'sub_agent_background_done') {
-				if (subAgentBgToastTimerRef.current !== null) {
-					window.clearTimeout(subAgentBgToastTimerRef.current);
-					subAgentBgToastTimerRef.current = null;
-				}
-				const preview =
-					payload.result.length > 240 ? `${payload.result.slice(0, 240)}…` : payload.result;
-				const text = payload.success
-					? t('agent.subAgentBg.done', { preview })
-					: t('agent.subAgentBg.fail', { preview });
-				setSubAgentBgToast((prev) => ({
-					key: (prev?.key ?? 0) + 1,
-					ok: payload.success,
-					text,
-				}));
-				subAgentBgToastTimerRef.current = window.setTimeout(() => {
-					setSubAgentBgToast(null);
-					subAgentBgToastTimerRef.current = null;
-				}, 6500);
-			} else if (payload.type === 'done') {
-				const start = streamStartedAtRef.current;
-				const ft = firstTokenAtRef.current;
-				const end = Date.now();
-				const thinkSec =
-					start !== null && ft !== null
-						? Math.max(0.1, (ft - start) / 1000)
-						: start !== null
-							? Math.max(0.1, (end - start) / 1000)
-							: 0.5;
-				setThoughtSecondsByThread((prev) => ({ ...prev, [payload.threadId]: thinkSec }));
-				if (payload.usage) {
-					setLastTurnUsage(payload.usage);
-				}
-				streamStartedAtRef.current = null;
-				firstTokenAtRef.current = null;
-				setAwaitingReply(false);
-				setStreaming('');
-				setStreamingThinking('');
-				setToolApprovalRequest(null);
-				setMistakeLimitRequest(null);
-				setPlanQuestionRequestId(null);
-				clearStreamingToolPreviewNow();
-				resetLiveAgentBlocks();
-				setFileChangesDismissed(false);
-				setDismissedFiles(new Set());
-				const pendPlan = planBuildPendingMarkerRef.current;
-				if (pendPlan && pendPlan.threadId === payload.threadId) {
-					planBuildPendingMarkerRef.current = null;
-					if (pendPlan.pathKey && shell) {
-						void shell.invoke('threads:markPlanExecuted', {
-							threadId: pendPlan.threadId,
-							pathKey: pendPlan.pathKey,
-						});
-						if (pendPlan.threadId === currentIdRef.current) {
-							setExecutedPlanKeys((prev) =>
-								prev.includes(pendPlan.pathKey) ? prev : [...prev, pendPlan.pathKey]
-							);
-						}
-					}
-				}
-				/* 新一轮助手回复落库前，勿让旧 persist 在 loadMessages 空窗期把面板状态粘回去 */
-				clearPersistedAgentFileChanges(payload.threadId);
-				if (payload.pendingAgentPatches && payload.pendingAgentPatches.length > 0) {
-					setAgentReviewPendingByThread((prev) => ({
-						...prev,
-						[payload.threadId]: payload.pendingAgentPatches!,
-					}));
-				}
-
-				const fullText = payload.text ?? '';
-				/** 助手落盘为结构化 JSON；Plan 的 QUESTIONS / # Plan: 只在 text 块里，需展开后再解析 */
-				const textForPlanMarkers = flattenAssistantTextPartsForSearch(fullText);
-				/**
-				 * 避免「先关掉 awaiting/streaming、再等 loadMessages」的一帧空窗：
-				 * 那时 displayMessages 只用 messages，而库里的助手消息尚未写入，列表会瞬间变短，
-				 * 滚动容器 scrollHeight 骤降，浏览器把 scrollTop 钳到 0，表现为跳到顶部。
-				 */
-				if (payload.threadId === currentIdRef.current) {
-					setMessages((m) => {
-						const last = m[m.length - 1];
-						if (last?.role === 'assistant' && last.content === fullText) return m;
-						return [...m, { role: 'assistant', content: fullText }];
-					});
-				}
-				const q = parseQuestions(textForPlanMarkers);
-				if (q) {
-					setPlanQuestion(q);
-					setPlanQuestionRequestId(null);
-				} else {
-					setPlanQuestion(null);
-					setPlanQuestionRequestId(null);
-				}
-
-				const plan = parsePlanDocument(textForPlanMarkers);
-				if (plan) {
-					setParsedPlan(plan);
-					const filename = generatePlanFilename(plan.name);
-					const md = toPlanMd(plan);
-					if (shell) {
-						void (async () => {
-							const r = (await shell.invoke('plan:save', { filename, content: md })) as
-								| { ok: true; path: string; relPath?: string }
-								| { ok: false };
-							if (r.ok) {
-								setPlanFilePath(r.path);
-								if (r.relPath) {
-									setPlanFileRelPath(r.relPath);
-								} else {
-									setPlanFileRelPath(null);
-								}
-							}
-							// 同时保存结构化 plan 到 threadStore
-							const structuredPlan = {
-								title: plan.name,
-								steps: plan.todos.map((t) => ({
-									id: t.id,
-									title: t.content.split(':')[0]?.trim() ?? t.content,
-									description: t.content,
-									status: 'pending' as const,
-								})),
-								updatedAt: Date.now(),
-							};
-							await shell.invoke('plan:saveStructured', {
-								threadId: payload.threadId,
-								plan: structuredPlan,
-							});
-						})();
-					}
-				}
-
-				void loadMessages(payload.threadId);
-				void refreshThreads();
-			} else if (payload.type === 'error') {
-				const start = streamStartedAtRef.current;
-				const end = Date.now();
-				const thinkSec =
-					start !== null && firstTokenAtRef.current !== null
-						? Math.max(0.1, (firstTokenAtRef.current - start) / 1000)
-						: start !== null
-							? Math.max(0.1, (end - start) / 1000)
-							: 0.3;
-				setThoughtSecondsByThread((prev) => ({ ...prev, [payload.threadId]: thinkSec }));
-				planBuildPendingMarkerRef.current = null;
-				streamStartedAtRef.current = null;
-				firstTokenAtRef.current = null;
-				setAwaitingReply(false);
-				setStreaming('');
-				setStreamingThinking('');
-				setToolApprovalRequest(null);
-				setMistakeLimitRequest(null);
-				setPlanQuestionRequestId(null);
-				clearStreamingToolPreviewNow();
-				resetLiveAgentBlocks();
-				setMessages((m) => [
-					...m,
-					{ role: 'assistant', content: t('app.errorPrefix', { message: translateChatError(payload.message, t) }) },
-				]);
-				void refreshThreads();
-			}
-		});
-		return () => {
-			unsub();
-		};
-	}, [shell, loadMessages, refreshThreads, clearStreamingToolPreviewNow, resetLiveAgentBlocks, t, composerMode]);
-
-	useEffect(() => {
 		monacoWorkspaceRootRef.current = workspace;
 	}, [workspace]);
 
@@ -2152,28 +1886,31 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		return () => window.removeEventListener('keydown', onKey);
 	}, []);
 
-	const onSelectThread = async (id: string) => {
-		setEditorThreadHistoryOpen(false);
-		if (!shell) {
-			return;
-		}
-		await shell.invoke('threads:select', id);
-		setCurrentId(id);
-		setAwaitingReply(false);
-		setStreaming('');
-		setStreamingThinking('');
-		clearStreamingToolPreviewNow();
-		resetLiveAgentBlocks();
-		streamStartedAtRef.current = null;
-		firstTokenAtRef.current = null;
-		setParsedPlan(null);
-		setPlanFilePath(null);
-		setPlanFileRelPath(null);
-		setResendFromUserIndex(null);
-		setComposerSegments([]);
-		setInlineResendSegments([]);
-		await loadMessages(id);
-	};
+	const onSelectThread = useCallback(
+		async (id: string) => {
+			setEditorThreadHistoryOpen(false);
+			if (!shell) {
+				return;
+			}
+			await shell.invoke('threads:select', id);
+			setCurrentId(id);
+			setAwaitingReply(false);
+			setStreaming('');
+			setStreamingThinking('');
+			clearStreamingToolPreviewNow();
+			resetLiveAgentBlocks();
+			streamStartedAtRef.current = null;
+			firstTokenAtRef.current = null;
+			setParsedPlan(null);
+			setPlanFilePath(null);
+			setPlanFileRelPath(null);
+			setResendFromUserIndex(null);
+			setComposerSegments([]);
+			setInlineResendSegments([]);
+			await loadMessages(id);
+		},
+		[shell, loadMessages, clearStreamingToolPreviewNow, resetLiveAgentBlocks]
+	);
 
 	const selectThreadByHistoryIndex = useCallback(
 		async (index: number) => {
@@ -2185,7 +1922,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			setThreadNavigation((prev) => ({ ...prev, index }));
 			await onSelectThread(id);
 		},
-		[threadNavigation.history, currentId]
+		[threadNavigation.history, currentId, onSelectThread]
 	);
 
 	const goToPreviousThread = useCallback(async () => {
@@ -2197,7 +1934,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			return;
 		}
 		await onSelectThread(threadsChrono[index + 1]!.id);
-	}, [currentId, threadsChrono]);
+	}, [currentId, threadsChrono, onSelectThread]);
 
 	const goToNextThread = useCallback(async () => {
 		if (!currentId) {
@@ -2208,7 +1945,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			return;
 		}
 		await onSelectThread(threadsChrono[index - 1]!.id);
-	}, [currentId, threadsChrono]);
+	}, [currentId, threadsChrono, onSelectThread]);
 
 	const goThreadBack = useCallback(async () => {
 		if (threadNavigation.index <= 0) {
@@ -2437,66 +2174,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			flashComposerAttachErr(t('app.noModelSelected'));
 			return;
 		}
-		setPlanQuestion(null);
-		setPlanQuestionRequestId(null);
-		if (opts?.threadId && opts.threadId !== currentId) {
-			await shell.invoke('threads:select', opts.threadId);
-			setCurrentId(opts.threadId);
-			await loadMessages(opts.threadId);
-		}
-		clearAgentReviewForThread(targetThreadId);
-		if (resendIdx !== null) {
-			setInlineResendSegments([]);
-			setMessages((m) => [...m.slice(0, resendIdx), { role: 'user', content: text }]);
-		} else {
-			setComposerSegments([]);
-			setMessages((m) => [...m, { role: 'user', content: text }]);
-		}
-		setStreaming('');
-		setStreamingThinking('');
-		clearStreamingToolPreviewNow();
-		resetLiveAgentBlocks();
-		firstTokenAtRef.current = null;
-		streamStartedAtRef.current = Date.now();
-		streamThreadRef.current = targetThreadId;
-		setAwaitingReply(true);
-
-		if (opts?.planExecute && opts.planBuildPathKey) {
-			const pk = opts.planBuildPathKey.trim().toLowerCase();
-			if (pk) {
-				planBuildPendingMarkerRef.current = { threadId: targetThreadId, pathKey: pk };
-			}
-		}
-
-		if (resendIdx !== null) {
-			setResendFromUserIndex(null);
-			const r = (await shell.invoke('chat:editResend', {
-				threadId: targetThreadId,
-				visibleIndex: resendIdx,
-				text,
-				mode: opts?.modeOverride ?? composerMode,
-				modelId: opts?.modelIdOverride ?? defaultModel,
-			})) as { ok?: boolean };
-			if (!r?.ok) {
-				setAwaitingReply(false);
-				streamStartedAtRef.current = null;
-				setResendFromUserIndex(resendIdx);
-				setInlineResendSegments(userMessageToSegments(text, workspaceFileList));
-				void loadMessages(targetThreadId);
-			} else {
-				void refreshThreads();
-			}
-			return;
-		}
-
-		await shell.invoke('chat:send', {
-			threadId: targetThreadId,
-			text,
-			mode: opts?.modeOverride ?? composerMode,
-			modelId: opts?.modelIdOverride ?? defaultModel,
-			planExecute: opts?.planExecute,
-		});
-		void refreshThreads();
+		await sendMessage(text, opts);
 	};
 
 	const onSend = useCallback(async (textOverride?: string, opts?: OnSendOptions) => {
@@ -2509,38 +2187,30 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 
 	const onAbortRef = useRef<() => Promise<void>>(async () => {});
 
-	onAbortRef.current = async () => {
-		if (!shell || !currentId) {
-			return;
-		}
-		planBuildPendingMarkerRef.current = null;
-		setMistakeLimitRequest(null);
-		await shell.invoke('chat:abort', currentId);
-		// Let the 'done' event from backend finalize the state
-		clearStreamingToolPreviewNow();
-		resetLiveAgentBlocks();
-		setAwaitingReply(false);
-	};
+	onAbortRef.current = abortActiveStream;
 
 	const onAbort = useCallback(async () => {
 		return onAbortRef.current();
 	}, []);
 
-	const onPlanQuestionSubmit = (answer: string) => {
-		const rid = planQuestionRequestId;
-		const reply = `我选择：${answer}`;
-		if (rid && shell) {
+	const onPlanQuestionSubmit = useCallback(
+		(answer: string) => {
+			const rid = planQuestionRequestId;
+			const reply = `我选择：${answer}`;
+			if (rid && shell) {
+				setPlanQuestion(null);
+				setPlanQuestionRequestId(null);
+				void shell
+					.invoke('plan:toolQuestionRespond', { requestId: rid, answerText: reply })
+					.catch((e) => console.error('[plan:toolQuestionRespond]', e));
+				return;
+			}
 			setPlanQuestion(null);
 			setPlanQuestionRequestId(null);
-			void shell
-				.invoke('plan:toolQuestionRespond', { requestId: rid, answerText: reply })
-				.catch((e) => console.error('[plan:toolQuestionRespond]', e));
-			return;
-		}
-		setPlanQuestion(null);
-		setPlanQuestionRequestId(null);
-		void onSend(reply);
-	};
+			void onSend(reply);
+		},
+		[planQuestionRequestId, shell, setPlanQuestion, setPlanQuestionRequestId, onSend]
+	);
 
 	const onPlanQuestionSkip = useCallback(() => {
 		recordPlanQuestionDismissed();
@@ -4028,74 +3698,29 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	}, [setEditorTerminalSessions, setEditorTerminalVisible]);
 
 	useEffect(() => {
-		if (!terminalMenuOpen) {
+		const entries: {
+			id: 'file' | 'edit' | 'view' | 'window' | 'terminal';
+			ref: RefObject<HTMLDivElement | null>;
+		}[] = [
+			{ id: 'file', ref: fileMenuRef },
+			{ id: 'edit', ref: editMenuRef },
+			{ id: 'view', ref: viewMenuRef },
+			{ id: 'window', ref: windowMenuRef },
+			{ id: 'terminal', ref: terminalMenuRef },
+		];
+		const open = entries.find((e) => menubarMenus[e.id]);
+		if (!open) {
 			return;
 		}
 		const onDoc = (e: MouseEvent) => {
-			if (terminalMenuRef.current?.contains(e.target as Node)) {
+			if (open.ref.current?.contains(e.target as Node)) {
 				return;
 			}
-			setTerminalMenuOpen(false);
+			setMenubarMenu(open.id, false);
 		};
 		document.addEventListener('mousedown', onDoc);
 		return () => document.removeEventListener('mousedown', onDoc);
-	}, [terminalMenuOpen]);
-
-	useEffect(() => {
-		if (!fileMenuOpen) {
-			return;
-		}
-		const onDoc = (e: MouseEvent) => {
-			if (fileMenuRef.current?.contains(e.target as Node)) {
-				return;
-			}
-			setFileMenuOpen(false);
-		};
-		document.addEventListener('mousedown', onDoc);
-		return () => document.removeEventListener('mousedown', onDoc);
-	}, [fileMenuOpen]);
-
-	useEffect(() => {
-		if (!editMenuOpen) {
-			return;
-		}
-		const onDoc = (e: MouseEvent) => {
-			if (editMenuRef.current?.contains(e.target as Node)) {
-				return;
-			}
-			setEditMenuOpen(false);
-		};
-		document.addEventListener('mousedown', onDoc);
-		return () => document.removeEventListener('mousedown', onDoc);
-	}, [editMenuOpen]);
-
-	useEffect(() => {
-		if (!viewMenuOpen) {
-			return;
-		}
-		const onDoc = (e: MouseEvent) => {
-			if (viewMenuRef.current?.contains(e.target as Node)) {
-				return;
-			}
-			setViewMenuOpen(false);
-		};
-		document.addEventListener('mousedown', onDoc);
-		return () => document.removeEventListener('mousedown', onDoc);
-	}, [viewMenuOpen]);
-
-	useEffect(() => {
-		if (!windowMenuOpen) {
-			return;
-		}
-		const onDoc = (e: MouseEvent) => {
-			if (windowMenuRef.current?.contains(e.target as Node)) {
-				return;
-			}
-			setWindowMenuOpen(false);
-		};
-		document.addEventListener('mousedown', onDoc);
-		return () => document.removeEventListener('mousedown', onDoc);
-	}, [windowMenuOpen]);
+	}, [menubarMenus, setMenubarMenu]);
 
 	useEffect(() => {
 		if (!windowMenuOpen || !shell) {
@@ -4760,14 +4385,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	}, [hasConversation, currentId, scheduleMessagesScrollToBottom, syncMessagesScrollIndicators]);
 
 	useEffect(() => {
-		if (!awaitingReply || streaming.length > 0) {
-			return;
-		}
-		const id = window.setInterval(() => setThinkingTick((x) => x + 1), 100);
-		return () => window.clearInterval(id);
-	}, [awaitingReply, streaming.length]);
-
-	useEffect(() => {
 		const applyFollowupHeight = (el: HTMLDivElement | null) => {
 			if (!el) {
 				return;
@@ -5145,116 +4762,162 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 				? modelPillBottomRef
 				: modelPillInlineRef;
 
-	const renderThreadItem = (th: ThreadInfo) => {
-		const isActive = th.id === currentId;
-		return (
-			<div
-				key={th.id}
-				className={`ref-thread-item ${isActive ? 'is-active' : ''} ${
-					editingThreadId === th.id ? 'is-editing-title' : ''
-				}`}
-			>
-				{editingThreadId === th.id ? (
-					<input
-						ref={threadTitleInputRef}
-						type="text"
-						className="ref-thread-title-input"
-						value={editingThreadTitleDraft}
-						aria-label={t('common.threadTitle')}
-						onChange={(e) => {
-							const v = e.target.value;
-							setEditingThreadTitleDraft(v);
-							threadTitleDraftRef.current = v;
-						}}
-						onClick={(e) => e.stopPropagation()}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter') {
+	const renderThreadItem = useCallback(
+		(th: ThreadInfo) => {
+			const isActive = th.id === currentId;
+			return (
+				<div
+					key={th.id}
+					className={`ref-thread-item ${isActive ? 'is-active' : ''} ${
+						editingThreadId === th.id ? 'is-editing-title' : ''
+					}`}
+				>
+					{editingThreadId === th.id ? (
+						<input
+							ref={threadTitleInputRef}
+							type="text"
+							className="ref-thread-title-input"
+							value={editingThreadTitleDraft}
+							aria-label={t('common.threadTitle')}
+							onChange={(e) => {
+								const v = e.target.value;
+								setEditingThreadTitleDraft(v);
+								threadTitleDraftRef.current = v;
+							}}
+							onClick={(e) => e.stopPropagation()}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter') {
+									e.preventDefault();
+									void commitThreadTitleEdit();
+								}
+								if (e.key === 'Escape') {
+									e.preventDefault();
+									cancelThreadTitleEdit();
+								}
+							}}
+							onBlur={() => void commitThreadTitleEdit()}
+						/>
+					) : (
+						<button
+							type="button"
+							className="ref-thread-row ref-thread-row--rich"
+							onClick={() => void onSelectThread(th.id)}
+							onDoubleClick={(e) => {
 								e.preventDefault();
-								void commitThreadTitleEdit();
-							}
-							if (e.key === 'Escape') {
-								e.preventDefault();
-								cancelThreadTitleEdit();
-							}
-						}}
-						onBlur={() => void commitThreadTitleEdit()}
-					/>
-				) : (
-					<button
-						type="button"
-						className="ref-thread-row ref-thread-row--rich"
-						onClick={() => void onSelectThread(th.id)}
-						onDoubleClick={(e) => {
-							e.preventDefault();
-							beginThreadTitleEdit(th);
-						}}
-					>
-						<span className="ref-thread-row-lead" aria-hidden>
-							{th.isAwaitingReply ? (
-								<IconPencil className="ref-thread-row-lead-svg" />
-							) : (
-								<IconCheckCircle className="ref-thread-row-lead-svg" />
-							)}
-						</span>
-					<span className="ref-thread-row-stack">
-						<span className="ref-thread-row-title">{threadRowTitle(t, th)}</span>
-						<span className={`ref-thread-row-meta ${isActive ? 'is-active-meta' : ''}`}>
-							{formatThreadRowSubtitle(t, th, isActive)}
-						</span>
-						{(th.fileStateCount && th.fileStateCount > 0) || th.tokenUsage ? (
-							<span className="ref-thread-row-stats">
-								{th.fileStateCount && th.fileStateCount > 0 ? (
-									<span className="ref-thread-stat ref-thread-stat--files" title={t('agent.files.count', { count: th.fileStateCount })}>
-										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-											<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
-										</svg>
-										{th.fileStateCount}
-									</span>
-								) : null}
-								{th.tokenUsage ? (
-									<span className="ref-thread-stat ref-thread-stat--tokens" title={t('usage.totalTokens', { input: th.tokenUsage.totalInput.toLocaleString(), output: th.tokenUsage.totalOutput.toLocaleString() })}>
-										{t('usage.tokensShort', { input: th.tokenUsage.totalInput > 999 ? `${Math.round(th.tokenUsage.totalInput / 1000)}k` : String(th.tokenUsage.totalInput), output: th.tokenUsage.totalOutput > 999 ? `${Math.round(th.tokenUsage.totalOutput / 1000)}k` : String(th.tokenUsage.totalOutput) })}
+								beginThreadTitleEdit(th);
+							}}
+						>
+							<span className="ref-thread-row-lead" aria-hidden>
+								{th.isAwaitingReply ? (
+									<IconPencil className="ref-thread-row-lead-svg" />
+								) : (
+									<IconCheckCircle className="ref-thread-row-lead-svg" />
+								)}
+							</span>
+							<span className="ref-thread-row-stack">
+								<span className="ref-thread-row-title">{threadRowTitle(t, th)}</span>
+								<span className={`ref-thread-row-meta ${isActive ? 'is-active-meta' : ''}`}>
+									{formatThreadRowSubtitle(t, th, isActive)}
+								</span>
+								{(th.fileStateCount && th.fileStateCount > 0) || th.tokenUsage ? (
+									<span className="ref-thread-row-stats">
+										{th.fileStateCount && th.fileStateCount > 0 ? (
+											<span
+												className="ref-thread-stat ref-thread-stat--files"
+												title={t('agent.files.count', { count: th.fileStateCount })}
+											>
+												<svg
+													width="10"
+													height="10"
+													viewBox="0 0 24 24"
+													fill="none"
+													stroke="currentColor"
+													strokeWidth="2"
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													aria-hidden
+												>
+													<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+													<polyline points="14 2 14 8 20 8" />
+												</svg>
+												{th.fileStateCount}
+											</span>
+										) : null}
+										{th.tokenUsage ? (
+											<span
+												className="ref-thread-stat ref-thread-stat--tokens"
+												title={t('usage.totalTokens', {
+													input: th.tokenUsage.totalInput.toLocaleString(),
+													output: th.tokenUsage.totalOutput.toLocaleString(),
+												})}
+											>
+												{t('usage.tokensShort', {
+													input:
+														th.tokenUsage.totalInput > 999
+															? `${Math.round(th.tokenUsage.totalInput / 1000)}k`
+															: String(th.tokenUsage.totalInput),
+													output:
+														th.tokenUsage.totalOutput > 999
+															? `${Math.round(th.tokenUsage.totalOutput / 1000)}k`
+															: String(th.tokenUsage.totalOutput),
+												})}
+											</span>
+										) : null}
 									</span>
 								) : null}
 							</span>
-						) : null}
-					</span>
-					</button>
-				)}
-				<div className="ref-thread-row-actions">
-					<button
-						type="button"
-						className="ref-thread-action"
-						title={t('common.rename')}
-						aria-label={t('common.renameThread')}
-						onMouseDown={(e) => e.preventDefault()}
-						onClick={(e) => {
-							e.stopPropagation();
-							beginThreadTitleEdit(th);
-						}}
-					>
-						<IconPencil className="ref-thread-action-svg" />
-					</button>
-					<button
-						type="button"
-						className={`ref-thread-action ${
-							confirmDeleteId === th.id ? 'ref-thread-action--confirm' : ''
-						}`}
-						title={confirmDeleteId === th.id ? t('common.confirmDelete') : t('common.delete')}
-						aria-label={confirmDeleteId === th.id ? t('common.confirmDelete') : t('common.deleteThread')}
-						onMouseDown={(e) => e.preventDefault()}
-						onClick={(e) => void onDeleteThread(e, th.id)}
-					>
-						{confirmDeleteId === th.id ? (
-							<span className="ref-thread-action-confirm-label">{t('common.confirm')}</span>
-						) : (
-							<IconTrash className="ref-thread-action-svg" />
-						)}
-					</button>
+						</button>
+					)}
+					<div className="ref-thread-row-actions">
+						<button
+							type="button"
+							className="ref-thread-action"
+							title={t('common.rename')}
+							aria-label={t('common.renameThread')}
+							onMouseDown={(e) => e.preventDefault()}
+							onClick={(e) => {
+								e.stopPropagation();
+								beginThreadTitleEdit(th);
+							}}
+						>
+							<IconPencil className="ref-thread-action-svg" />
+						</button>
+						<button
+							type="button"
+							className={`ref-thread-action ${
+								confirmDeleteId === th.id ? 'ref-thread-action--confirm' : ''
+							}`}
+							title={confirmDeleteId === th.id ? t('common.confirmDelete') : t('common.delete')}
+							aria-label={confirmDeleteId === th.id ? t('common.confirmDelete') : t('common.deleteThread')}
+							onMouseDown={(e) => e.preventDefault()}
+							onClick={(e) => void onDeleteThread(e, th.id)}
+						>
+							{confirmDeleteId === th.id ? (
+								<span className="ref-thread-action-confirm-label">{t('common.confirm')}</span>
+							) : (
+								<IconTrash className="ref-thread-action-svg" />
+							)}
+						</button>
+					</div>
 				</div>
-			</div>
-		);
-	};
+			);
+		},
+		[
+			currentId,
+			editingThreadId,
+			editingThreadTitleDraft,
+			t,
+			setEditingThreadTitleDraft,
+			threadTitleDraftRef,
+			threadTitleInputRef,
+			commitThreadTitleEdit,
+			cancelThreadTitleEdit,
+			beginThreadTitleEdit,
+			onSelectThread,
+			confirmDeleteId,
+			onDeleteThread,
+		]
+	);
 
 	const agentLeftSidebarProps = useAgentLeftSidebarProps({
 		t,
@@ -5273,7 +4936,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		workspaceMenuPath,
 		closeWorkspaceMenu,
 		openWorkspaceMenu,
-		onNewThread: () => void onNewThread(),
+		onNewThread: composerInvokeNewThread,
 		onNewThreadForWorkspace,
 		setWorkspacePickerOpen,
 		openQuickOpen,
@@ -5282,47 +4945,66 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 
 	/** 未打开工作区时：Agent / Editor 均显示同一套欢迎页（打开项目、最近项目等） */
 	const isEditorHomeMode = !workspace;
-	const agentPlanSummaryCard =
-		!awaitingReply && agentPlanEffectivePlan && composerMode === 'plan' ? (
-			<section className="ref-plan-brief-card" aria-label={t('plan.review.label')}>
-				<div className="ref-plan-brief-head">
-					<div className="ref-plan-brief-title-stack">
-						<span className="ref-plan-brief-kicker">{t('plan.review.label')}</span>
-						<strong className="ref-plan-brief-title">{agentPlanEffectivePlan.name}</strong>
+	const agentPlanSummaryCard = useMemo(
+		() =>
+			!awaitingReply && agentPlanEffectivePlan && composerMode === 'plan' ? (
+				<section className="ref-plan-brief-card" aria-label={t('plan.review.label')}>
+					<div className="ref-plan-brief-head">
+						<div className="ref-plan-brief-title-stack">
+							<span className="ref-plan-brief-kicker">{t('plan.review.label')}</span>
+							<strong className="ref-plan-brief-title">{agentPlanEffectivePlan.name}</strong>
+						</div>
+						<div className="ref-plan-brief-actions">
+							<button
+								type="button"
+								className="ref-plan-brief-review-btn"
+								onClick={() => openAgentRightSidebarView('plan')}
+							>
+								{t('plan.review.reviewButton')}
+							</button>
+							<button
+								type="button"
+								className="ref-agent-plan-build-btn ref-agent-plan-build-btn--summary"
+								disabled={
+									awaitingReply ||
+									!agentPlanEffectivePlan ||
+									!agentPlanBuildModelId.trim() ||
+									modelPickerItems.length === 0
+								}
+								onClick={() => onPlanBuild(agentPlanBuildModelId)}
+							>
+								{t('plan.review.build')}
+							</button>
+						</div>
 					</div>
-					<div className="ref-plan-brief-actions">
-						<button
-							type="button"
-							className="ref-plan-brief-review-btn"
-							onClick={() => openAgentRightSidebarView('plan')}
-						>
-							{t('plan.review.reviewButton')}
-						</button>
-						<button
-							type="button"
-							className="ref-agent-plan-build-btn ref-agent-plan-build-btn--summary"
-							disabled={
-								awaitingReply ||
-								!agentPlanEffectivePlan ||
-								!agentPlanBuildModelId.trim() ||
-								modelPickerItems.length === 0
-							}
-							onClick={() => onPlanBuild(agentPlanBuildModelId)}
-						>
-							{t('plan.review.build')}
-						</button>
+					<div className="ref-plan-brief-goal">
+						<span className="ref-plan-brief-item-label">{t('plan.review.goal')}</span>
+						<div className="ref-plan-brief-goal-markdown">
+							<ChatMarkdown
+								content={
+									agentPlanGoalMarkdown ||
+									agentPlanGoalSummary ||
+									agentPlanEffectivePlan.overview ||
+									t('plan.review.summaryEmpty')
+								}
+							/>
+						</div>
 					</div>
-				</div>
-				<div className="ref-plan-brief-goal">
-					<span className="ref-plan-brief-item-label">{t('plan.review.goal')}</span>
-					<div className="ref-plan-brief-goal-markdown">
-						<ChatMarkdown
-							content={agentPlanGoalMarkdown || agentPlanGoalSummary || agentPlanEffectivePlan.overview || t('plan.review.summaryEmpty')}
-						/>
-					</div>
-				</div>
-			</section>
-		) : null;
+				</section>
+			) : null,
+		[
+			awaitingReply,
+			agentPlanEffectivePlan,
+			composerMode,
+			t,
+			openAgentRightSidebarView,
+			agentPlanBuildModelId,
+			modelPickerItems,
+			onPlanBuild,
+			agentPlanGoalMarkdown,
+			agentPlanGoalSummary,
+		]
+	);
 
 	const agentChatPanelProps = useAgentChatPanelProps({
 		t,
@@ -5518,6 +5200,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	);
 
 	return (
+		<AppProvider shell={shell} workspace={workspace} t={t}>
 		<ComposerActionsProvider value={composerActions}>
 		<div className={`ref-shell ${layoutMode === 'agent' ? 'ref-shell--agent-layout' : ''}`}>
 			<header className={`ref-menubar ${layoutMode === 'agent' ? 'ref-menubar--agent' : ''}`}>
@@ -5533,18 +5216,14 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 								aria-expanded={fileMenuOpen}
 								aria-haspopup="menu"
 								onClick={() => {
-									setEditMenuOpen(false);
-									setTerminalMenuOpen(false);
-									setViewMenuOpen(false);
-									setWindowMenuOpen(false);
-									setFileMenuOpen((o) => !o);
+									toggleMenubarMenu('file');
 								}}
 							>
 								{t('app.menuFile')}
 							</button>
 							{fileMenuOpen ? (
 								<MenubarFileMenu
-									onClose={() => setFileMenuOpen(false)}
+									onClose={() => setMenubarMenu('file', false)}
 									isDesktopShell={!!shell}
 									hasWorkspace={!!workspace}
 									folderRecents={folderRecents}
@@ -5574,11 +5253,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 								aria-haspopup="menu"
 								onMouseDown={(e) => e.preventDefault()}
 								onClick={() => {
-									setFileMenuOpen(false);
-									setTerminalMenuOpen(false);
-									setViewMenuOpen(false);
-									setWindowMenuOpen(false);
-									setEditMenuOpen((open) => !open);
+									toggleMenubarMenu('edit');
 								}}
 							>
 								{t('app.menuEdit')}
@@ -5593,7 +5268,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										onMouseDown={(e) => e.preventDefault()}
 										onClick={() => {
 											void executeEditAction('undo');
-											setEditMenuOpen(false);
+											setMenubarMenu('edit', false);
 										}}
 									>
 										<span>{t('app.edit.undo')}</span>
@@ -5607,7 +5282,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										onMouseDown={(e) => e.preventDefault()}
 										onClick={() => {
 											void executeEditAction('redo');
-											setEditMenuOpen(false);
+											setMenubarMenu('edit', false);
 										}}
 									>
 										<span>{t('app.edit.redo')}</span>
@@ -5622,7 +5297,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										onMouseDown={(e) => e.preventDefault()}
 										onClick={() => {
 											void executeEditAction('cut');
-											setEditMenuOpen(false);
+											setMenubarMenu('edit', false);
 										}}
 									>
 										<span>{t('app.edit.cut')}</span>
@@ -5636,7 +5311,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										onMouseDown={(e) => e.preventDefault()}
 										onClick={() => {
 											void executeEditAction('copy');
-											setEditMenuOpen(false);
+											setMenubarMenu('edit', false);
 										}}
 									>
 										<span>{t('app.edit.copy')}</span>
@@ -5650,7 +5325,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										onMouseDown={(e) => e.preventDefault()}
 										onClick={() => {
 											void executeEditAction('paste');
-											setEditMenuOpen(false);
+											setMenubarMenu('edit', false);
 										}}
 									>
 										<span>{t('app.edit.paste')}</span>
@@ -5665,7 +5340,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										onMouseDown={(e) => e.preventDefault()}
 										onClick={() => {
 											void executeEditAction('selectAll');
-											setEditMenuOpen(false);
+											setMenubarMenu('edit', false);
 										}}
 									>
 										<span>{t('app.edit.selectAll')}</span>
@@ -5681,11 +5356,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 								aria-expanded={viewMenuOpen}
 								aria-haspopup="menu"
 								onClick={() => {
-									setFileMenuOpen(false);
-									setEditMenuOpen(false);
-									setTerminalMenuOpen(false);
-									setWindowMenuOpen(false);
-									setViewMenuOpen((open) => !open);
+									toggleMenubarMenu('view');
 								}}
 							>
 								{t('app.menuView')}
@@ -5698,7 +5369,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
 										onClick={() => {
 											toggleSidebarVisibility();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.toggleSidebar')}</span>
@@ -5711,7 +5382,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										disabled={!canToggleTerminal}
 										onClick={() => {
 											toggleTerminalVisibility();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.toggleTerminal')}</span>
@@ -5724,7 +5395,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										disabled={!canToggleDiffPanel}
 										onClick={() => {
 											toggleDiffPanelVisibility();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.toggleDiffPanel')}</span>
@@ -5736,7 +5407,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
 										onClick={() => {
 											openQuickOpen('');
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.find')}</span>
@@ -5750,7 +5421,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										disabled={!canGoPrevThread}
 										onClick={() => {
 											void goToPreviousThread();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.previousThread')}</span>
@@ -5763,7 +5434,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										disabled={!canGoNextThread}
 										onClick={() => {
 											void goToNextThread();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.nextThread')}</span>
@@ -5776,7 +5447,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										disabled={!canGoBackThread}
 										onClick={() => {
 											void goThreadBack();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.back')}</span>
@@ -5789,7 +5460,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										disabled={!canGoForwardThread}
 										onClick={() => {
 											void goThreadForward();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.forward')}</span>
@@ -5802,7 +5473,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
 										onClick={() => {
 											zoomInUi();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.zoomIn')}</span>
@@ -5814,7 +5485,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
 										onClick={() => {
 											zoomOutUi();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.zoomOut')}</span>
@@ -5826,7 +5497,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
 										onClick={() => {
 											resetUiZoom();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.actualSize')}</span>
@@ -5839,7 +5510,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
 										onClick={() => {
 											void toggleFullscreen();
-											setViewMenuOpen(false);
+											setMenubarMenu('view', false);
 										}}
 									>
 										<span>{t('app.view.toggleFullscreen')}</span>
@@ -5854,18 +5525,14 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 								aria-expanded={windowMenuOpen}
 								aria-haspopup="menu"
 								onClick={() => {
-									setFileMenuOpen(false);
-									setEditMenuOpen(false);
-									setTerminalMenuOpen(false);
-									setViewMenuOpen(false);
-									setWindowMenuOpen((o) => !o);
+									toggleMenubarMenu('window');
 								}}
 							>
 								{t('app.menuWindow')}
 							</button>
 							{windowMenuOpen ? (
 								<MenubarWindowMenu
-									onClose={() => setWindowMenuOpen(false)}
+									onClose={() => setMenubarMenu('window', false)}
 									isDesktopShell={!!shell}
 									windowMaximized={windowMaximized}
 									onNewWindow={() => void fileMenuNewWindow()}
@@ -5887,11 +5554,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 									aria-expanded={terminalMenuOpen}
 									aria-haspopup="menu"
 									onClick={() => {
-										setFileMenuOpen(false);
-										setEditMenuOpen(false);
-										setViewMenuOpen(false);
-										setWindowMenuOpen(false);
-										setTerminalMenuOpen((o) => !o);
+										toggleMenubarMenu('terminal');
 									}}
 								>
 									{t('app.menuTerminal')}
@@ -6614,5 +6277,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			) : null}
 		</div>
 		</ComposerActionsProvider>
+		</AppProvider>
 	);
 }
