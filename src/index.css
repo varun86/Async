@@ -3246,6 +3246,26 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	gap: 22px;
 }
 
+.ref-messages-track--virtual {
+	display: block;
+	position: relative;
+	gap: 0;
+	align-items: stretch;
+	min-width: 0;
+	width: 100%;
+}
+
+/* 虚拟行内为绝对定位子树；避免误拦滚动 */
+.ref-msg-virtual-row {
+	min-height: 0;
+}
+
+/* transform 排布下列内 sticky 无效，降级为普通块避免错误粘附 */
+.ref-messages.ref-messages--virtual .ref-msg-sticky-user-wrap {
+	position: relative;
+	top: auto;
+}
+
 /* ??????/????????????????????????? */
 .ref-msg-slot {
 	display: flex;

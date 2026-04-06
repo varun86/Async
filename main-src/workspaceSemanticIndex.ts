@@ -1,5 +1,6 @@
 /**
  * 本地 TF-IDF 语义块检索（无 embedding API），为 Agent 注入相关代码片段。
+ * 按 workspace 根路径分桶，支持多窗口不同文件夹并存。
  */
 
 import * as fsp from 'node:fs/promises';
@@ -91,7 +92,6 @@ const STOP = new Set([
 	'after',
 	'use',
 	'she',
-	'her',
 	'many',
 ]);
 
@@ -103,44 +103,76 @@ type Chunk = {
 	tf: Map<string, number>;
 };
 
-let semRoot: string | null = null;
-let chunks: Chunk[] = [];
-let idf = new Map<string, number>();
-let chunkCount = 0;
-let rebuildBusy: Promise<void> | null = null;
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
+type SemanticBucket = {
+	rootNorm: string;
+	chunks: Chunk[];
+	idf: Map<string, number>;
+	rebuildBusy: Promise<void> | null;
+	persistTimer: ReturnType<typeof setTimeout> | null;
+	lazyLoadAttempted: boolean;
+};
 
-export function clearWorkspaceSemanticIndex(): void {
-	semRoot = null;
-	chunks = [];
-	idf = new Map();
-	chunkCount = 0;
-	rebuildBusy = null;
-	lazyLoadAttempted = false;
-	if (persistTimer) {
-		clearTimeout(persistTimer);
-		persistTimer = null;
+const semanticBuckets = new Map<string, SemanticBucket>();
+
+function normRoot(r: string): string {
+	return path.normalize(path.resolve(r));
+}
+
+function getBucket(rootNorm: string): SemanticBucket {
+	const k = normRoot(rootNorm);
+	let b = semanticBuckets.get(k);
+	if (!b) {
+		b = {
+			rootNorm: k,
+			chunks: [],
+			idf: new Map(),
+			rebuildBusy: null,
+			persistTimer: null,
+			lazyLoadAttempted: false,
+		};
+		semanticBuckets.set(k, b);
+	}
+	return b;
+}
+
+function destroySemBucket(b: SemanticBucket): void {
+	if (b.persistTimer) {
+		clearTimeout(b.persistTimer);
+		b.persistTimer = null;
+	}
+	b.chunks = [];
+	b.idf = new Map();
+	b.rebuildBusy = null;
+	b.lazyLoadAttempted = false;
+}
+
+export function clearWorkspaceSemanticIndexForRoot(rootNorm: string): void {
+	const k = normRoot(rootNorm);
+	const b = semanticBuckets.get(k);
+	if (b) {
+		destroySemBucket(b);
+		semanticBuckets.delete(k);
 	}
 }
 
-function schedulePersistWorkspaceSemanticIndex(): void {
-	if (!semRoot) {
-		return;
+export function clearWorkspaceSemanticIndex(): void {
+	for (const k of [...semanticBuckets.keys()]) {
+		clearWorkspaceSemanticIndexForRoot(k);
 	}
-	if (persistTimer) {
-		clearTimeout(persistTimer);
+}
+
+function schedulePersistWorkspaceSemanticIndex(b: SemanticBucket): void {
+	if (b.persistTimer) {
+		clearTimeout(b.persistTimer);
 	}
-	persistTimer = setTimeout(() => {
-		persistTimer = null;
-		void persistWorkspaceSemanticIndex();
+	b.persistTimer = setTimeout(() => {
+		b.persistTimer = null;
+		void persistWorkspaceSemanticIndex(b);
 	}, 250);
 }
 
-async function persistWorkspaceSemanticIndex(): Promise<void> {
-	if (!semRoot) {
-		return;
-	}
-	const target = getWorkspaceSemanticIndexPath(semRoot);
+async function persistWorkspaceSemanticIndex(b: SemanticBucket): Promise<void> {
+	const target = getWorkspaceSemanticIndexPath(b.rootNorm);
 	try {
 		await fsp.mkdir(path.dirname(target), { recursive: true });
 		await fsp.writeFile(
@@ -148,16 +180,16 @@ async function persistWorkspaceSemanticIndex(): Promise<void> {
 			JSON.stringify(
 				{
 					version: 1,
-					root: semRoot,
+					root: b.rootNorm,
 					generatedAt: new Date().toISOString(),
-					chunks: chunks.map((ch) => ({
+					chunks: b.chunks.map((ch) => ({
 						id: ch.id,
 						relPath: ch.relPath,
 						startLine: ch.startLine,
 						text: ch.text,
 						tf: [...ch.tf.entries()],
 					})),
-					idf: [...idf.entries()],
+					idf: [...b.idf.entries()],
 				},
 				null,
 				2
@@ -194,7 +226,6 @@ function tokenize(text: string): string[] {
 		}
 		out.push(w);
 	}
-	/* camelCase / snake 拆分 */
 	const extra: string[] = [];
 	for (const w of out) {
 		const parts = w.split(/_|(?=[A-Z])/);
@@ -246,12 +277,10 @@ function chunkFileContent(relPath: string, content: string): Chunk[] {
 	return out;
 }
 
-/** 让出事件循环，使 IPC 等高优先级回调有机会执行 */
 function yieldEventLoop(): Promise<void> {
 	return new Promise((r) => setImmediate(r));
 }
 
-/** 限制并发数的批量执行 */
 async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
 	const results: R[] = new Array(items.length);
 	let cursor = 0;
@@ -265,17 +294,13 @@ async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T
 	return results;
 }
 
-/** 懒加载标记：是否已经尝试过从磁盘加载 */
-let lazyLoadAttempted = false;
-
-async function rebuildInternal(rootNorm: string, relativeFiles: string[]): Promise<void> {
+async function rebuildInternal(b: SemanticBucket, relativeFiles: string[]): Promise<void> {
 	if (getSettings().indexing?.semanticIndexEnabled === false) {
 		return;
 	}
+	const rootNorm = b.rootNorm;
 	const codeFiles = relativeFiles.filter(isSemanticEligibleRel);
 
-	// 按最近修改时间降序排序，优先索引活跃文件（避免大仓固定前缀截断遗漏重要文件）
-	// 限制并发 stat 数量，避免启动时 I/O 饱和阻塞 IPC
 	const STAT_SAMPLE = 5000;
 	const INDEX_LIMIT = 2500;
 	const STAT_CONCURRENCY = 50;
@@ -335,25 +360,31 @@ async function rebuildInternal(rootNorm: string, relativeFiles: string[]): Promi
 		nextIdf.set(term, Math.log((N + 1) / (d + 1)) + 1);
 	}
 
-	semRoot = rootNorm;
-	chunks = next.slice(0, 4000);
-	idf = nextIdf;
-	chunkCount = chunks.length;
-	schedulePersistWorkspaceSemanticIndex();
+	b.chunks = next.slice(0, 4000);
+	b.idf = nextIdf;
+	schedulePersistWorkspaceSemanticIndex(b);
 }
 
-/**
- * 在后台构建/刷新索引（与文件列表快照一致）。已在重建时跳过，避免堆积任务。
- */
+export function getWorkspaceSemanticIndexStatsForRoot(
+	rootNorm: string | null
+): { chunks: number; busy: boolean; root: string | null } {
+	if (!rootNorm) {
+		return { chunks: 0, busy: false, root: null };
+	}
+	const b = semanticBuckets.get(normRoot(rootNorm));
+	if (!b) {
+		return { chunks: 0, busy: false, root: normRoot(rootNorm) };
+	}
+	return { chunks: b.chunks.length, busy: b.rebuildBusy != null, root: b.rootNorm };
+}
+
+/** @deprecated 使用 getWorkspaceSemanticIndexStatsForRoot */
 export function getWorkspaceSemanticIndexStats(): { chunks: number; busy: boolean; root: string | null } {
-	return { chunks: chunks.length, busy: rebuildBusy != null, root: semRoot };
+	return { chunks: 0, busy: false, root: null };
 }
 
-/**
- * 尝试从磁盘加载上次持久化的语义索引。返回 true 表示加载成功（跳过全量重建）。
- */
-async function tryLoadSemanticFromDisk(rootNorm: string): Promise<boolean> {
-	const target = getWorkspaceSemanticIndexPath(rootNorm);
+async function tryLoadSemanticFromDisk(b: SemanticBucket): Promise<boolean> {
+	const target = getWorkspaceSemanticIndexPath(b.rootNorm);
 	try {
 		const raw = await fsp.readFile(target, 'utf8');
 		const data = JSON.parse(raw) as {
@@ -382,10 +413,8 @@ async function tryLoadSemanticFromDisk(rootNorm: string): Promise<boolean> {
 		if (loadedChunks.length === 0) {
 			return false;
 		}
-		semRoot = rootNorm;
-		chunks = loadedChunks;
-		idf = new Map(data.idf);
-		chunkCount = chunks.length;
+		b.chunks = loadedChunks;
+		b.idf = new Map(data.idf);
 		return true;
 	} catch {
 		return false;
@@ -396,86 +425,78 @@ export function scheduleWorkspaceSemanticRebuild(rootNorm: string, relativeFiles
 	if (getSettings().indexing?.semanticIndexEnabled === false) {
 		return;
 	}
-	if (rebuildBusy) {
+	const b = getBucket(rootNorm);
+	if (b.rebuildBusy) {
 		return;
 	}
-	rebuildBusy = (async () => {
+	b.rebuildBusy = (async () => {
 		try {
 			const t0 = Date.now();
-			if (await tryLoadSemanticFromDisk(rootNorm)) {
-				console.log(`[semanticIndex] loaded from disk: ${chunks.length} chunks in ${Date.now() - t0}ms`);
-				lazyLoadAttempted = true;
+			if (await tryLoadSemanticFromDisk(b)) {
+				console.log(`[semanticIndex] loaded from disk: ${b.chunks.length} chunks in ${Date.now() - t0}ms`);
+				b.lazyLoadAttempted = true;
 				return;
 			}
 			console.log(`[semanticIndex] disk cache miss, rebuilding…`);
-			await rebuildInternal(rootNorm, relativeFiles);
-			console.log(`[semanticIndex] rebuild done: ${chunks.length} chunks in ${Date.now() - t0}ms`);
-			lazyLoadAttempted = true;
+			await rebuildInternal(b, relativeFiles);
+			console.log(`[semanticIndex] rebuild done: ${b.chunks.length} chunks in ${Date.now() - t0}ms`);
+			b.lazyLoadAttempted = true;
 		} catch {
 			/* ignore */
 		} finally {
-			rebuildBusy = null;
+			b.rebuildBusy = null;
 		}
 	})();
 }
 
-/**
- * 懒加载：在首次需要语义索引时，从磁盘缓存加载或触发重建。
- * 调用方在发送聊天消息时触发，不在启动时执行。
- */
 async function ensureSemanticIndexLoaded(rootNorm: string): Promise<void> {
-	if (lazyLoadAttempted || chunks.length > 0 || rebuildBusy) {
-		if (rebuildBusy) {
-			await rebuildBusy;
+	const b = getBucket(rootNorm);
+	if (b.lazyLoadAttempted || b.chunks.length > 0 || b.rebuildBusy) {
+		if (b.rebuildBusy) {
+			await b.rebuildBusy;
 		}
 		return;
 	}
-	lazyLoadAttempted = true;
+	b.lazyLoadAttempted = true;
 	const t0 = Date.now();
-	if (await tryLoadSemanticFromDisk(rootNorm)) {
-		console.log(`[semanticIndex] lazy loaded from disk: ${chunks.length} chunks in ${Date.now() - t0}ms`);
+	if (await tryLoadSemanticFromDisk(b)) {
+		console.log(`[semanticIndex] lazy loaded from disk: ${b.chunks.length} chunks in ${Date.now() - t0}ms`);
 		return;
 	}
-	// 磁盘无缓存，触发后台重建（不阻塞当前调用，本次搜索返回空）
 	const { ensureWorkspaceFileIndex } = await import('./workspaceFileIndex.js');
 	const files = await ensureWorkspaceFileIndex(rootNorm);
 	scheduleWorkspaceSemanticRebuild(rootNorm, files);
 	console.log(`[semanticIndex] lazy rebuild scheduled in ${Date.now() - t0}ms`);
 }
 
-function scoreChunk(queryTf: Map<string, number>, ch: Chunk): number {
+function scoreChunk(b: SemanticBucket, queryTf: Map<string, number>, ch: Chunk): number {
 	let s = 0;
 	for (const [term, qtf] of queryTf) {
 		const ctf = ch.tf.get(term);
 		if (!ctf) {
 			continue;
 		}
-		const idfV = idf.get(term) ?? 1;
+		const idfV = b.idf.get(term) ?? 1;
 		s += qtf * ctf * idfV * idfV;
 	}
 	return s;
 }
 
-export function semanticSearchChunks(query: string, topK: number): Chunk[] {
-	if (!query.trim() || chunks.length === 0) {
+function semanticSearchChunksForBucket(b: SemanticBucket, query: string, topK: number): Chunk[] {
+	if (!query.trim() || b.chunks.length === 0) {
 		return [];
 	}
 	const qText = buildTf(query);
 	if (qText.size === 0) {
 		return [];
 	}
-	const scored = chunks
-		.map((c) => ({ c, s: scoreChunk(qText, c) }))
+	const scored = b.chunks
+		.map((c) => ({ c, s: scoreChunk(b, qText, c) }))
 		.filter((x) => x.s > 0)
-		.sort((a, b) => b.s - a.s);
+		.sort((a, c) => c.s - a.s);
 	return scored.slice(0, topK).map((x) => x.c);
 }
 
-/**
- * 注入到 system append 的 Markdown 块（同步；索引未就绪时返回空串）。
- * @param recentPaths 最近触碰的文件相对路径列表（来自 fileStates），用于 boosting。
- * @param excludePaths 已通过 @ 引用或工具读取的路径，对应 chunk 将被过滤以避免重复注入。
- */
 export async function buildSemanticContextBlock(
 	query: string,
 	maxChunks: number,
@@ -486,15 +507,19 @@ export async function buildSemanticContextBlock(
 	if (getSettings().indexing?.semanticIndexEnabled === false) {
 		return '';
 	}
-	if (workspaceRoot && chunks.length === 0) {
-		await ensureSemanticIndexLoaded(path.resolve(workspaceRoot));
+	if (!workspaceRoot) {
+		return '';
 	}
-	const rawHits = semanticSearchChunks(query, maxChunks * 2);
+	const rootNorm = path.resolve(workspaceRoot);
+	const b = getBucket(rootNorm);
+	if (b.chunks.length === 0) {
+		await ensureSemanticIndexLoaded(rootNorm);
+	}
+	const rawHits = semanticSearchChunksForBucket(b, query, maxChunks * 2);
 	if (rawHits.length === 0) {
 		return '';
 	}
 
-	// 过滤掉已在上下文中的路径（避免重复）
 	let filtered = rawHits;
 	if (excludePaths && excludePaths.length > 0) {
 		const excludeSet = new Set(excludePaths.map((p) => p.replace(/\\/g, '/')));
@@ -508,7 +533,6 @@ export async function buildSemanticContextBlock(
 	let hits = filtered;
 	if (recentPaths && recentPaths.length > 0) {
 		const recentSet = new Set(recentPaths.map((p) => p.replace(/\\/g, '/')));
-		// 最近触碰文件的 chunk 提升到前面，其余按原顺序
 		const boosted = filtered.filter((c) => recentSet.has(c.relPath.replace(/\\/g, '/')));
 		const rest = filtered.filter((c) => !recentSet.has(c.relPath.replace(/\\/g, '/')));
 		hits = [...boosted, ...rest].slice(0, maxChunks);

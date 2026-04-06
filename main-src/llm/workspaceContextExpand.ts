@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ChatMessage } from '../threadStore.js';
-import { getWorkspaceRoot, resolveWorkspacePath } from '../workspace.js';
+import { resolveWorkspacePath } from '../workspace.js';
 import { getIndexedWorkspaceFilesIfFresh, listWorkspaceRelativeFiles } from '../workspaceFileIndex.js';
 import type { ComposerMode } from './composerMode.js';
 
@@ -51,8 +51,8 @@ function mimeForInlineImage(ext: string): string {
 	}
 }
 
-function expandUserTextWithWorkspaceFiles(text: string): string {
-	const root = getWorkspaceRoot();
+function expandUserTextWithWorkspaceFiles(text: string, workspaceRoot: string | null): string {
+	const root = workspaceRoot;
 	if (!root) {
 		return text;
 	}
@@ -69,7 +69,7 @@ function expandUserTextWithWorkspaceFiles(text: string): string {
 	const blocks: string[] = [];
 	for (const rel of refs) {
 		try {
-			const full = resolveWorkspacePath(rel);
+			const full = resolveWorkspacePath(rel, root);
 			if (!fs.statSync(full).isFile()) {
 				continue;
 			}
@@ -221,12 +221,15 @@ export function buildWorkspaceTreeSummary(files: string[], maxLines: number = 15
 }
 
 /** 深拷贝消息列表，并将最后一条 user 的正文展开为「文件内容 + 原消息」（仅影响发往模型的副本）。 */
-export function cloneMessagesWithExpandedLastUser(messages: ChatMessage[]): ChatMessage[] {
+export function cloneMessagesWithExpandedLastUser(
+	messages: ChatMessage[],
+	workspaceRoot: string | null
+): ChatMessage[] {
 	const clone = messages.map((m) => ({ ...m }));
 	for (let i = clone.length - 1; i >= 0; i--) {
 		if (clone[i]!.role === 'user') {
 			const cur = clone[i]!;
-			clone[i] = { ...cur, content: expandUserTextWithWorkspaceFiles(cur.content) };
+			clone[i] = { ...cur, content: expandUserTextWithWorkspaceFiles(cur.content, workspaceRoot) };
 			break;
 		}
 	}

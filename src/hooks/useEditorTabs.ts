@@ -14,6 +14,9 @@ export type EditorInlineDiffState = {
 };
 
 export const EDITOR_TERMINAL_HEIGHT_KEY = 'async:editor-terminal-height-v1';
+
+const editorTerminalHeightLsKey = (isolatedEditorSurface: boolean): string =>
+	isolatedEditorSurface ? `void-shell:editor:${EDITOR_TERMINAL_HEIGHT_KEY}` : EDITOR_TERMINAL_HEIGHT_KEY;
 export const EDITOR_TERMINAL_H_MIN = 120;
 export const EDITOR_TERMINAL_H_MAX_RATIO = 0.65;
 
@@ -23,10 +26,10 @@ export function clampEditorTerminalHeight(h: number): number {
 	return Math.min(max, Math.max(EDITOR_TERMINAL_H_MIN, Math.round(h)));
 }
 
-function readEditorTerminalHeightPx(): number {
+function readEditorTerminalHeightPx(lsKey: string): number {
 	try {
 		if (typeof window === 'undefined') return 220;
-		const raw = localStorage.getItem(EDITOR_TERMINAL_HEIGHT_KEY);
+		const raw = localStorage.getItem(lsKey);
 		if (raw) {
 			const n = Number(raw);
 			if (Number.isFinite(n) && n > 0) return clampEditorTerminalHeight(n);
@@ -41,7 +44,8 @@ function readEditorTerminalHeightPx(): number {
  * 管理编辑器标签页、文件内容、内联 diff、终端会话状态。
  * Monaco editor ref 也在此持有，供 App.tsx 中的文件操作使用。
  */
-export function useEditorTabs() {
+export function useEditorTabs(opts?: { isolatedEditorSurface?: boolean }) {
+	const terminalHeightLsKey = editorTerminalHeightLsKey(opts?.isolatedEditorSurface === true);
 	const [openTabs, setOpenTabs] = useState<EditorTab[]>([]);
 	const [activeTabId, setActiveTabId] = useState<string | null>(null);
 	const [filePath, setFilePath] = useState('');
@@ -54,7 +58,7 @@ export function useEditorTabs() {
 
 	const [editorTerminalVisible, setEditorTerminalVisible] = useState(true);
 	const [editorTerminalHeightPx, setEditorTerminalHeightPx] = useState(() =>
-		readEditorTerminalHeightPx()
+		readEditorTerminalHeightPx(terminalHeightLsKey)
 	);
 	const [editorTerminalSessions, setEditorTerminalSessions] = useState<EditorPtySession[]>([]);
 	const [activeEditorTerminalId, setActiveEditorTerminalId] = useState<string | null>(null);
@@ -90,5 +94,6 @@ export function useEditorTabs() {
 		monacoEditorRef,
 		editorLoadRequestRef,
 		pendingEditorHighlightRangeRef,
+		editorTerminalHeightLsKey: terminalHeightLsKey,
 	};
 }

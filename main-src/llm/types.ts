@@ -36,4 +36,6 @@ export type UnifiedChatOptions = {
 	agentSystemAppend?: string;
 	/** 扩展思考 / reasoning 强度，默认 off */
 	thinkingLevel?: ThinkingLevel;
+	/** 当前发起请求的窗口工作区根（用于 @ 路径展开） */
+	workspaceRoot?: string | null;
 };

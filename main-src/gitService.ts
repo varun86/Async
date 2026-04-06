@@ -1,10 +1,18 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { createTwoFilesPatch } from 'diff';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
-import { getWorkspaceRoot, isPathInsideRoot } from './workspace.js';
+import { isPathInsideRoot } from './workspace.js';
 
 const execFileAsync = promisify(execFile);
+
+/** IPC 在调用 git 前用当前窗口的 workspace root 包裹异步逻辑。 */
+const gitWorkspaceAls = new AsyncLocalStorage<string>();
+
+export function withGitWorkspaceRootAsync<T>(root: string, fn: () => Promise<T>): Promise<T> {
+	return gitWorkspaceAls.run(path.resolve(root), fn);
+}
 
 const GIT_MISSING_MESSAGE = 'Git is not installed';
 const GIT_NOT_REPO_MESSAGE = 'Current workspace is not a Git repository';
@@ -57,7 +65,7 @@ export function normalizeGitFailureMessage(error: unknown, fallback = 'Git comma
 }
 
 function repoRoot(): string {
-	const root = getWorkspaceRoot();
+	const root = gitWorkspaceAls.getStore();
 	if (!root) {
 		throw new Error('No workspace');
 	}
@@ -105,8 +113,10 @@ export async function gitProbeContext(): Promise<
 	| { ok: true; topLevel: string }
 	| { ok: false; reason: GitFailureKind; message: string }
 > {
-	const ws = getWorkspaceRoot();
-	if (!ws) {
+	let ws: string;
+	try {
+		ws = repoRoot();
+	} catch {
 		return { ok: false, reason: 'unknown', message: 'No workspace' };
 	}
 	try {
@@ -347,8 +357,13 @@ export type DiffPreview = { diff: string; isBinary: boolean; additions: number; 
 type DiffPreviewOptions = { maxChars?: number | null };
 
 /** Unified diff vs HEAD, or synthetic “all added” for untracked text files. */
-export async function getDiffPreview(relPath: string, options?: DiffPreviewOptions): Promise<DiffPreview> {
-	const root = repoRoot();
+export async function getDiffPreview(
+	relPath: string,
+	options?: DiffPreviewOptions,
+	/** 显式工作区根（IPC 传入），避免并行 diff 时 AsyncLocalStorage 上下文丢失导致 repoRoot() 失败。 */
+	workspaceRootAbs?: string | null
+): Promise<DiffPreview> {
+	const root = workspaceRootAbs != null && workspaceRootAbs !== '' ? path.resolve(workspaceRootAbs) : repoRoot();
 	const full = path.resolve(root, relPath);
 	if (!isPathInsideRoot(full, root)) {
 		throw new Error('Bad path');
@@ -358,7 +373,7 @@ export async function getDiffPreview(relPath: string, options?: DiffPreviewOptio
 
 	let diffText = '';
 	try {
-		diffText = await git(['diff', 'HEAD', '--', relPath]);
+		diffText = await git(['diff', 'HEAD', '--', relPath], root);
 	} catch {
 		diffText = '';
 	}

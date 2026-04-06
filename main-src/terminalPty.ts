@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import * as pty from 'node-pty';
-import { getWorkspaceRoot, resolveWorkspacePath } from './workspace.js';
+import { getWorkspaceRootForWebContents, resolveWorkspacePath } from './workspace.js';
 
 type Session = { pty: pty.IPty; sender: WebContents };
 
@@ -17,14 +17,14 @@ function safeSend(sender: WebContents, channel: string, ...args: unknown[]) {
 
 export function registerTerminalPtyIpc(): void {
 	ipcMain.handle('terminal:ptyCreate', (event, opts?: unknown) => {
-		const root = getWorkspaceRoot();
+		const root = getWorkspaceRootForWebContents(event.sender);
 		let cwd = root && existsSync(root) ? root : process.cwd();
 		const o = opts && typeof opts === 'object' ? (opts as { cwdRel?: unknown }) : null;
 		if (typeof o?.cwdRel === 'string' && root) {
 			const raw = o.cwdRel.trim();
 			if (raw) {
 				try {
-					const full = resolveWorkspacePath(raw);
+					const full = resolveWorkspacePath(raw, root);
 					if (existsSync(full)) {
 						const st = statSync(full);
 						cwd = st.isDirectory() ? full : path.dirname(full);

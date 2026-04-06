@@ -2,6 +2,8 @@ import { BrowserWindow, app, screen } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { THEME_CHROME } from './themeChrome.js';
+import { bindWorkspaceRootToWebContents, onWebContentsDestroyed } from './workspace.js';
+import { acquireWorkspaceFileIndexRef, ensureWorkspaceFileIndex, releaseWorkspaceFileIndexRef } from './workspaceFileIndex.js';
 
 const isDev = !app.isPackaged;
 const devUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173';
@@ -16,7 +18,13 @@ export function configureAppWindowIcon(icon: string | undefined): void {
 	appIconPath = icon;
 }
 
-export function createAppWindow(opts?: { blank?: boolean }): void {
+export type AppWindowSurface = 'agent' | 'editor';
+
+export function createAppWindow(opts?: {
+	blank?: boolean;
+	surface?: AppWindowSurface;
+	initialWorkspace?: string | null;
+}): void {
 	const preloadPath = path.join(__dirname, 'preload.cjs');
 	const primary = screen.getPrimaryDisplay();
 	const wa = primary.workArea;
@@ -57,6 +65,21 @@ export function createAppWindow(opts?: { blank?: boolean }): void {
 		show: false,
 	});
 
+	const surface: AppWindowSurface = opts?.surface ?? 'agent';
+	const initial = opts?.initialWorkspace?.trim();
+	if (initial) {
+		const resolvedInitial = path.resolve(initial);
+		bindWorkspaceRootToWebContents(win.webContents, resolvedInitial);
+		acquireWorkspaceFileIndexRef(resolvedInitial);
+		void ensureWorkspaceFileIndex(resolvedInitial).catch(() => {});
+	}
+
+	onWebContentsDestroyed(win.webContents, (releasedRoot) => {
+		if (releasedRoot) {
+			releaseWorkspaceFileIndexRef(releasedRoot);
+		}
+	});
+
 	const notifyLayout = () => {
 		if (!win.isDestroyed()) {
 			win.webContents.send('async-shell:layout');
@@ -70,17 +93,21 @@ export function createAppWindow(opts?: { blank?: boolean }): void {
 	const htmlPath = path.join(__dirname, '..', 'dist', 'index.html');
 	const useViteDevServer = isDev && !loadDistFlag;
 
+	const params = new URLSearchParams();
+	if (opts?.blank) {
+		params.set('blank', '1');
+	}
+	params.set('surface', surface);
+	const qs = params.toString();
+	const urlSuffix = qs ? `?${qs}` : '';
+
 	if (useViteDevServer) {
-		// 开发模式：通过 URL 参数传递 blank 标志
-		const blankParam = opts?.blank ? '?blank=1' : '';
-		void win.loadURL(devUrl + blankParam);
+		void win.loadURL(devUrl + urlSuffix);
 		if (openDevTools) {
 			win.webContents.openDevTools({ mode: 'detach' });
 		}
 	} else {
-		// 生产模式：通过 URL 参数传递 blank 标志
-		const blankParam = opts?.blank ? '?blank=1' : '';
-		const fileUrl = pathToFileURL(htmlPath).href + blankParam;
+		const fileUrl = pathToFileURL(htmlPath).href + urlSuffix;
 		void win.loadURL(fileUrl);
 	}
 }

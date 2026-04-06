@@ -81,6 +81,7 @@ const INVOKE_CHANNELS = new Set([
 	'workspace:closeFolder',
 	'workspace:removeRecent',
 	'app:newWindow',
+	'app:newEditorWindow',
 	'app:windowGetState',
 	'app:windowMinimize',
 	'app:windowToggleMaximize',

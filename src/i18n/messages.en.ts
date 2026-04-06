@@ -66,6 +66,7 @@ export const messagesEn: Record<string, string> = {
 	'app.fileMenu.newFile': 'New Text File',
 	'app.fileMenu.newFileSaveTitle': 'New File',
 	'app.fileMenu.newWindow': 'New Window',
+	'app.fileMenu.newEditorWindow': 'New Editor Window',
 	'app.fileMenu.openFile': 'Open File…',
 	'app.fileMenu.openFolder': 'Open Folder…',
 	'app.fileMenu.openRecent': 'Open Recent',

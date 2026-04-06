@@ -6,7 +6,7 @@
 import { applyPatch } from 'diff';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { getWorkspaceRoot, resolveWorkspacePath, isPathInsideRoot } from '../workspace.js';
+import { resolveWorkspacePath, isPathInsideRoot } from '../workspace.js';
 
 export type ApplyAgentDiffsResult = {
 	applied: string[];
@@ -147,7 +147,7 @@ function safeResolveRel(rel: string, root: string): string | null {
 		return null;
 	}
 	try {
-		const full = resolveWorkspacePath(rel);
+		const full = resolveWorkspacePath(rel, root);
 		if (!isPathInsideRoot(full, root)) {
 			return null;
 		}
@@ -166,9 +166,9 @@ export function listAgentDiffChunks(assistantText: string): AgentDiffListItem[] 
 }
 
 /** 应用单个 diff 块（与 `applyAgentDiffsFromAssistantText` 中单次迭代语义一致）。 */
-export function applyAgentDiffChunk(chunk: string): ApplyAgentDiffsResult {
+export function applyAgentDiffChunk(chunk: string, workspaceRoot: string | null): ApplyAgentDiffsResult {
 	const result: ApplyAgentDiffsResult = { applied: [], failed: [] };
-	const root = getWorkspaceRoot();
+	const root = workspaceRoot;
 	if (!root) {
 		result.failed.push({ path: '(workspace)', reason: '未打开工作区' });
 		return result;
@@ -238,10 +238,10 @@ export function applyAgentDiffChunk(chunk: string): ApplyAgentDiffsResult {
 }
 
 /** 按顺序应用多个 diff 块。 */
-export function applyAgentDiffChunks(chunks: string[]): ApplyAgentDiffsResult {
+export function applyAgentDiffChunks(chunks: string[], workspaceRoot: string | null): ApplyAgentDiffsResult {
 	const aggregated: ApplyAgentDiffsResult = { applied: [], failed: [] };
 	for (const chunk of chunks) {
-		const r = applyAgentDiffChunk(chunk);
+		const r = applyAgentDiffChunk(chunk, workspaceRoot);
 		aggregated.applied.push(...r.applied);
 		aggregated.failed.push(...r.failed);
 	}
@@ -252,12 +252,13 @@ export type AgentPatchItem = { id: string; chunk: string };
 
 /** 逐项应用并返回成功项 id（供审阅 UI 局部移除列表）。 */
 export function applyAgentPatchItems(
-	items: AgentPatchItem[]
+	items: AgentPatchItem[],
+	workspaceRoot: string | null
 ): ApplyAgentDiffsResult & { succeededIds: string[] } {
 	const aggregated: ApplyAgentDiffsResult = { applied: [], failed: [] };
 	const succeededIds: string[] = [];
 	for (const { id, chunk } of items) {
-		const r = applyAgentDiffChunk(chunk);
+		const r = applyAgentDiffChunk(chunk, workspaceRoot);
 		aggregated.applied.push(...r.applied);
 		aggregated.failed.push(...r.failed);
 		if (r.applied.length > 0) {
@@ -301,7 +302,10 @@ export function formatAgentApplyIncremental(ar: ApplyAgentDiffsResult): string {
 /**
  * 解析并应用助手回复中的 unified diff（仅 ```diff 围栏或围栏内以 diff --git 开头的内容）。
  */
-export function applyAgentDiffsFromAssistantText(assistantText: string): ApplyAgentDiffsResult {
+export function applyAgentDiffsFromAssistantText(
+	assistantText: string,
+	workspaceRoot: string | null
+): ApplyAgentDiffsResult {
 	const chunks = extractAllDiffChunks(assistantText);
-	return applyAgentDiffChunks(chunks);
+	return applyAgentDiffChunks(chunks, workspaceRoot);
 }

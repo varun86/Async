@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getWorkspaceRoot, resolveWorkspacePath, isPathInsideRoot } from '../workspace.js';
+import { resolveWorkspacePath, isPathInsideRoot } from '../workspace.js';
 import { formatSymbolSearchResults, searchWorkspaceSymbols, ensureSymbolIndexLoaded } from '../workspaceSymbolIndex.js';
 import type { ToolCall, ToolResult } from './agentTools.js';
 import { TsLspSession } from '../lsp/tsLspSession.js';
@@ -27,11 +27,9 @@ import { ensureAgentMemoryDirExists, loadAgentMemoryPrompt } from './agentMemory
 import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.js';
 import { extractMemoriesToDir } from '../services/extractMemories/extractMemories.js';
 
-/** 工具执行器持有的 LSP 会话引用（由 register.ts 通过 setToolLspSession 注入）。 */
-let _lspSession: TsLspSession | null = null;
-
-export function setToolLspSession(session: TsLspSession): void {
-	_lspSession = session;
+/** @deprecated 每窗 LSP 经 ToolExecutionContext.toolLspSession 传入 */
+export function setToolLspSession(_session: TsLspSession): void {
+	/* no-op */
 }
 
 export type SubAgentBackgroundDonePayload = {
@@ -245,6 +243,8 @@ async function executeMcpAgentTool(call: ToolCall): Promise<ToolResult> {
 
 export type ToolExecutionContext = {
 	delegateExecutionDepth?: number;
+	workspaceRoot?: string | null;
+	toolLspSession?: TsLspSession | null;
 };
 
 export async function executeTool(
@@ -252,22 +252,22 @@ export async function executeTool(
 	hooks: ToolExecutionHooks = {},
 	execCtx: ToolExecutionContext = {}
 ): Promise<ToolResult> {
-	try {
+		try {
 		switch (call.name) {
 			case 'read_file':
-				return executeReadFile(call);
+				return executeReadFile(call, execCtx);
 			case 'write_to_file':
-				return executeWriteToFile(call, hooks);
+				return executeWriteToFile(call, hooks, execCtx);
 			case 'str_replace':
-				return executeStrReplace(call, hooks);
+				return executeStrReplace(call, hooks, execCtx);
 			case 'list_dir':
-				return executeListDir(call);
+				return executeListDir(call, execCtx);
 			case 'search_files':
-				return await executeSearchFiles(call);
+				return await executeSearchFiles(call, execCtx);
 		case 'execute_command':
-			return await executeCommand(call);
+			return await executeCommand(call, execCtx);
 		case 'get_diagnostics':
-			return await executeGetDiagnostics(call);
+			return await executeGetDiagnostics(call, execCtx);
 		case 'Agent':
 		case 'Task':
 		case 'delegate_task':
@@ -289,24 +289,24 @@ export async function executeTool(
 	}
 }
 
-function requireWorkspace(): string {
-	const root = getWorkspaceRoot();
+function requireWorkspace(execCtx: ToolExecutionContext): string {
+	const root = execCtx.workspaceRoot ?? null;
 	if (!root) throw new Error('No workspace folder open.');
 	return root;
 }
 
-function safePath(relPath: string): string {
-	const root = requireWorkspace();
-	const full = resolveWorkspacePath(relPath);
+function safePath(relPath: string, execCtx: ToolExecutionContext): string {
+	const root = requireWorkspace(execCtx);
+	const full = resolveWorkspacePath(relPath, root);
 	if (!isPathInsideRoot(full, root)) throw new Error('Path escapes workspace boundary.');
 	return full;
 }
 
-function executeReadFile(call: ToolCall): ToolResult {
+function executeReadFile(call: ToolCall, execCtx: ToolExecutionContext): ToolResult {
 	const relPath = String(call.arguments.path ?? '');
 	if (!relPath) return { toolCallId: call.id, name: call.name, content: 'Error: path is required', isError: true };
 
-	const full = safePath(relPath);
+	const full = safePath(relPath, execCtx);
 	if (!fs.existsSync(full)) {
 		return { toolCallId: call.id, name: call.name, content: `File not found: ${relPath}`, isError: true };
 	}
@@ -331,12 +331,12 @@ function executeReadFile(call: ToolCall): ToolResult {
 	return { toolCallId: call.id, name: call.name, content: numbered, isError: false };
 }
 
-function executeWriteToFile(call: ToolCall, hooks: ToolExecutionHooks): ToolResult {
+function executeWriteToFile(call: ToolCall, hooks: ToolExecutionHooks, execCtx: ToolExecutionContext): ToolResult {
 	const relPath = String(call.arguments.path ?? '');
 	const content = String(call.arguments.content ?? '');
 	if (!relPath) return { toolCallId: call.id, name: call.name, content: 'Error: path is required', isError: true };
 
-	const full = safePath(relPath);
+	const full = safePath(relPath, execCtx);
 	const existed = fs.existsSync(full);
 	const previousContent = existed ? fs.readFileSync(full, 'utf8') : null;
 	void hooks.beforeWrite?.({ path: relPath, previousContent });
@@ -353,14 +353,14 @@ function executeWriteToFile(call: ToolCall, hooks: ToolExecutionHooks): ToolResu
 	};
 }
 
-function executeStrReplace(call: ToolCall, hooks: ToolExecutionHooks): ToolResult {
+function executeStrReplace(call: ToolCall, hooks: ToolExecutionHooks, execCtx: ToolExecutionContext): ToolResult {
 	const relPath = String(call.arguments.path ?? '');
 	const rawOldStr = String(call.arguments.old_str ?? '');
 	const rawNewStr = String(call.arguments.new_str ?? '');
 	if (!relPath) return { toolCallId: call.id, name: call.name, content: 'Error: path is required', isError: true };
 	if (!rawOldStr) return { toolCallId: call.id, name: call.name, content: 'Error: old_str is required and must not be empty', isError: true };
 
-	const full = safePath(relPath);
+	const full = safePath(relPath, execCtx);
 	if (!fs.existsSync(full)) {
 		return { toolCallId: call.id, name: call.name, content: `File not found: ${relPath}`, isError: true };
 	}
@@ -464,10 +464,10 @@ function lfPosToOriginal(original: string, lfPos: number): number {
 	return origIdx;
 }
 
-function executeListDir(call: ToolCall): ToolResult {
-	const root = requireWorkspace();
+function executeListDir(call: ToolCall, execCtx: ToolExecutionContext): ToolResult {
+	const root = requireWorkspace(execCtx);
 	const relPath = String(call.arguments.path ?? '').trim();
-	const full = relPath ? safePath(relPath) : root;
+	const full = relPath ? safePath(relPath, execCtx) : root;
 
 	if (!fs.existsSync(full) || !fs.statSync(full).isDirectory()) {
 		return { toolCallId: call.id, name: call.name, content: `Not a directory: ${relPath || '.'}`, isError: true };
@@ -485,8 +485,8 @@ function executeListDir(call: ToolCall): ToolResult {
 	return { toolCallId: call.id, name: call.name, content: lines.join('\n') || '(empty directory)', isError: false };
 }
 
-async function executeSearchFiles(call: ToolCall): Promise<ToolResult> {
-	const root = requireWorkspace();
+async function executeSearchFiles(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
+	const root = requireWorkspace(execCtx);
 	const pattern = String(call.arguments.pattern ?? '');
 	if (!pattern) return { toolCallId: call.id, name: call.name, content: 'Error: pattern is required', isError: true };
 
@@ -495,8 +495,9 @@ async function executeSearchFiles(call: ToolCall): Promise<ToolResult> {
 		call.arguments.search_symbols === true ||
 		call.arguments.mode === 'symbol';
 	if (symbolMode) {
-		await ensureSymbolIndexLoaded(path.resolve(root));
-		const hits = searchWorkspaceSymbols(pattern, MAX_SEARCH_RESULTS);
+		const rootNorm = path.resolve(root);
+		await ensureSymbolIndexLoaded(rootNorm);
+		const hits = searchWorkspaceSymbols(pattern, MAX_SEARCH_RESULTS, rootNorm);
 		return {
 			toolCallId: call.id,
 			name: call.name,
@@ -506,7 +507,7 @@ async function executeSearchFiles(call: ToolCall): Promise<ToolResult> {
 	}
 
 	const subPath = String(call.arguments.path ?? '').trim();
-	const searchDir = subPath ? safePath(subPath) : root;
+	const searchDir = subPath ? safePath(subPath, execCtx) : root;
 
 	try {
 		const isWin = process.platform === 'win32';
@@ -560,8 +561,8 @@ const UNIX_REDIRECT: Record<string, string> = {
 	find: 'Use list_dir or search_files instead.',
 };
 
-async function executeCommand(call: ToolCall): Promise<ToolResult> {
-	const root = requireWorkspace();
+async function executeCommand(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
+	const root = requireWorkspace(execCtx);
 	const command = String(call.arguments.command ?? '').trim();
 	if (!command) return { toolCallId: call.id, name: call.name, content: 'Error: command is required', isError: true };
 
@@ -690,9 +691,10 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 		let agentMemoryDir: string | null = null;
 		if (matchedSubagent?.memoryScope && subagentType) {
 			try {
-				agentMemoryDir = await ensureAgentMemoryDirExists(subagentType, matchedSubagent.memoryScope, getWorkspaceRoot());
+				const subWs = prevCtx.options.workspaceRoot ?? null;
+				agentMemoryDir = await ensureAgentMemoryDirExists(subagentType, matchedSubagent.memoryScope, subWs);
 				agentMemoryAppend =
-					loadAgentMemoryPrompt(subagentType, matchedSubagent.memoryScope, getWorkspaceRoot())?.trim() ?? '';
+					loadAgentMemoryPrompt(subagentType, matchedSubagent.memoryScope, subWs)?.trim() ?? '';
 			} catch {
 				agentMemoryAppend = '';
 				agentMemoryDir = null;
@@ -862,7 +864,7 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 	return { toolCallId: call.id, name: call.name, content: output || '(sub-agent completed with no output)', isError: false };
 }
 
-async function executeGetDiagnostics(call: ToolCall): Promise<ToolResult> {
+async function executeGetDiagnostics(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
 	const relPath = String(call.arguments.path ?? '').trim();
 	if (!relPath) {
 		return { toolCallId: call.id, name: call.name, content: 'Error: path is required', isError: true };
@@ -878,7 +880,8 @@ async function executeGetDiagnostics(call: ToolCall): Promise<ToolResult> {
 		};
 	}
 
-	if (!_lspSession?.isRunning) {
+	const lsp = execCtx.toolLspSession;
+	if (!lsp?.isRunning) {
 		return {
 			toolCallId: call.id,
 			name: call.name,
@@ -887,7 +890,7 @@ async function executeGetDiagnostics(call: ToolCall): Promise<ToolResult> {
 		};
 	}
 
-	const full = safePath(relPath);
+	const full = safePath(relPath, execCtx);
 	if (!fs.existsSync(full)) {
 		return { toolCallId: call.id, name: call.name, content: `File not found: ${relPath}`, isError: true };
 	}
@@ -896,7 +899,7 @@ async function executeGetDiagnostics(call: ToolCall): Promise<ToolResult> {
 	const uri = pathToFileURL(full).href;
 
 	try {
-		const items = await _lspSession!.diagnostics(uri, text);
+		const items = await lsp.diagnostics(uri, text);
 		if (items === null) {
 			return {
 				toolCallId: call.id,

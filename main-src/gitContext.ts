@@ -6,6 +6,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import * as path from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -15,12 +16,12 @@ const GIT_STATUS_MAX_CHARS = 2_000;
 const GIT_LOG_LINES = 5;
 
 type GitCache = {
-	root: string;
+	rootNorm: string;
 	block: string;
 	ts: number;
 };
 
-let cache: GitCache | null = null;
+const cacheByRoot = new Map<string, GitCache>();
 
 async function runGit(args: string[], cwd: string): Promise<string> {
 	try {
@@ -43,8 +44,10 @@ async function runGit(args: string[], cwd: string): Promise<string> {
  * 结果缓存 30 秒，同一 root 下多次调用直接返回缓存值。
  */
 export async function getGitContextBlock(root: string): Promise<string> {
+	const rootNorm = path.normalize(path.resolve(root));
 	const now = Date.now();
-	if (cache && cache.root === root && now - cache.ts < GIT_CACHE_TTL_MS) {
+	const cache = cacheByRoot.get(rootNorm);
+	if (cache && now - cache.ts < GIT_CACHE_TTL_MS) {
 		return cache.block;
 	}
 
@@ -56,7 +59,7 @@ export async function getGitContextBlock(root: string): Promise<string> {
 
 	if (!branch && !statusRaw && !logRaw) {
 		// 不是 git 仓库或 git 不可用
-		cache = { root, block: '', ts: now };
+		cacheByRoot.set(rootNorm, { rootNorm, block: '', ts: now });
 		return '';
 	}
 
@@ -76,11 +79,16 @@ export async function getGitContextBlock(root: string): Promise<string> {
 	}
 
 	const block = parts.join('\n\n');
-	cache = { root, block, ts: now };
+	cacheByRoot.set(rootNorm, { rootNorm, block, ts: now });
 	return block;
 }
 
-/** 清除缓存（工作区切换时调用）。 */
+/** 清除某工作区根的缓存（该窗关闭文件夹时调用，避免误清其它窗）。 */
+export function clearGitContextCacheForRoot(root: string): void {
+	cacheByRoot.delete(path.normalize(path.resolve(root)));
+}
+
+/** @deprecated 仅测试或全量重置；多窗场景请用 clearGitContextCacheForRoot。 */
 export function clearGitContextCache(): void {
-	cache = null;
+	cacheByRoot.clear();
 }

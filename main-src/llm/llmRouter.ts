@@ -19,7 +19,9 @@ export async function streamChatUnified(
 	handlers: StreamHandlers
 ): Promise<void> {
 	const forModel =
-		modeExpandsWorkspaceFileContext(options.mode) ? cloneMessagesWithExpandedLastUser(messages) : messages;
+		modeExpandsWorkspaceFileContext(options.mode)
+			? cloneMessagesWithExpandedLastUser(messages, options.workspaceRoot ?? null)
+			: messages;
 	switch (options.paradigm) {
 		case 'anthropic':
 			await streamAnthropic(settings, forModel, options, handlers);

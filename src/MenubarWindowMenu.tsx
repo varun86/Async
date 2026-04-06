@@ -5,6 +5,7 @@ export type MenubarWindowMenuProps = {
 	isDesktopShell: boolean;
 	windowMaximized: boolean;
 	onNewWindow: () => void;
+	onNewEditorWindow: () => void;
 	onMinimize: () => void;
 	onToggleMaximize: () => void;
 	onCloseWindow: () => void;
@@ -15,6 +16,7 @@ export function MenubarWindowMenu({
 	isDesktopShell,
 	windowMaximized,
 	onNewWindow,
+	onNewEditorWindow,
 	onMinimize,
 	onToggleMaximize,
 	onCloseWindow,
@@ -34,6 +36,18 @@ export function MenubarWindowMenu({
 				}}
 			>
 				<span>{t('app.fileMenu.newWindow')}</span>
+			</button>
+			<button
+				type="button"
+				role="menuitem"
+				className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
+				disabled={!isDesktopShell}
+				onClick={() => {
+					onNewEditorWindow();
+					onClose();
+				}}
+			>
+				<span>{t('app.fileMenu.newEditorWindow')}</span>
 			</button>
 			<div className="ref-menu-dropdown-sep" role="separator" />
 			<button

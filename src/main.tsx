@@ -18,10 +18,24 @@ const platformRaw = userAgentData?.platform ?? navigator.platform ?? navigator.u
 const platform = /win/i.test(platformRaw) ? 'win32' : /mac/i.test(platformRaw) ? 'darwin' : 'linux';
 document.documentElement.setAttribute('data-platform', platform);
 
+function readAppSurfaceFromUrl(): 'agent' | 'editor' | undefined {
+	try {
+		const s = new URLSearchParams(window.location.search).get('surface');
+		if (s === 'agent' || s === 'editor') {
+			return s;
+		}
+	} catch {
+		/* ignore */
+	}
+	return undefined;
+}
+
+const appSurface = readAppSurfaceFromUrl();
+
 createRoot(document.getElementById('root')!).render(
 	<StrictMode>
 		<I18nProvider>
-			<App />
+			<App appSurface={appSurface} />
 		</I18nProvider>
 	</StrictMode>
 );

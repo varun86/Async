@@ -70,6 +70,7 @@ export const messagesZhCN: Record<string, string> = {
 	'app.fileMenu.newFile': '新建文本文件',
 	'app.fileMenu.newFileSaveTitle': '新建文件',
 	'app.fileMenu.newWindow': '新建窗口',
+	'app.fileMenu.newEditorWindow': '新建 Editor 窗口',
 	'app.fileMenu.openFile': '打开文件…',
 	'app.fileMenu.openFolder': '打开文件夹…',
 	'app.fileMenu.openRecent': '打开最近的文件夹',

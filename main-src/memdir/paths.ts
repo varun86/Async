@@ -1,10 +1,9 @@
 import * as path from 'node:path';
-import { getWorkspaceRoot } from '../workspace.js';
 
 export const ENTRYPOINT_NAME = 'MEMORY.md';
 
 export function getAutoMemPath(workspaceRoot?: string | null): string | null {
-	const root = workspaceRoot ?? getWorkspaceRoot();
+	const root = workspaceRoot ?? null;
 	if (!root) {
 		return null;
 	}

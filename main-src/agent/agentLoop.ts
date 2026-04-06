@@ -38,6 +38,7 @@ import {
 	type ToolCall,
 } from './agentTools.js';
 import { executeTool, type ToolExecutionHooks } from './toolExecutor.js';
+import type { TsLspSession } from '../lsp/tsLspSession.js';
 import { getMcpManager } from '../mcp/index.js';
 import { getMcpServerConfigs } from '../settingsStore.js';
 import { repairAgentThreadMessagesForApi } from './agentToolProtocolRepair.js';
@@ -185,6 +186,10 @@ export type AgentLoopOptions = {
 	 * 当前嵌套深度：根循环为 0；子 Agent 内为 1。用于禁止多层 Agent 而不依赖全局状态。
 	 */
 	delegateExecutionDepth?: number;
+	/** 发起 Agent 的窗口当前工作区根 */
+	workspaceRoot?: string | null;
+	/** 与 workspaceRoot 同窗的 TS LSP 会话 */
+	toolLspSession?: TsLspSession | null;
 };
 
 /**
@@ -521,6 +526,8 @@ async function runOpenAILoop(
 		console.log(`[AgentLoop] tool=${tc.name} — executeTool start`);
 		const result = await executeTool(toolCall, options.toolHooks, {
 			delegateExecutionDepth: options.delegateExecutionDepth ?? 0,
+			workspaceRoot: options.workspaceRoot ?? null,
+			toolLspSession: options.toolLspSession ?? null,
 		});
 		console.log(`[AgentLoop] tool=${tc.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
 		if (mistakeLimitEnabled) {
@@ -894,6 +901,8 @@ async function runAnthropicLoop(
 		console.log(`[AgentLoop/A] tool=${tu.name} — executeTool start`);
 		const result = await executeTool(toolCall, options.toolHooks, {
 			delegateExecutionDepth: options.delegateExecutionDepth ?? 0,
+			workspaceRoot: options.workspaceRoot ?? null,
+			toolLspSession: options.toolLspSession ?? null,
 		});
 		console.log(`[AgentLoop/A] tool=${tu.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
 		if (mistakeLimitEnabled) {

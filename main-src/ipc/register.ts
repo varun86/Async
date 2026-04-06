@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, type WebContents } from 'electron';
 import { createAppWindow } from '../appWindow.js';
 import { applyThemeChromeToWindow, type NativeChromeOverride, type ThemeChromeScheme } from '../themeChrome.js';
 import { applyPatch, formatPatch, parsePatch, reversePatch } from 'diff';
@@ -9,11 +9,17 @@ import { pathToFileURL } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { windowsCmdUtf8Prefix } from '../winUtf8.js';
-import { setWorkspaceRoot, getWorkspaceRoot, resolveWorkspacePath, isPathInsideRoot } from '../workspace.js';
+import {
+	bindWorkspaceRootToWebContents,
+	getWorkspaceRootForWebContents,
+	resolveWorkspacePath,
+	isPathInsideRoot,
+} from '../workspace.js';
 import {
 	ensureWorkspaceFileIndex,
-	stopWorkspaceFileIndex,
-	getWorkspaceFileIndexLiveStats,
+	acquireWorkspaceFileIndexRef,
+	releaseWorkspaceFileIndexRef,
+	getWorkspaceFileIndexLiveStatsForRoot,
 	registerKnownWorkspaceRelPath,
 	setWorkspaceFsTouchNotifier,
 } from '../workspaceFileIndex.js';
@@ -110,22 +116,26 @@ import {
 } from '../workspaceAgentStore.js';
 import { summarizeThreadForSidebar, isTimestampToday } from '../threadListSummary.js';
 import { registerTerminalPtyIpc } from '../terminalPty.js';
-import { TsLspSession } from '../lsp/tsLspSession.js';
-import { setToolLspSession, setDelegateContext, clearDelegateContext } from '../agent/toolExecutor.js';
+import {
+	getTsLspSessionForWebContents,
+	disposeTsLspSessionForWebContents,
+	disposeAllTsLspSessions,
+} from '../lspSessionsByWebContents.js';
+import { setDelegateContext, clearDelegateContext } from '../agent/toolExecutor.js';
 import {
 	searchWorkspaceSymbols,
 	ensureSymbolIndexLoaded,
 	clearWorkspaceSymbolIndex,
-	getWorkspaceSymbolIndexStats,
+	getWorkspaceSymbolIndexStatsForRoot,
 	scheduleWorkspaceSymbolFullRebuild,
 } from '../workspaceSymbolIndex.js';
 import {
 	buildSemanticContextBlock,
 	clearWorkspaceSemanticIndex,
-	getWorkspaceSemanticIndexStats,
+	getWorkspaceSemanticIndexStatsForRoot,
 	scheduleWorkspaceSemanticRebuild,
 } from '../workspaceSemanticIndex.js';
-import { getGitContextBlock, clearGitContextCache } from '../gitContext.js';
+import { getGitContextBlock, clearGitContextCacheForRoot } from '../gitContext.js';
 import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.js';
 import { ensureMemoryDirExists, loadMemoryPrompt } from '../memdir/memdir.js';
 import { scanMemoryFiles } from '../memdir/memoryScan.js';
@@ -135,8 +145,9 @@ import { getWorkspaceIndexDir } from '../workspaceIndexPaths.js';
 
 const execFileAsync = promisify(execFile);
 
-const tsLspSession = new TsLspSession();
-setToolLspSession(tsLspSession);
+function senderWorkspaceRoot(event: { sender: WebContents }): string | null {
+	return getWorkspaceRootForWebContents(event.sender);
+}
 
 /**
  * 融合当前用户输入与最近几轮历史 user 消息，构建更丰富的语义检索 query。
@@ -225,12 +236,19 @@ function activeUsageStatsDir(): string | null {
 	return resolveUsageStatsDataDir(getSettings());
 }
 
-function readWorkspaceTextFileIfExists(relPath: string): string | null {
-	const full = resolveWorkspacePath(relPath);
-	if (!fs.existsSync(full)) {
+function readWorkspaceTextFileIfExists(relPath: string, workspaceRoot: string | null): string | null {
+	if (!workspaceRoot) {
 		return null;
 	}
-	return fs.readFileSync(full, 'utf8');
+	try {
+		const full = resolveWorkspacePath(relPath, workspaceRoot);
+		if (!fs.existsSync(full)) {
+			return null;
+		}
+		return fs.readFileSync(full, 'utf8');
+	} catch {
+		return null;
+	}
 }
 
 function contentsEqual(a: string | null, b: string | null): boolean {
@@ -291,7 +309,8 @@ function runChatStream(
 	void (async () => {
 		try {
 			const settings = getSettings();
-			const workspaceRoot = getWorkspaceRoot();
+			const workspaceRoot = getWorkspaceRootForWebContents(win.webContents);
+			const toolLspSession = getTsLspSessionForWebContents(win.webContents);
 			const thinkingLevel = resolveThinkingLevelForSelection(settings, modelSelection);
 			const resolved = resolveModelRequest(settings, modelSelection);
 			if (!resolved.ok) {
@@ -354,6 +373,8 @@ function runChatStream(
 					maxConsecutiveMistakes: ag?.maxConsecutiveMistakes,
 					mistakeLimitEnabled: ag?.mistakeLimitEnabled,
 					onMistakeLimitReached,
+					workspaceRoot,
+					toolLspSession,
 				};
 			try {
 				setDelegateContext(
@@ -381,7 +402,7 @@ function runChatStream(
 				const messagesForAgent = modeExpandsWorkspaceFileContext(
 					mode as import('../llm/composerMode.js').ComposerMode
 				)
-					? cloneMessagesWithExpandedLastUser(sendMessages)
+					? cloneMessagesWithExpandedLastUser(sendMessages, workspaceRoot)
 					: sendMessages;
 				await runAgentLoop(
 					settings,
@@ -401,6 +422,8 @@ function runChatStream(
 						maxConsecutiveMistakes: ag?.maxConsecutiveMistakes,
 						mistakeLimitEnabled: ag?.mistakeLimitEnabled,
 						onMistakeLimitReached,
+						workspaceRoot,
+						toolLspSession,
 						toolHooks: {
 							beforeWrite: ({ path, previousContent }) => {
 								const snapshots = agentRevertSnapshotsByThread.get(threadId);
@@ -475,6 +498,7 @@ function runChatStream(
 				requestProxyUrl: resolved.proxyUrl,
 				maxOutputTokens: resolved.maxOutputTokens,
 				thinkingLevel,
+				workspaceRoot,
 				...(agentSystemAppend?.trim() ? { agentSystemAppend: agentSystemAppend.trim() } : {}),
 			},
 			{
@@ -524,7 +548,7 @@ function runChatStream(
 
 const MAX_PLAN_EXECUTE_INJECT_CHARS = 200_000;
 
-function readPlanFileForExecute(absPath: string): string | null {
+function readPlanFileForExecute(absPath: string, windowWorkspaceRoot: string | null): string | null {
 	let resolved: string;
 	try {
 		resolved = path.resolve(absPath);
@@ -532,7 +556,7 @@ function readPlanFileForExecute(absPath: string): string | null {
 		return null;
 	}
 	const userPlansDir = path.join(app.getPath('userData'), '.async', 'plans');
-	const root = getWorkspaceRoot();
+	const root = windowWorkspaceRoot;
 	const wsPlansDir = root ? path.join(root, '.async', 'plans') : null;
 	const allowed =
 		isPathInsideRoot(resolved, userPlansDir) ||
@@ -556,14 +580,15 @@ function readPlanFileForExecute(absPath: string): string | null {
 
 function appendPlanExecuteToSystem(
 	base: string | undefined,
-	exec: { fromAbsPath?: string; inlineMarkdown?: string; planTitle?: string } | undefined
+	exec: { fromAbsPath?: string; inlineMarkdown?: string; planTitle?: string } | undefined,
+	windowWorkspaceRoot: string | null
 ): string {
 	if (!exec) {
 		return base ?? '';
 	}
 	let body: string | null = null;
 	if (exec.fromAbsPath) {
-		body = readPlanFileForExecute(exec.fromAbsPath);
+		body = readPlanFileForExecute(exec.fromAbsPath, windowWorkspaceRoot);
 	}
 	const inline = typeof exec.inlineMarkdown === 'string' ? exec.inlineMarkdown.trim() : '';
 	if ((body == null || !body.trim()) && inline) {
@@ -613,13 +638,20 @@ export function registerIpc(): void {
 			return { ok: false as const };
 		}
 		const picked = r.filePaths[0];
-		setWorkspaceRoot(picked);
-		rememberWorkspace(picked);
-		void ensureWorkspaceFileIndex(picked).catch(() => {});
-		return { ok: true as const, path: picked };
+		const resolvedPick = path.resolve(picked);
+		const prev = bindWorkspaceRootToWebContents(event.sender, resolvedPick);
+		if (prev && prev !== resolvedPick) {
+			releaseWorkspaceFileIndexRef(prev);
+		}
+		if (prev !== resolvedPick) {
+			acquireWorkspaceFileIndexRef(resolvedPick);
+		}
+		rememberWorkspace(resolvedPick);
+		void ensureWorkspaceFileIndex(resolvedPick).catch(() => {});
+		return { ok: true as const, path: resolvedPick };
 	});
 
-	ipcMain.handle('workspace:openPath', (_e, dirPath: string) => {
+	ipcMain.handle('workspace:openPath', (event, dirPath: string) => {
 		try {
 			const resolved = path.resolve(String(dirPath ?? ''));
 			if (!fs.existsSync(resolved)) {
@@ -628,7 +660,13 @@ export function registerIpc(): void {
 			if (!fs.statSync(resolved).isDirectory()) {
 				return { ok: false as const, error: '不是文件夹' };
 			}
-			setWorkspaceRoot(resolved);
+			const prev = bindWorkspaceRootToWebContents(event.sender, resolved);
+			if (prev && prev !== resolved) {
+				releaseWorkspaceFileIndexRef(prev);
+			}
+			if (prev !== resolved) {
+				acquireWorkspaceFileIndexRef(resolved);
+			}
 			rememberWorkspace(resolved);
 			void ensureWorkspaceFileIndex(resolved).catch(() => {});
 			return { ok: true as const, path: resolved };
@@ -657,37 +695,39 @@ export function registerIpc(): void {
 		}
 	});
 
-	ipcMain.handle('workspace:get', () => ({ root: getWorkspaceRoot() }));
+	ipcMain.handle('workspace:get', (event) => ({ root: senderWorkspaceRoot(event) }));
 
-	ipcMain.handle('workspace:searchSymbols', async (_e, query: string) => {
-		const root = getWorkspaceRoot();
+	ipcMain.handle('workspace:searchSymbols', async (event, query: string) => {
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: true as const, hits: [] as { name: string; path: string; line: number; kind: string }[] };
 		}
-		await ensureSymbolIndexLoaded(path.resolve(root));
-		const hits = searchWorkspaceSymbols(String(query ?? ''), 80);
+		const rootNorm = path.resolve(root);
+		await ensureSymbolIndexLoaded(rootNorm);
+		const hits = searchWorkspaceSymbols(String(query ?? ''), 80, rootNorm);
 		return { ok: true as const, hits };
 	});
 
-	ipcMain.handle('lsp:ts:start', async (_e, workspaceRoot: string) => {
-		const dir = typeof workspaceRoot === 'string' ? workspaceRoot.trim() : '';
+	ipcMain.handle('lsp:ts:start', async (event, workspaceRootArg: string) => {
+		const dir = typeof workspaceRootArg === 'string' ? workspaceRootArg.trim() : '';
 		if (!dir) {
 			return { ok: false as const, error: 'empty-root' as const };
 		}
 		try {
-			await tsLspSession.start(dir);
+			const session = getTsLspSessionForWebContents(event.sender);
+			await session.start(dir);
 			return { ok: true as const };
 		} catch (e) {
 			return { ok: false as const, error: String(e) };
 		}
 	});
 
-	ipcMain.handle('lsp:ts:stop', async () => {
-		await tsLspSession.dispose();
+	ipcMain.handle('lsp:ts:stop', async (event) => {
+		await disposeTsLspSessionForWebContents(event.sender);
 		return { ok: true as const };
 	});
 
-	ipcMain.handle('lsp:ts:definition', async (_e, payload: unknown) => {
+	ipcMain.handle('lsp:ts:definition', async (event, payload: unknown) => {
 		const p = payload as { uri?: string; line?: number; column?: number; text?: string };
 		const uri = typeof p?.uri === 'string' ? p.uri : '';
 		const text = typeof p?.text === 'string' ? p.text : '';
@@ -697,20 +737,21 @@ export function registerIpc(): void {
 			return { ok: false as const, error: 'bad-args' as const };
 		}
 		try {
-			const result = await tsLspSession.definition(uri, line, column, text);
+			const session = getTsLspSessionForWebContents(event.sender);
+			const result = await session.definition(uri, line, column, text);
 			return { ok: true as const, result };
 		} catch (e) {
 			return { ok: false as const, error: String(e) };
 		}
 	});
 
-	ipcMain.handle('lsp:ts:diagnostics', async (_e, payload: unknown) => {
+	ipcMain.handle('lsp:ts:diagnostics', async (event, payload: unknown) => {
 		const p = payload as { relPath?: string };
 		const relPath = typeof p?.relPath === 'string' ? p.relPath : '';
 		if (!relPath) {
 			return { ok: false as const, error: 'bad-args' as const };
 		}
-		const root = getWorkspaceRoot();
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
@@ -721,7 +762,8 @@ export function registerIpc(): void {
 		const text = fs.readFileSync(absPath, 'utf-8');
 		const uri = pathToFileURL(absPath).href;
 		try {
-			const items = await tsLspSession.diagnostics(uri, text);
+			const session = getTsLspSessionForWebContents(event.sender);
+			const items = await session.diagnostics(uri, text);
 			if (items === null) {
 				return { ok: false as const, error: 'not-supported' as const };
 			}
@@ -731,16 +773,24 @@ export function registerIpc(): void {
 		}
 	});
 
-	ipcMain.handle('workspace:closeFolder', async () => {
-		stopWorkspaceFileIndex();
-		await tsLspSession.dispose();
-		setWorkspaceRoot(null);
-		clearGitContextCache();
+	ipcMain.handle('workspace:closeFolder', async (event) => {
+		const root = senderWorkspaceRoot(event);
+		bindWorkspaceRootToWebContents(event.sender, null);
+		if (root) {
+			releaseWorkspaceFileIndexRef(root);
+			clearGitContextCacheForRoot(root);
+		}
+		await disposeTsLspSessionForWebContents(event.sender);
 		return { ok: true as const };
 	});
 
 	ipcMain.handle('app:newWindow', () => {
-		createAppWindow({ blank: true });
+		createAppWindow({ blank: true, surface: 'agent' });
+		return { ok: true as const };
+	});
+
+	ipcMain.handle('app:newEditorWindow', () => {
+		createAppWindow({ blank: true, surface: 'editor' });
 		return { ok: true as const };
 	});
 
@@ -790,7 +840,7 @@ export function registerIpc(): void {
 
 	ipcMain.handle('fs:pickOpenFile', async (event) => {
 		const win = BrowserWindow.fromWebContents(event.sender);
-		const root = getWorkspaceRoot();
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
@@ -813,7 +863,7 @@ export function registerIpc(): void {
 		'fs:pickSaveFile',
 		async (event, opts?: { defaultName?: string; title?: string }) => {
 			const win = BrowserWindow.fromWebContents(event.sender);
-			const root = getWorkspaceRoot();
+			const root = senderWorkspaceRoot(event);
 			if (!root) {
 				return { ok: false as const, error: 'no-workspace' as const };
 			}
@@ -834,8 +884,8 @@ export function registerIpc(): void {
 		}
 	);
 
-	ipcMain.handle('workspace:listFiles', async () => {
-		const root = getWorkspaceRoot();
+	ipcMain.handle('workspace:listFiles', async (event) => {
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
@@ -852,13 +902,13 @@ export function registerIpc(): void {
 	ipcMain.handle(
 		'workspace:saveComposerAttachment',
 		async (
-			_e,
+			event,
 			payload: { base64?: string; fileName?: string }
 		): Promise<
 			| { ok: true; relPath: string }
 			| { ok: false; error: 'no-workspace' | 'empty' | 'too-large' | 'write-failed' }
 		> => {
-			const root = getWorkspaceRoot();
+			const root = senderWorkspaceRoot(event);
 			if (!root) {
 				return { ok: false as const, error: 'no-workspace' as const };
 			}
@@ -887,7 +937,7 @@ export function registerIpc(): void {
 				const id = randomUUID();
 				const relPath = `${dirRel}/${id}-${safe}`;
 				fs.writeFileSync(path.join(root, relPath), buf);
-				registerKnownWorkspaceRelPath(relPath);
+				registerKnownWorkspaceRelPath(relPath, root);
 				return { ok: true as const, relPath };
 			} catch {
 				return { ok: false as const, error: 'write-failed' as const };
@@ -907,7 +957,7 @@ export function registerIpc(): void {
 			clearWorkspaceSemanticIndex();
 		}
 		if (idx?.tsLspEnabled === false) {
-			void tsLspSession.dispose();
+			void disposeAllTsLspSessions();
 		}
 		const syncedColorMode = next.ui?.colorMode;
 		if (syncedColorMode === 'light' || syncedColorMode === 'dark' || syncedColorMode === 'system') {
@@ -959,16 +1009,16 @@ export function registerIpc(): void {
 		}
 	);
 
-	ipcMain.handle('workspaceAgent:get', () => {
-		const root = getWorkspaceRoot();
+	ipcMain.handle('workspaceAgent:get', (event) => {
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: true as const, slice: { rules: [], skills: [], subagents: [] } satisfies WorkspaceAgentProjectSlice };
 		}
 		return { ok: true as const, slice: readWorkspaceAgentProjectSlice(root) };
 	});
 
-	ipcMain.handle('workspaceAgent:set', (_e, slice: WorkspaceAgentProjectSlice) => {
-		const root = getWorkspaceRoot();
+	ipcMain.handle('workspaceAgent:set', (event, slice: WorkspaceAgentProjectSlice) => {
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
@@ -976,8 +1026,8 @@ export function registerIpc(): void {
 		return { ok: true as const };
 	});
 
-	ipcMain.handle('workspace:listDiskSkills', () => {
-		const root = getWorkspaceRoot();
+	ipcMain.handle('workspace:listDiskSkills', (event) => {
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: true as const, skills: [] };
 		}
@@ -985,8 +1035,9 @@ export function registerIpc(): void {
 	});
 
 	/** 删除工作区内技能目录（`.cursor|claude|async/skills/<slug>/` 整夹），参数为其中 `SKILL.md` 的相对路径 */
-	ipcMain.handle('workspace:deleteSkillFromDisk', (_e, skillMdRel: string) => {
-		if (!getWorkspaceRoot()) {
+	ipcMain.handle('workspace:deleteSkillFromDisk', (event, skillMdRel: string) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
 		const norm = String(skillMdRel ?? '').trim().replace(/\\/g, '/');
@@ -1007,7 +1058,7 @@ export function registerIpc(): void {
 			return { ok: false as const, error: 'invalid-path' as const };
 		}
 		try {
-			const dirFull = resolveWorkspacePath(dirRel);
+			const dirFull = resolveWorkspacePath(dirRel, root);
 			if (fs.existsSync(dirFull)) {
 				fs.rmSync(dirFull, { recursive: true, force: true });
 			}
@@ -1017,10 +1068,11 @@ export function registerIpc(): void {
 		}
 	});
 
-	ipcMain.handle('workspace:indexing:stats', () => {
-		const w = getWorkspaceFileIndexLiveStats();
-		const sym = getWorkspaceSymbolIndexStats();
-		const sem = getWorkspaceSemanticIndexStats();
+	ipcMain.handle('workspace:indexing:stats', (event) => {
+		const r = senderWorkspaceRoot(event);
+		const w = getWorkspaceFileIndexLiveStatsForRoot(r);
+		const sym = getWorkspaceSymbolIndexStatsForRoot(r);
+		const sem = getWorkspaceSemanticIndexStatsForRoot(r);
 		return {
 			ok: true as const,
 			workspaceRoot: w.root,
@@ -1033,8 +1085,8 @@ export function registerIpc(): void {
 		};
 	});
 
-	ipcMain.handle('workspace:memory:stats', async () => {
-		const root = getWorkspaceRoot();
+	ipcMain.handle('workspace:memory:stats', async (event) => {
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
@@ -1066,8 +1118,8 @@ export function registerIpc(): void {
 		};
 	});
 
-	ipcMain.handle('workspace:indexing:rebuild', async (_e, payload: { target?: 'symbols' | 'semantic' | 'all' }) => {
-		const root = getWorkspaceRoot();
+	ipcMain.handle('workspace:indexing:rebuild', async (event, payload: { target?: 'symbols' | 'semantic' | 'all' }) => {
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
@@ -1082,8 +1134,8 @@ export function registerIpc(): void {
 		return { ok: true as const };
 	});
 
-	ipcMain.handle('workspace:memory:rebuild', async () => {
-		const root = getWorkspaceRoot();
+	ipcMain.handle('workspace:memory:rebuild', async (event) => {
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
@@ -1102,8 +1154,8 @@ export function registerIpc(): void {
 		};
 	});
 
-	ipcMain.handle('threads:list', () => {
-		const scope = getWorkspaceRoot();
+	ipcMain.handle('threads:list', (event) => {
+		const scope = senderWorkspaceRoot(event);
 		ensureDefaultThread(scope);
 		const now = Date.now();
 		return {
@@ -1168,25 +1220,25 @@ export function registerIpc(): void {
 		};
 	});
 
-	ipcMain.handle('threads:create', () => {
-		const t = createThread(getWorkspaceRoot());
+	ipcMain.handle('threads:create', (event) => {
+		const t = createThread(senderWorkspaceRoot(event));
 		return { id: t.id };
 	});
 
-	ipcMain.handle('threads:select', (_e, id: string) => {
-		const t = selectThread(getWorkspaceRoot(), id);
+	ipcMain.handle('threads:select', (event, id: string) => {
+		const t = selectThread(senderWorkspaceRoot(event), id);
 		return { ok: !!t };
 	});
 
-	ipcMain.handle('threads:delete', (_e, id: string) => {
-		const scope = getWorkspaceRoot();
+	ipcMain.handle('threads:delete', (event, id: string) => {
+		const scope = senderWorkspaceRoot(event);
 		deleteThread(scope, id);
 		ensureDefaultThread(scope);
 		return { ok: true as const, currentId: getCurrentThreadId(scope) };
 	});
 
-	ipcMain.handle('threads:rename', (_e, id: string, title: string) => {
-		const ok = setThreadTitle(getWorkspaceRoot(), String(id ?? ''), String(title ?? ''));
+	ipcMain.handle('threads:rename', (event, id: string, title: string) => {
+		const ok = setThreadTitle(senderWorkspaceRoot(event), String(id ?? ''), String(title ?? ''));
 		return { ok };
 	});
 
@@ -1211,13 +1263,13 @@ export function registerIpc(): void {
 		}
 	);
 
-	ipcMain.handle('agent:applyDiffChunk', (_e, payload: { threadId?: string; chunk?: string }) => {
+	ipcMain.handle('agent:applyDiffChunk', (event, payload: { threadId?: string; chunk?: string }) => {
 		const threadId = String(payload?.threadId ?? '');
 		const chunk = typeof payload?.chunk === 'string' ? payload.chunk : '';
 		if (!threadId || !chunk) {
 			return { applied: [] as string[], failed: [{ path: '(invalid)', reason: '参数无效' }] };
 		}
-		const ar = applyAgentDiffChunk(chunk);
+		const ar = applyAgentDiffChunk(chunk, senderWorkspaceRoot(event));
 		const statsDir = activeUsageStatsDir();
 		if (statsDir && ar.applied.length > 0) {
 			const { add, del } = countDiffLinesInChunk(chunk);
@@ -1232,7 +1284,7 @@ export function registerIpc(): void {
 
 	ipcMain.handle(
 		'agent:applyDiffChunks',
-		(_e, payload: { threadId?: string; items?: { id?: string; chunk?: string }[] }) => {
+		(event, payload: { threadId?: string; items?: { id?: string; chunk?: string }[] }) => {
 			const threadId = String(payload?.threadId ?? '');
 			const raw = Array.isArray(payload?.items) ? payload!.items : [];
 			const items = raw
@@ -1248,7 +1300,7 @@ export function registerIpc(): void {
 					succeededIds: [] as string[],
 				};
 			}
-			const ar = applyAgentPatchItems(items);
+			const ar = applyAgentPatchItems(items, senderWorkspaceRoot(event));
 			const statsDir = activeUsageStatsDir();
 			if (statsDir && ar.succeededIds.length > 0) {
 				const ok = new Set(ar.succeededIds);
@@ -1297,7 +1349,7 @@ export function registerIpc(): void {
 			}
 
 			const settings = getSettings();
-			const root = getWorkspaceRoot();
+			const root = senderWorkspaceRoot(event);
 			let workspaceFiles: string[] = [];
 			if (root) {
 				try {
@@ -1344,7 +1396,7 @@ export function registerIpc(): void {
 					atPaths: prepared.atPaths,
 					modelSelection,
 				});
-				finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute);
+				finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute, root);
 				const t = appendMessage(threadId, { role: 'user', content: visible });
 				runChatStream(win, threadId, t.messages, creatorAgentMode, modelSelection, finalSystemAppend);
 				return { ok: true as const };
@@ -1382,7 +1434,7 @@ export function registerIpc(): void {
 					atPaths: prepared.atPaths,
 					modelSelection,
 				});
-				finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute);
+				finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute, root);
 				finalSystemAppend = appendRuleCreatorPathLock(
 					finalSystemAppend,
 					settings.language === 'en' ? 'en' : 'zh-CN',
@@ -1427,7 +1479,7 @@ export function registerIpc(): void {
 					atPaths: prepared.atPaths,
 					modelSelection,
 				});
-				finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute);
+				finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute, root);
 				const t = appendMessage(threadId, { role: 'user', content: visible });
 				runChatStream(win, threadId, t.messages, creatorAgentMode, modelSelection, finalSystemAppend);
 				return { ok: true as const };
@@ -1462,7 +1514,7 @@ export function registerIpc(): void {
 				modelSelection,
 			});
 
-			finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute);
+			finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute, root);
 
 			const t = appendMessage(threadId, { role: 'user', content: userText });
 			runChatStream(win, threadId, t.messages, mode, modelSelection, finalSystemAppend);
@@ -1497,7 +1549,7 @@ export function registerIpc(): void {
 			}
 			try {
 				const settings = getSettings();
-				const root = getWorkspaceRoot();
+				const root = senderWorkspaceRoot(event);
 				let workspaceFiles: string[] = [];
 				if (root) {
 					try {
@@ -1615,13 +1667,21 @@ export function registerIpc(): void {
 		}
 	);
 
-	ipcMain.handle('fs:readFile', (_e, relPath: string) => {
-		const full = resolveWorkspacePath(relPath);
+	ipcMain.handle('fs:readFile', (event, relPath: string) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'no-workspace' as const };
+		}
+		const full = resolveWorkspacePath(relPath, root);
 		return { ok: true as const, content: fs.readFileSync(full, 'utf8') };
 	});
 
-	ipcMain.handle('fs:writeFile', (_e, relPath: string, content: string) => {
-		const full = resolveWorkspacePath(relPath);
+	ipcMain.handle('fs:writeFile', (event, relPath: string, content: string) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'no-workspace' as const };
+		}
+		const full = resolveWorkspacePath(relPath, root);
 		fs.mkdirSync(path.dirname(full), { recursive: true });
 		fs.writeFileSync(full, content, 'utf8');
 		return { ok: true as const };
@@ -1632,14 +1692,18 @@ export function registerIpc(): void {
 		return { ok: true as const };
 	});
 
-	ipcMain.handle('agent:revertLastTurn', (_e, threadId: string) => {
+	ipcMain.handle('agent:revertLastTurn', (event, threadId: string) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'no-workspace' as const };
+		}
 		const snapshots = agentRevertSnapshotsByThread.get(threadId);
 		if (!snapshots || snapshots.size === 0) {
 			return { ok: true as const, reverted: 0 };
 		}
 
 		for (const [relPath, previousContent] of Array.from(snapshots.entries()).reverse()) {
-			const full = resolveWorkspacePath(relPath);
+			const full = resolveWorkspacePath(relPath, root);
 			if (previousContent === null) {
 				if (fs.existsSync(full)) {
 					fs.unlinkSync(full);
@@ -1707,15 +1771,19 @@ ipcMain.handle(
 	}
 );
 
-ipcMain.handle(
+	ipcMain.handle(
 	'agent:acceptFileHunk',
-	(_e, payload: { threadId?: string; relPath?: string; chunk?: string }) => {
+	(event, payload: { threadId?: string; relPath?: string; chunk?: string }) => {
+			const wr = senderWorkspaceRoot(event);
 			const threadId = String(payload?.threadId ?? '');
 			const relPath = String(payload?.relPath ?? '');
 			const chunk = normalizePatchChunk(payload?.chunk ?? '');
 			const snapshots = agentRevertSnapshotsByThread.get(threadId);
 			if (!threadId || !relPath || !chunk || !snapshots || !snapshots.has(relPath)) {
 				return { ok: false as const, error: 'missing-snapshot' as const };
+			}
+			if (!wr) {
+				return { ok: false as const, error: 'no-workspace' as const };
 			}
 
 			const previousContent = snapshots.get(relPath) ?? null;
@@ -1725,7 +1793,7 @@ ipcMain.handle(
 				return { ok: false as const, error: 'apply-failed' as const };
 			}
 
-			const currentContent = readWorkspaceTextFileIfExists(relPath);
+			const currentContent = readWorkspaceTextFileIfExists(relPath, wr);
 			if (contentsEqual(nextBaseline, currentContent)) {
 				snapshots.delete(relPath);
 			} else {
@@ -1740,13 +1808,17 @@ ipcMain.handle(
 
 	ipcMain.handle(
 		'agent:revertFileHunk',
-		(_e, payload: { threadId?: string; relPath?: string; chunk?: string }) => {
+		(event, payload: { threadId?: string; relPath?: string; chunk?: string }) => {
+			const wr = senderWorkspaceRoot(event);
 			const threadId = String(payload?.threadId ?? '');
 			const relPath = String(payload?.relPath ?? '');
 			const chunk = normalizePatchChunk(payload?.chunk ?? '');
 			const snapshots = agentRevertSnapshotsByThread.get(threadId);
 			if (!threadId || !relPath || !chunk || !snapshots || !snapshots.has(relPath)) {
 				return { ok: false as const, error: 'missing-snapshot' as const };
+			}
+			if (!wr) {
+				return { ok: false as const, error: 'no-workspace' as const };
 			}
 
 			const reversed = reverseUnifiedPatch(chunk);
@@ -1755,14 +1827,14 @@ ipcMain.handle(
 			}
 
 			const previousContent = snapshots.get(relPath) ?? null;
-			const currentContent = readWorkspaceTextFileIfExists(relPath);
+			const currentContent = readWorkspaceTextFileIfExists(relPath, wr);
 			const currentText = currentContent ?? '';
 			const reverted = applyPatch(currentText, reversed, { fuzzFactor: 3 });
 			if (reverted === false) {
 				return { ok: false as const, error: 'apply-failed' as const };
 			}
 
-			const full = resolveWorkspacePath(relPath);
+			const full = resolveWorkspacePath(relPath, wr);
 			if (previousContent === null && reverted === '') {
 				if (fs.existsSync(full)) {
 					fs.unlinkSync(full);
@@ -1772,7 +1844,7 @@ ipcMain.handle(
 				fs.writeFileSync(full, reverted, 'utf8');
 			}
 
-			const nextContent = readWorkspaceTextFileIfExists(relPath);
+			const nextContent = readWorkspaceTextFileIfExists(relPath, wr);
 			if (contentsEqual(previousContent, nextContent)) {
 				snapshots.delete(relPath);
 			}
@@ -1783,13 +1855,17 @@ ipcMain.handle(
 		}
 	);
 
-	ipcMain.handle('agent:revertFile', (_e, threadId: string, relPath: string) => {
+	ipcMain.handle('agent:revertFile', (event, threadId: string, relPath: string) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'no-workspace' as const };
+		}
 		const snapshots = agentRevertSnapshotsByThread.get(threadId);
 		if (!snapshots || !snapshots.has(relPath)) {
 			return { ok: true as const, reverted: false };
 		}
 		const previousContent = snapshots.get(relPath)!;
-		const full = resolveWorkspacePath(relPath);
+		const full = resolveWorkspacePath(relPath, root);
 		if (previousContent === null) {
 			if (fs.existsSync(full)) fs.unlinkSync(full);
 		} else {
@@ -1801,14 +1877,14 @@ ipcMain.handle(
 		return { ok: true as const, reverted: true };
 	});
 
-	ipcMain.handle('fs:listDir', (_e, relPath: string) => {
+	ipcMain.handle('fs:listDir', (event, relPath: string) => {
 		try {
-			const root = getWorkspaceRoot();
+			const root = senderWorkspaceRoot(event);
 			if (!root) {
 				return { ok: false as const, error: 'No workspace' };
 			}
 			const normalized = typeof relPath === 'string' ? relPath.trim() : '';
-			const full = normalized ? resolveWorkspacePath(normalized) : root;
+			const full = normalized ? resolveWorkspacePath(normalized, root) : root;
 			if (!isPathInsideRoot(full, root) && full !== root) {
 				return { ok: false as const, error: 'Bad path' };
 			}
@@ -1831,9 +1907,9 @@ ipcMain.handle(
 		}
 	});
 
-	ipcMain.handle('shell:revealInFolder', (_e, relPath: string) => {
+	ipcMain.handle('shell:revealInFolder', (event, relPath: string) => {
 		try {
-			const root = getWorkspaceRoot();
+			const root = senderWorkspaceRoot(event);
 			if (!root) {
 				return { ok: false as const, error: 'No workspace' };
 			}
@@ -1841,7 +1917,7 @@ ipcMain.handle(
 			if (!rel) {
 				return { ok: false as const, error: 'empty path' };
 			}
-			const full = resolveWorkspacePath(rel);
+			const full = resolveWorkspacePath(rel, root);
 			if (!fs.existsSync(full)) {
 				return { ok: false as const, error: 'not found' };
 			}
@@ -1901,9 +1977,9 @@ ipcMain.handle(
 		}
 	});
 
-	ipcMain.handle('shell:openDefault', async (_e, relPath: string) => {
+	ipcMain.handle('shell:openDefault', async (event, relPath: string) => {
 		try {
-			const root = getWorkspaceRoot();
+			const root = senderWorkspaceRoot(event);
 			if (!root) {
 				return { ok: false as const, error: 'No workspace' };
 			}
@@ -1911,7 +1987,7 @@ ipcMain.handle(
 			if (!rel) {
 				return { ok: false as const, error: 'empty path' };
 			}
-			const full = resolveWorkspacePath(rel);
+			const full = resolveWorkspacePath(rel, root);
 			if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
 				return { ok: false as const, error: 'not a file' };
 			}
@@ -1922,9 +1998,9 @@ ipcMain.handle(
 		}
 	});
 
-	ipcMain.handle('shell:openInBrowser', async (_e, relPath: string) => {
+	ipcMain.handle('shell:openInBrowser', async (event, relPath: string) => {
 		try {
-			const root = getWorkspaceRoot();
+			const root = senderWorkspaceRoot(event);
 			if (!root) {
 				return { ok: false as const, error: 'No workspace' };
 			}
@@ -1932,7 +2008,7 @@ ipcMain.handle(
 			if (!rel) {
 				return { ok: false as const, error: 'empty path' };
 			}
-			const full = resolveWorkspacePath(rel);
+			const full = resolveWorkspacePath(rel, root);
 			if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
 				return { ok: false as const, error: 'not a file' };
 			}
@@ -1964,9 +2040,9 @@ ipcMain.handle(
 		}
 	});
 
-	ipcMain.handle('fs:renameEntry', (_e, relPath: string, newName: string) => {
+	ipcMain.handle('fs:renameEntry', (event, relPath: string, newName: string) => {
 		try {
-			const root = getWorkspaceRoot();
+			const root = senderWorkspaceRoot(event);
 			if (!root) {
 				return { ok: false as const, error: 'No workspace' };
 			}
@@ -1974,7 +2050,7 @@ ipcMain.handle(
 			if (!fromRel) {
 				return { ok: false as const, error: 'empty path' };
 			}
-			const fromFull = resolveWorkspacePath(fromRel);
+			const fromFull = resolveWorkspacePath(fromRel, root);
 			if (!fs.existsSync(fromFull)) {
 				return { ok: false as const, error: 'not found' };
 			}
@@ -1997,9 +2073,9 @@ ipcMain.handle(
 		}
 	});
 
-	ipcMain.handle('fs:removeEntry', (_e, relPath: string, recursive?: unknown) => {
+	ipcMain.handle('fs:removeEntry', (event, relPath: string, recursive?: unknown) => {
 		try {
-			const root = getWorkspaceRoot();
+			const root = senderWorkspaceRoot(event);
 			if (!root) {
 				return { ok: false as const, error: 'No workspace' };
 			}
@@ -2007,7 +2083,7 @@ ipcMain.handle(
 			if (!rel) {
 				return { ok: false as const, error: 'empty path' };
 			}
-			const full = resolveWorkspacePath(rel);
+			const full = resolveWorkspacePath(rel, root);
 			if (!fs.existsSync(full)) {
 				return { ok: false as const, error: 'not found' };
 			}
@@ -2027,84 +2103,104 @@ ipcMain.handle(
 		}
 	});
 
-	ipcMain.handle('git:status', async () => {
-		try {
-			const root = getWorkspaceRoot();
-			if (!root) {
-				return { ok: false as const, error: 'No workspace' };
-			}
-			const probe = await gitService.gitProbeContext();
-			if (!probe.ok) {
-				return { ok: false as const, error: probe.message };
-			}
-			const gitTop = probe.topLevel;
-			const [porcelain, branch] = await Promise.all([gitService.gitStatusPorcelain(), gitService.gitBranch()]);
-			const lines = porcelain ? porcelain.split('\n').filter(Boolean) : [];
-			const rawPathStatus = gitService.parseGitPathStatus(lines);
-			const rawOrdered = gitService.listPorcelainPaths(lines);
-			const pathStatus: Record<string, gitService.PathStatusEntry> = {};
-			for (const [repoRel, entry] of Object.entries(rawPathStatus)) {
-				const wsRel = gitService.workspaceRelativeFromRepoRelative(repoRel, root, gitTop);
-				if (wsRel) {
-					pathStatus[wsRel] = entry;
+	ipcMain.handle('git:status', async (event) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'No workspace' };
+		}
+		return gitService.withGitWorkspaceRootAsync(root, async () => {
+			try {
+				const probe = await gitService.gitProbeContext();
+				if (!probe.ok) {
+					return { ok: false as const, error: probe.message };
 				}
-			}
-			const changedPaths: string[] = [];
-			const seen = new Set<string>();
-			for (const repoRel of rawOrdered) {
-				const wsRel = gitService.workspaceRelativeFromRepoRelative(repoRel, root, gitTop);
-				if (wsRel && !seen.has(wsRel)) {
-					seen.add(wsRel);
-					changedPaths.push(wsRel);
+				const gitTop = probe.topLevel;
+				const [porcelain, branch] = await Promise.all([gitService.gitStatusPorcelain(), gitService.gitBranch()]);
+				const lines = porcelain ? porcelain.split('\n').filter(Boolean) : [];
+				const rawPathStatus = gitService.parseGitPathStatus(lines);
+				const rawOrdered = gitService.listPorcelainPaths(lines);
+				const pathStatus: Record<string, gitService.PathStatusEntry> = {};
+				for (const [repoRel, entry] of Object.entries(rawPathStatus)) {
+					const wsRel = gitService.workspaceRelativeFromRepoRelative(repoRel, root, gitTop);
+					if (wsRel) {
+						pathStatus[wsRel] = entry;
+					}
 				}
+				const changedPaths: string[] = [];
+				const seen = new Set<string>();
+				for (const repoRel of rawOrdered) {
+					const wsRel = gitService.workspaceRelativeFromRepoRelative(repoRel, root, gitTop);
+					if (wsRel && !seen.has(wsRel)) {
+						seen.add(wsRel);
+						changedPaths.push(wsRel);
+					}
+				}
+				return { ok: true as const, branch, lines, pathStatus, changedPaths };
+			} catch (e) {
+				return {
+					ok: false as const,
+					error: gitService.normalizeGitFailureMessage(e, 'Failed to load changes'),
+				};
 			}
-			return { ok: true as const, branch, lines, pathStatus, changedPaths };
-		} catch (e) {
-			return {
-				ok: false as const,
-				error: gitService.normalizeGitFailureMessage(e, 'Failed to load changes'),
-			};
-		}
+		});
 	});
 
-	ipcMain.handle('git:stageAll', async () => {
-		try {
-			await gitService.gitStageAll();
-			return { ok: true as const };
-		} catch (e) {
-			return { ok: false as const, error: String(e) };
+	ipcMain.handle('git:stageAll', async (event) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'No workspace' };
 		}
-	});
-
-	ipcMain.handle('git:commit', async (_e, message: string) => {
 		try {
-			await gitService.gitCommit(message);
-			return { ok: true as const };
+			return await gitService.withGitWorkspaceRootAsync(root, async () => {
+				await gitService.gitStageAll();
+				return { ok: true as const };
+			});
 		} catch (e) {
 			return { ok: false as const, error: String(e) };
 		}
 	});
 
-	ipcMain.handle('git:push', async () => {
+	ipcMain.handle('git:commit', async (event, message: string) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'No workspace' };
+		}
 		try {
-			await gitService.gitPush();
-			return { ok: true as const };
+			return await gitService.withGitWorkspaceRootAsync(root, async () => {
+				await gitService.gitCommit(message);
+				return { ok: true as const };
+			});
 		} catch (e) {
 			return { ok: false as const, error: String(e) };
 		}
 	});
 
-	ipcMain.handle('git:diffPreviews', async (_e, relPaths: string[]) => {
+	ipcMain.handle('git:push', async (event) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'No workspace' };
+		}
 		try {
-			const root = getWorkspaceRoot();
-			if (!root) {
-				return { ok: false as const, error: 'No workspace' };
-			}
-			const list = Array.isArray(relPaths) ? relPaths : [];
+			return await gitService.withGitWorkspaceRootAsync(root, async () => {
+				await gitService.gitPush();
+				return { ok: true as const };
+			});
+		} catch (e) {
+			return { ok: false as const, error: String(e) };
+		}
+	});
+
+	ipcMain.handle('git:diffPreviews', async (event, relPaths: string[]) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'No workspace' };
+		}
+		const list = Array.isArray(relPaths) ? relPaths : [];
+		try {
 			const entries = await Promise.all(
 				list.map(async (p): Promise<[string, gitService.DiffPreview]> => {
 					try {
-						return [p, await gitService.getDiffPreview(p)];
+						return [p, await gitService.getDiffPreview(p, undefined, root)];
 					} catch {
 						return [p, { diff: '', isBinary: false, additions: 0, deletions: 0 }];
 					}
@@ -2119,19 +2215,23 @@ ipcMain.handle(
 
 	ipcMain.handle(
 		'git:diffPreview',
-		async (_e, payload: { relPath?: string; full?: boolean; maxChars?: number | null }) => {
+		async (event, payload: { relPath?: string; full?: boolean; maxChars?: number | null }) => {
+			const root = senderWorkspaceRoot(event);
+			if (!root) {
+				return { ok: false as const, error: 'No workspace' };
+			}
+			const relPath = String(payload?.relPath ?? '').trim();
+			if (!relPath) {
+				return { ok: false as const, error: 'Bad path' };
+			}
 			try {
-				const root = getWorkspaceRoot();
-				if (!root) {
-					return { ok: false as const, error: 'No workspace' };
-				}
-				const relPath = String(payload?.relPath ?? '').trim();
-				if (!relPath) {
-					return { ok: false as const, error: 'Bad path' };
-				}
-				const preview = await gitService.getDiffPreview(relPath, {
-					maxChars: payload?.full ? null : payload?.maxChars,
-				});
+				const preview = await gitService.getDiffPreview(
+					relPath,
+					{
+						maxChars: payload?.full ? null : payload?.maxChars,
+					},
+					root
+				);
 				console.log('[git:diffPreview]', {
 					relPath,
 					full: payload?.full === true,
@@ -2149,75 +2249,81 @@ ipcMain.handle(
 		}
 	);
 
-	ipcMain.handle('git:listBranches', async () => {
-		try {
-			const root = getWorkspaceRoot();
-			if (!root) {
-				return { ok: false as const, error: 'No workspace' };
-			}
-			const probe = await gitService.gitProbeContext();
-			if (!probe.ok) {
-				return { ok: false as const, error: probe.message };
-			}
-			const { branches, current } = await gitService.gitListLocalBranches();
-			return { ok: true as const, branches, current };
-		} catch (e) {
-			return {
-				ok: false as const,
-				error: gitService.normalizeGitFailureMessage(e, 'Could not load branches'),
-			};
+	ipcMain.handle('git:listBranches', async (event) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'No workspace' };
 		}
+		return gitService.withGitWorkspaceRootAsync(root, async () => {
+			try {
+				const probe = await gitService.gitProbeContext();
+				if (!probe.ok) {
+					return { ok: false as const, error: probe.message };
+				}
+				const { branches, current } = await gitService.gitListLocalBranches();
+				return { ok: true as const, branches, current };
+			} catch (e) {
+				return {
+					ok: false as const,
+					error: gitService.normalizeGitFailureMessage(e, 'Could not load branches'),
+				};
+			}
+		});
 	});
 
-	ipcMain.handle('git:checkoutBranch', async (_e, branch: string) => {
-		try {
-			const root = getWorkspaceRoot();
-			if (!root) {
-				return { ok: false as const, error: 'No workspace' };
-			}
-			const probe = await gitService.gitProbeContext();
-			if (!probe.ok) {
-				return { ok: false as const, error: probe.message };
-			}
-			await gitService.gitSwitchBranch(typeof branch === 'string' ? branch : '');
-			return { ok: true as const };
-		} catch (e) {
-			return {
-				ok: false as const,
-				error: gitService.normalizeGitFailureMessage(e, 'Could not switch branch'),
-			};
+	ipcMain.handle('git:checkoutBranch', async (event, branch: string) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'No workspace' };
 		}
+		return gitService.withGitWorkspaceRootAsync(root, async () => {
+			try {
+				const probe = await gitService.gitProbeContext();
+				if (!probe.ok) {
+					return { ok: false as const, error: probe.message };
+				}
+				await gitService.gitSwitchBranch(typeof branch === 'string' ? branch : '');
+				return { ok: true as const };
+			} catch (e) {
+				return {
+					ok: false as const,
+					error: gitService.normalizeGitFailureMessage(e, 'Could not switch branch'),
+				};
+			}
+		});
 	});
 
-	ipcMain.handle('git:createBranch', async (_e, name: string) => {
-		try {
-			const root = getWorkspaceRoot();
-			if (!root) {
-				return { ok: false as const, error: 'No workspace' };
-			}
-			const probe = await gitService.gitProbeContext();
-			if (!probe.ok) {
-				return { ok: false as const, error: probe.message };
-			}
-			await gitService.gitCreateBranchAndSwitch(typeof name === 'string' ? name : '');
-			return { ok: true as const };
-		} catch (e) {
-			return {
-				ok: false as const,
-				error: gitService.normalizeGitFailureMessage(e, 'Could not create branch'),
-			};
+	ipcMain.handle('git:createBranch', async (event, name: string) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, error: 'No workspace' };
 		}
+		return gitService.withGitWorkspaceRootAsync(root, async () => {
+			try {
+				const probe = await gitService.gitProbeContext();
+				if (!probe.ok) {
+					return { ok: false as const, error: probe.message };
+				}
+				await gitService.gitCreateBranchAndSwitch(typeof name === 'string' ? name : '');
+				return { ok: true as const };
+			} catch (e) {
+				return {
+					ok: false as const,
+					error: gitService.normalizeGitFailureMessage(e, 'Could not create branch'),
+				};
+			}
+		});
 	});
 
 	ipcMain.handle(
 		'plan:save',
-		(_e, payload: { filename: string; content: string }) => {
+		(event, payload: { filename: string; content: string }) => {
 			try {
 				const safe = String(payload.filename ?? 'plan.md')
 					.replace(/[<>:"/\\|?*]/g, '_')
 					.slice(0, 120);
 				const content = String(payload.content ?? '');
-				const wsRoot = getWorkspaceRoot();
+				const wsRoot = senderWorkspaceRoot(event);
 				if (wsRoot) {
 					const dir = path.join(wsRoot, '.async', 'plans');
 					fs.mkdirSync(dir, { recursive: true });
@@ -2254,8 +2360,8 @@ ipcMain.handle(
 		return { ok: true as const, plan: t.plan ?? null };
 	});
 
-	ipcMain.handle('terminal:execLine', async (_e, line: string) => {
-		const root = getWorkspaceRoot();
+	ipcMain.handle('terminal:execLine', async (event, line: string) => {
+		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'No workspace' };
 		}

@@ -1,8 +1,8 @@
 /**
  * 轻量导出符号索引（正则），供 Quick Open @ 与 search_files(symbol) 使用。
+ * 按 workspace 根路径分桶，支持多窗口不同文件夹并存。
  */
 
-import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { getSettings } from './settingsStore.js';
@@ -32,53 +32,87 @@ const SOURCE_EXT = new Set([
 	'svelte',
 ]);
 
-let indexedRoot: string | null = null;
-/** 小写符号名 → 命中列表 */
-const byLowerName = new Map<string, WorkspaceSymbolHit[]>();
-/** relPath → 该文件全部符号（便于整文件替换） */
-const byFile = new Map<string, WorkspaceSymbolHit[]>();
+type SymbolBucket = {
+	rootNorm: string;
+	byLowerName: Map<string, WorkspaceSymbolHit[]>;
+	byFile: Map<string, WorkspaceSymbolHit[]>;
+	fullRebuildTimer: ReturnType<typeof setTimeout> | null;
+	persistTimer: ReturnType<typeof setTimeout> | null;
+	rebuildingAll: boolean;
+	lazyLoadAttempted: boolean;
+};
 
-let fullRebuildTimer: ReturnType<typeof setTimeout> | null = null;
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
-let rebuildingAll = false;
+const symbolBuckets = new Map<string, SymbolBucket>();
 
-let lazyLoadAttempted = false;
+function normRoot(rootNorm: string): string {
+	return path.normalize(path.resolve(rootNorm));
+}
 
-export function clearWorkspaceSymbolIndex(): void {
-	indexedRoot = null;
-	byLowerName.clear();
-	byFile.clear();
-	lazyLoadAttempted = false;
-	if (fullRebuildTimer) {
-		clearTimeout(fullRebuildTimer);
-		fullRebuildTimer = null;
+function getBucket(rootNorm: string): SymbolBucket {
+	const k = normRoot(rootNorm);
+	let b = symbolBuckets.get(k);
+	if (!b) {
+		b = {
+			rootNorm: k,
+			byLowerName: new Map(),
+			byFile: new Map(),
+			fullRebuildTimer: null,
+			persistTimer: null,
+			rebuildingAll: false,
+			lazyLoadAttempted: false,
+		};
+		symbolBuckets.set(k, b);
 	}
-	if (persistTimer) {
-		clearTimeout(persistTimer);
-		persistTimer = null;
+	return b;
+}
+
+function destroySymBucket(b: SymbolBucket): void {
+	if (b.fullRebuildTimer) {
+		clearTimeout(b.fullRebuildTimer);
+		b.fullRebuildTimer = null;
+	}
+	if (b.persistTimer) {
+		clearTimeout(b.persistTimer);
+		b.persistTimer = null;
+	}
+	b.byLowerName.clear();
+	b.byFile.clear();
+	b.rebuildingAll = false;
+	b.lazyLoadAttempted = false;
+}
+
+export function clearWorkspaceSymbolIndexForRoot(rootNorm: string): void {
+	const k = normRoot(rootNorm);
+	const b = symbolBuckets.get(k);
+	if (b) {
+		destroySymBucket(b);
+		symbolBuckets.delete(k);
 	}
 }
 
-function schedulePersistWorkspaceSymbolIndex(): void {
-	if (!indexedRoot || rebuildingAll) {
+export function clearWorkspaceSymbolIndex(): void {
+	for (const k of [...symbolBuckets.keys()]) {
+		clearWorkspaceSymbolIndexForRoot(k);
+	}
+}
+
+function schedulePersistWorkspaceSymbolIndex(b: SymbolBucket): void {
+	if (b.rebuildingAll) {
 		return;
 	}
-	if (persistTimer) {
-		clearTimeout(persistTimer);
+	if (b.persistTimer) {
+		clearTimeout(b.persistTimer);
 	}
-	persistTimer = setTimeout(() => {
-		persistTimer = null;
-		void persistWorkspaceSymbolIndex();
+	b.persistTimer = setTimeout(() => {
+		b.persistTimer = null;
+		void persistWorkspaceSymbolIndex(b);
 	}, 250);
 }
 
-async function persistWorkspaceSymbolIndex(): Promise<void> {
-	if (!indexedRoot) {
-		return;
-	}
-	const target = getWorkspaceSymbolsIndexPath(indexedRoot);
+async function persistWorkspaceSymbolIndex(b: SymbolBucket): Promise<void> {
+	const target = getWorkspaceSymbolsIndexPath(b.rootNorm);
 	const files: Record<string, WorkspaceSymbolHit[]> = {};
-	for (const [rel, hits] of byFile) {
+	for (const [rel, hits] of b.byFile) {
 		files[rel] = hits;
 	}
 	try {
@@ -88,7 +122,7 @@ async function persistWorkspaceSymbolIndex(): Promise<void> {
 			JSON.stringify(
 				{
 					version: 1,
-					root: indexedRoot,
+					root: b.rootNorm,
 					generatedAt: new Date().toISOString(),
 					files,
 				},
@@ -107,37 +141,37 @@ function isSourceRel(rel: string): boolean {
 	return SOURCE_EXT.has(ext);
 }
 
-function removeFileSymbols(rel: string): void {
-	const prev = byFile.get(rel);
+function removeFileSymbols(b: SymbolBucket, rel: string): void {
+	const prev = b.byFile.get(rel);
 	if (!prev?.length) {
 		return;
 	}
 	for (const sym of prev) {
 		const key = sym.name.toLowerCase();
-		const arr = byLowerName.get(key);
+		const arr = b.byLowerName.get(key);
 		if (!arr) {
 			continue;
 		}
 		const next = arr.filter((x) => !(x.path === rel && x.line === sym.line && x.name === sym.name));
 		if (next.length === 0) {
-			byLowerName.delete(key);
+			b.byLowerName.delete(key);
 		} else {
-			byLowerName.set(key, next);
+			b.byLowerName.set(key, next);
 		}
 	}
-	byFile.delete(rel);
+	b.byFile.delete(rel);
 }
 
-function addSymbols(rel: string, syms: WorkspaceSymbolHit[]): void {
+function addSymbols(b: SymbolBucket, rel: string, syms: WorkspaceSymbolHit[]): void {
 	if (syms.length === 0) {
 		return;
 	}
-	byFile.set(rel, syms);
+	b.byFile.set(rel, syms);
 	for (const sym of syms) {
 		const key = sym.name.toLowerCase();
-		const arr = byLowerName.get(key) ?? [];
+		const arr = b.byLowerName.get(key) ?? [];
 		arr.push(sym);
-		byLowerName.set(key, arr);
+		b.byLowerName.set(key, arr);
 	}
 }
 
@@ -251,11 +285,12 @@ export async function indexWorkspaceSourceFile(rootNorm: string, rel: string): P
 	if (getSettings().indexing?.symbolIndexEnabled === false) {
 		return;
 	}
-	if (indexedRoot !== rootNorm || !isSourceRel(rel)) {
+	if (!isSourceRel(rel)) {
 		return;
 	}
-	const full = path.join(rootNorm, rel.split('/').join(path.sep));
-	removeFileSymbols(rel);
+	const b = getBucket(rootNorm);
+	const full = path.join(b.rootNorm, rel.split('/').join(path.sep));
+	removeFileSymbols(b, rel);
 	try {
 		const st = await fsp.stat(full);
 		if (!st.isFile() || st.size > 400_000) {
@@ -266,33 +301,38 @@ export async function indexWorkspaceSourceFile(rootNorm: string, rel: string): P
 			return;
 		}
 		const text = buf.toString('utf8');
-		addSymbols(rel, extractSymbols(rel, text));
-		schedulePersistWorkspaceSymbolIndex();
+		addSymbols(b, rel, extractSymbols(rel, text));
+		schedulePersistWorkspaceSymbolIndex(b);
 	} catch {
 		/* ignore */
 	}
 }
 
-export function removeWorkspaceSymbolsForRel(rel: string): void {
-	removeFileSymbols(rel);
-	schedulePersistWorkspaceSymbolIndex();
+export function removeWorkspaceSymbolsForRel(rootNorm: string, rel: string): void {
+	const b = symbolBuckets.get(normRoot(rootNorm));
+	if (!b) {
+		return;
+	}
+	removeFileSymbols(b, rel);
+	schedulePersistWorkspaceSymbolIndex(b);
 }
 
-export function removeWorkspaceSymbolsUnderPrefix(prefixRel: string): void {
+export function removeWorkspaceSymbolsUnderPrefix(rootNorm: string, prefixRel: string): void {
+	const b = symbolBuckets.get(normRoot(rootNorm));
+	if (!b) {
+		return;
+	}
 	const pref = prefixRel.endsWith('/') ? prefixRel : `${prefixRel}/`;
-	for (const k of [...byFile.keys()]) {
+	for (const k of [...b.byFile.keys()]) {
 		if (k === prefixRel || k.startsWith(pref)) {
-			removeFileSymbols(k);
+			removeFileSymbols(b, k);
 		}
 	}
-	schedulePersistWorkspaceSymbolIndex();
+	schedulePersistWorkspaceSymbolIndex(b);
 }
 
-/**
- * 尝试从磁盘加载上次持久化的符号索引。返回 true 表示加载成功（跳过全量重建）。
- */
-async function tryLoadFromDisk(rootNorm: string): Promise<boolean> {
-	const target = getWorkspaceSymbolsIndexPath(rootNorm);
+async function tryLoadFromDisk(b: SymbolBucket): Promise<boolean> {
+	const target = getWorkspaceSymbolsIndexPath(b.rootNorm);
 	try {
 		const raw = await fsp.readFile(target, 'utf8');
 		const data = JSON.parse(raw) as {
@@ -304,62 +344,57 @@ async function tryLoadFromDisk(rootNorm: string): Promise<boolean> {
 		if (data.version !== 1 || !data.files || typeof data.files !== 'object') {
 			return false;
 		}
-		byLowerName.clear();
-		byFile.clear();
+		b.byLowerName.clear();
+		b.byFile.clear();
 		for (const [rel, hits] of Object.entries(data.files)) {
 			if (!Array.isArray(hits)) {
 				continue;
 			}
-			addSymbols(rel, hits);
+			addSymbols(b, rel, hits);
 		}
-		return byFile.size > 0;
+		return b.byFile.size > 0;
 	} catch {
 		return false;
 	}
 }
 
-/**
- * 全量重建（防抖）。在文件列表扫描完成后调用。
- * 优先从磁盘加载缓存，仅在缓存缺失或过旧时才重新扫描文件。
- */
 export function scheduleWorkspaceSymbolFullRebuild(rootNorm: string, relativeFiles: string[]): void {
 	if (getSettings().indexing?.symbolIndexEnabled === false) {
-		clearWorkspaceSymbolIndex();
+		clearWorkspaceSymbolIndexForRoot(rootNorm);
 		return;
 	}
-	indexedRoot = rootNorm;
-	if (fullRebuildTimer) {
-		clearTimeout(fullRebuildTimer);
+	const b = getBucket(rootNorm);
+	if (b.fullRebuildTimer) {
+		clearTimeout(b.fullRebuildTimer);
 	}
-	fullRebuildTimer = setTimeout(() => {
-		fullRebuildTimer = null;
+	b.fullRebuildTimer = setTimeout(() => {
+		b.fullRebuildTimer = null;
 		void (async () => {
 			const t0 = Date.now();
-			if (await tryLoadFromDisk(rootNorm)) {
-				console.log(`[symbolIndex] loaded from disk: ${byFile.size} files in ${Date.now() - t0}ms`);
-				lazyLoadAttempted = true;
+			if (await tryLoadFromDisk(b)) {
+				console.log(`[symbolIndex] loaded from disk: ${b.byFile.size} files in ${Date.now() - t0}ms`);
+				b.lazyLoadAttempted = true;
 				return;
 			}
 			console.log(`[symbolIndex] disk cache miss, rebuilding ${relativeFiles.filter(isSourceRel).length} files…`);
-			await runFullRebuild(rootNorm, relativeFiles);
-			console.log(`[symbolIndex] rebuild done: ${byFile.size} files, ${byLowerName.size} symbols in ${Date.now() - t0}ms`);
-			lazyLoadAttempted = true;
+			await runFullRebuild(b, relativeFiles);
+			console.log(
+				`[symbolIndex] rebuild done: ${b.byFile.size} files, ${b.byLowerName.size} symbols in ${Date.now() - t0}ms`
+			);
+			b.lazyLoadAttempted = true;
 		})();
 	}, 400);
 }
 
-/**
- * 懒加载：在首次需要符号索引时，从磁盘缓存加载或触发重建。
- */
 export async function ensureSymbolIndexLoaded(rootNorm: string): Promise<void> {
-	if (lazyLoadAttempted || byFile.size > 0) {
+	const b = getBucket(rootNorm);
+	if (b.lazyLoadAttempted || b.byFile.size > 0) {
 		return;
 	}
-	lazyLoadAttempted = true;
-	indexedRoot = rootNorm;
+	b.lazyLoadAttempted = true;
 	const t0 = Date.now();
-	if (await tryLoadFromDisk(rootNorm)) {
-		console.log(`[symbolIndex] lazy loaded from disk: ${byFile.size} files in ${Date.now() - t0}ms`);
+	if (await tryLoadFromDisk(b)) {
+		console.log(`[symbolIndex] lazy loaded from disk: ${b.byFile.size} files in ${Date.now() - t0}ms`);
 		return;
 	}
 	const { ensureWorkspaceFileIndex } = await import('./workspaceFileIndex.js');
@@ -368,41 +403,62 @@ export async function ensureSymbolIndexLoaded(rootNorm: string): Promise<void> {
 	console.log(`[symbolIndex] lazy rebuild scheduled in ${Date.now() - t0}ms`);
 }
 
-/** 让出事件循环，使 IPC 等高优先级回调有机会执行 */
 function yieldEventLoop(): Promise<void> {
 	return new Promise((r) => setImmediate(r));
 }
 
-async function runFullRebuild(rootNorm: string, relativeFiles: string[]): Promise<void> {
+async function runFullRebuild(b: SymbolBucket, relativeFiles: string[]): Promise<void> {
 	if (getSettings().indexing?.symbolIndexEnabled === false) {
-		clearWorkspaceSymbolIndex();
+		destroySymBucket(b);
+		symbolBuckets.delete(b.rootNorm);
 		return;
 	}
-	indexedRoot = rootNorm;
-	byLowerName.clear();
-	byFile.clear();
-	rebuildingAll = true;
+	b.byLowerName.clear();
+	b.byFile.clear();
+	b.rebuildingAll = true;
 	const targets = relativeFiles.filter(isSourceRel).slice(0, 12_000);
 	const YIELD_EVERY = 40;
 	try {
 		for (let i = 0; i < targets.length; i++) {
-			await indexWorkspaceSourceFile(rootNorm, targets[i]!);
+			await indexWorkspaceSourceFile(b.rootNorm, targets[i]!);
 			if ((i + 1) % YIELD_EVERY === 0) {
 				await yieldEventLoop();
 			}
 		}
 	} finally {
-		rebuildingAll = false;
+		b.rebuildingAll = false;
 	}
-	schedulePersistWorkspaceSymbolIndex();
+	schedulePersistWorkspaceSymbolIndex(b);
 }
 
+export function getWorkspaceSymbolIndexStatsForRoot(
+	rootNorm: string | null
+): { uniqueNames: number; filesWithSymbols: number } {
+	if (!rootNorm) {
+		return { uniqueNames: 0, filesWithSymbols: 0 };
+	}
+	const b = symbolBuckets.get(normRoot(rootNorm));
+	if (!b) {
+		return { uniqueNames: 0, filesWithSymbols: 0 };
+	}
+	return { uniqueNames: b.byLowerName.size, filesWithSymbols: b.byFile.size };
+}
+
+/** @deprecated 使用 getWorkspaceSymbolIndexStatsForRoot */
 export function getWorkspaceSymbolIndexStats(): { uniqueNames: number; filesWithSymbols: number } {
-	return { uniqueNames: byLowerName.size, filesWithSymbols: byFile.size };
+	return { uniqueNames: 0, filesWithSymbols: 0 };
 }
 
-export function searchWorkspaceSymbols(rawQuery: string, limit: number): WorkspaceSymbolHit[] {
+export function searchWorkspaceSymbols(
+	rawQuery: string,
+	limit: number,
+	rootNorm: string
+): WorkspaceSymbolHit[] {
 	if (getSettings().indexing?.symbolIndexEnabled === false) {
+		return [];
+	}
+	const b = symbolBuckets.get(normRoot(rootNorm));
+	if (!b) {
 		return [];
 	}
 	const q = rawQuery.trim().toLowerCase();
@@ -410,12 +466,12 @@ export function searchWorkspaceSymbols(rawQuery: string, limit: number): Workspa
 		return [];
 	}
 	const out: WorkspaceSymbolHit[] = [];
-	const direct = byLowerName.get(q);
+	const direct = b.byLowerName.get(q);
 	if (direct) {
 		out.push(...direct);
 	}
 	if (out.length < limit) {
-		for (const [name, hits] of byLowerName) {
+		for (const [name, hits] of b.byLowerName) {
 			if (name.includes(q) || q.includes(name)) {
 				for (const h of hits) {
 					if (out.length >= limit) {
@@ -434,7 +490,6 @@ export function searchWorkspaceSymbols(rawQuery: string, limit: number): Workspa
 	return out.slice(0, limit);
 }
 
-/** search_files(symbol) 按子串匹配符号名 */
 export function formatSymbolSearchResults(hits: WorkspaceSymbolHit[]): string {
 	if (hits.length === 0) {
 		return 'No matching exported symbols found.';

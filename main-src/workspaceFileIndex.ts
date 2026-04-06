@@ -6,12 +6,9 @@ import {
 	indexWorkspaceSourceFile,
 	removeWorkspaceSymbolsForRel,
 	removeWorkspaceSymbolsUnderPrefix,
-	clearWorkspaceSymbolIndex,
+	clearWorkspaceSymbolIndexForRoot,
 } from './workspaceSymbolIndex.js';
-import {
-	clearWorkspaceSemanticIndex,
-} from './workspaceSemanticIndex.js';
-import { getSettings } from './settingsStore.js';
+import { clearWorkspaceSemanticIndexForRoot } from './workspaceSemanticIndex.js';
 import { getWorkspaceFilesIndexPath } from './workspaceIndexPaths.js';
 
 /** 遍历时跳过的目录名（小写比较） */
@@ -33,7 +30,6 @@ const SKIP_DIR_NAMES = new Set([
 	'Pods',
 	'.gradle',
 	'DerivedData',
-	// Windows：用户主目录下常见连接点/受保护目录，监听会 EPERM 且通常不应索引
 	'appdata',
 	'application data',
 	'cookies',
@@ -43,32 +39,101 @@ const SKIP_DIR_NAMES = new Set([
 /** 单工作区最大文件条数（提高上限以适配大型 monorepo） */
 export const MAX_WORKSPACE_FILES = 50_000;
 
-export function getWorkspaceFileIndexLiveStats(): { root: string | null; fileCount: number } {
-	return { root: cachedRoot, fileCount: relPathSet.size };
+type FileIndexBucket = {
+	rootNorm: string;
+	relPathSet: Set<string>;
+	watcher: chokidar.FSWatcher | null;
+	inFlightRefresh: Promise<string[]> | null;
+	persistTimer: ReturnType<typeof setTimeout> | null;
+	refCount: number;
+};
+
+const buckets = new Map<string, FileIndexBucket>();
+
+function getBucket(rootNorm: string): FileIndexBucket {
+	let b = buckets.get(rootNorm);
+	if (!b) {
+		b = {
+			rootNorm,
+			relPathSet: new Set(),
+			watcher: null,
+			inFlightRefresh: null,
+			persistTimer: null,
+			refCount: 0,
+		};
+		buckets.set(rootNorm, b);
+	}
+	return b;
 }
 
-/**
- * 将新写入的相对路径立即纳入索引，避免刚落盘的附件在当次 @ 展开中不被识别。
- */
-export function registerKnownWorkspaceRelPath(relPath: string): void {
-	if (!cachedRoot) {
+/** 窗口打开文件夹时增加引用；同一 root 多窗共享一套索引与 watcher。 */
+export function acquireWorkspaceFileIndexRef(rootAbs: string): void {
+	const rootNorm = path.normalize(path.resolve(rootAbs));
+	const b = getBucket(rootNorm);
+	b.refCount++;
+}
+
+/** 关闭文件夹或销毁窗口时减少引用；到 0 时停止监听并清理该 root 的内存索引。 */
+export function releaseWorkspaceFileIndexRef(rootAbs: string): void {
+	const rootNorm = path.normalize(path.resolve(rootAbs));
+	const b = buckets.get(rootNorm);
+	if (!b) {
+		return;
+	}
+	b.refCount = Math.max(0, b.refCount - 1);
+	if (b.refCount > 0) {
+		return;
+	}
+	destroyBucket(b);
+	buckets.delete(rootNorm);
+	clearWorkspaceSymbolIndexForRoot(rootNorm);
+	clearWorkspaceSemanticIndexForRoot(rootNorm);
+}
+
+function destroyBucket(b: FileIndexBucket): void {
+	if (b.watcher) {
+		void b.watcher.close();
+		b.watcher = null;
+	}
+	if (b.persistTimer) {
+		clearTimeout(b.persistTimer);
+		b.persistTimer = null;
+	}
+	b.relPathSet = new Set();
+	b.inFlightRefresh = null;
+}
+
+export function getWorkspaceFileIndexLiveStatsForRoot(rootAbs: string | null): { root: string | null; fileCount: number } {
+	if (!rootAbs) {
+		return { root: null, fileCount: 0 };
+	}
+	const rootNorm = path.normalize(path.resolve(rootAbs));
+	const b = buckets.get(rootNorm);
+	if (!b) {
+		return { root: rootNorm, fileCount: 0 };
+	}
+	return { root: rootNorm, fileCount: b.relPathSet.size };
+}
+
+/** @deprecated 使用 getWorkspaceFileIndexLiveStatsForRoot；无参数时返回空统计 */
+export function getWorkspaceFileIndexLiveStats(): { root: string | null; fileCount: number } {
+	return { root: null, fileCount: 0 };
+}
+
+export function registerKnownWorkspaceRelPath(relPath: string, rootAbs: string): void {
+	const rootNorm = path.normalize(path.resolve(rootAbs));
+	const b = buckets.get(rootNorm);
+	if (!b) {
 		return;
 	}
 	const norm = relPath.replace(/\\/g, '/').replace(/^\/+/, '').trim();
 	if (!norm || norm.includes('..')) {
 		return;
 	}
-	relPathSet.add(norm);
-	schedulePersistWorkspaceFileIndex();
+	b.relPathSet.add(norm);
+	schedulePersistWorkspaceFileIndex(b);
 }
 
-let cachedRoot: string | null = null;
-let relPathSet = new Set<string>();
-let watcher: chokidar.FSWatcher | null = null;
-let inFlightRefresh: Promise<string[]> | null = null;
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** 主进程注册：工作区文件在磁盘上变化时通知（用于刷新 Git 面板等） */
 let workspaceFsTouchNotifier: (() => void) | null = null;
 let workspaceFsTouchTimer: ReturnType<typeof setTimeout> | null = null;
 const WORKSPACE_FS_TOUCH_DEBOUNCE_MS = 400;
@@ -94,24 +159,19 @@ function scheduleWorkspaceFsTouchNotify(): void {
 	}, WORKSPACE_FS_TOUCH_DEBOUNCE_MS);
 }
 
-function schedulePersistWorkspaceFileIndex(): void {
-	if (!cachedRoot) {
-		return;
+function schedulePersistWorkspaceFileIndex(b: FileIndexBucket): void {
+	if (b.persistTimer) {
+		clearTimeout(b.persistTimer);
 	}
-	if (persistTimer) {
-		clearTimeout(persistTimer);
-	}
-	persistTimer = setTimeout(() => {
-		persistTimer = null;
-		void persistWorkspaceFileIndexSnapshot();
+	b.persistTimer = setTimeout(() => {
+		b.persistTimer = null;
+		void persistWorkspaceFileIndexSnapshot(b);
 	}, 250);
 }
 
-async function persistWorkspaceFileIndexSnapshot(): Promise<void> {
-	if (!cachedRoot) {
-		return;
-	}
-	const target = getWorkspaceFilesIndexPath(cachedRoot);
+async function persistWorkspaceFileIndexSnapshot(b: FileIndexBucket): Promise<void> {
+	const target = getWorkspaceFilesIndexPath(b.rootNorm);
+	const files = Array.from(b.relPathSet).sort((a, c) => a.localeCompare(c, undefined, { sensitivity: 'base' }));
 	try {
 		await fsp.mkdir(path.dirname(target), { recursive: true });
 		await fsp.writeFile(
@@ -119,9 +179,9 @@ async function persistWorkspaceFileIndexSnapshot(): Promise<void> {
 			JSON.stringify(
 				{
 					version: 1,
-					root: cachedRoot,
+					root: b.rootNorm,
 					generatedAt: new Date().toISOString(),
-					files: sortedFromSet(),
+					files,
 				},
 				null,
 				2
@@ -151,9 +211,6 @@ function shouldIgnoreAbsolutePath(absPath: string): boolean {
 	return false;
 }
 
-/**
- * 同步全量扫描（缓存未就绪时的回退路径，供 @ 展开等同步逻辑使用）。
- */
 export function listWorkspaceRelativeFiles(rootAbs: string): string[] {
 	const root = path.normalize(path.resolve(rootAbs));
 	const out: string[] = [];
@@ -201,7 +258,7 @@ export function listWorkspaceRelativeFiles(rootAbs: string): string[] {
 	}
 
 	walk(root);
-	out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+	out.sort((a, c) => a.localeCompare(c, undefined, { sensitivity: 'base' }));
 	return out;
 }
 
@@ -252,64 +309,59 @@ async function scanFullAsync(rootNorm: string): Promise<string[]> {
 	}
 
 	await processDir(rootNorm);
-	out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+	out.sort((a, c) => a.localeCompare(c, undefined, { sensitivity: 'base' }));
 	return out;
 }
 
-function sortedFromSet(): string[] {
-	return Array.from(relPathSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+function sortedFromSet(b: FileIndexBucket): string[] {
+	return Array.from(b.relPathSet).sort((a, c) => a.localeCompare(c, undefined, { sensitivity: 'base' }));
 }
 
-function stopWatcherOnly(): void {
-	if (watcher) {
-		void watcher.close();
-		watcher = null;
+function stopWatcherOnly(b: FileIndexBucket): void {
+	if (b.watcher) {
+		void b.watcher.close();
+		b.watcher = null;
 	}
 }
 
-/**
- * 若当前缓存与 root 一致且非空，返回排序列表；否则返回 null（调用方可用同步扫描）。
- */
 export function getIndexedWorkspaceFilesIfFresh(rootAbs: string): string[] | null {
-	const root = path.normalize(path.resolve(rootAbs));
-	if (cachedRoot === root && relPathSet.size > 0) {
-		return sortedFromSet();
+	const rootNorm = path.normalize(path.resolve(rootAbs));
+	const b = buckets.get(rootNorm);
+	if (b && b.relPathSet.size > 0) {
+		return sortedFromSet(b);
 	}
 	return null;
 }
 
-/**
- * 停止监听并清空缓存（关闭工作区时调用）。
- */
-export function stopWorkspaceFileIndex(): void {
-	stopWatcherOnly();
-	if (persistTimer) {
-		clearTimeout(persistTimer);
-		persistTimer = null;
+/** 停止所有 root 的监听与缓存（例如应用退出前调试）。 */
+export function stopAllWorkspaceFileIndexes(): void {
+	for (const b of buckets.values()) {
+		destroyBucket(b);
 	}
+	buckets.clear();
 	if (workspaceFsTouchTimer) {
 		clearTimeout(workspaceFsTouchTimer);
 		workspaceFsTouchTimer = null;
 	}
-	cachedRoot = null;
-	relPathSet = new Set();
-	inFlightRefresh = null;
-	clearWorkspaceSymbolIndex();
-	clearWorkspaceSemanticIndex();
 }
 
-function attachWatcher(rootNorm: string): void {
-	stopWatcherOnly();
-	watcher = chokidar.watch(rootNorm, {
+/** @deprecated 使用 releaseWorkspaceFileIndexRef(stopAllWorkspaceFileIndexes) */
+export function stopWorkspaceFileIndex(): void {
+	stopAllWorkspaceFileIndexes();
+}
+
+function attachWatcher(b: FileIndexBucket): void {
+	stopWatcherOnly(b);
+	const rootNorm = b.rootNorm;
+	b.watcher = chokidar.watch(rootNorm, {
 		ignored: (p) => shouldIgnoreAbsolutePath(p),
 		ignoreInitial: true,
 		persistent: true,
-		// 用户主目录等场景下部分子目录无监听权限，否则会未处理的 Promise 拒绝
 		ignorePermissionErrors: true,
 		awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
 	});
 
-	watcher.on('error', (err: unknown) => {
+	b.watcher.on('error', (err: unknown) => {
 		const code = err && typeof err === 'object' && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
 		if (code === 'EPERM' || code === 'EACCES') {
 			return;
@@ -318,7 +370,7 @@ function attachWatcher(rootNorm: string): void {
 	});
 
 	const applyAdd = (absPath: string) => {
-		if (cachedRoot !== rootNorm) {
+		if (!buckets.get(rootNorm)) {
 			return;
 		}
 		fs.stat(absPath, (err, st) => {
@@ -327,8 +379,8 @@ function attachWatcher(rootNorm: string): void {
 			}
 			const rel = normalizeRel(rootNorm, absPath);
 			if (rel) {
-				relPathSet.add(rel);
-				schedulePersistWorkspaceFileIndex();
+				b.relPathSet.add(rel);
+				schedulePersistWorkspaceFileIndex(b);
 				void indexWorkspaceSourceFile(rootNorm, rel);
 				scheduleWorkspaceFsTouchNotify();
 			}
@@ -336,33 +388,33 @@ function attachWatcher(rootNorm: string): void {
 	};
 
 	const applyChange = (absPath: string) => {
-		if (cachedRoot !== rootNorm) {
+		if (!buckets.get(rootNorm)) {
 			return;
 		}
 		const rel = normalizeRel(rootNorm, absPath);
 		if (rel) {
-			relPathSet.add(rel);
-			schedulePersistWorkspaceFileIndex();
+			b.relPathSet.add(rel);
+			schedulePersistWorkspaceFileIndex(b);
 			void indexWorkspaceSourceFile(rootNorm, rel);
 			scheduleWorkspaceFsTouchNotify();
 		}
 	};
 
 	const applyUnlink = (absPath: string) => {
-		if (cachedRoot !== rootNorm) {
+		if (!buckets.get(rootNorm)) {
 			return;
 		}
 		const rel = normalizeRel(rootNorm, absPath);
 		if (rel) {
-			relPathSet.delete(rel);
-			schedulePersistWorkspaceFileIndex();
-			removeWorkspaceSymbolsForRel(rel);
+			b.relPathSet.delete(rel);
+			schedulePersistWorkspaceFileIndex(b);
+			removeWorkspaceSymbolsForRel(rootNorm, rel);
 			scheduleWorkspaceFsTouchNotify();
 		}
 	};
 
 	const applyUnlinkDir = (absPath: string) => {
-		if (cachedRoot !== rootNorm) {
+		if (!buckets.get(rootNorm)) {
 			return;
 		}
 		const rel = normalizeRel(rootNorm, absPath);
@@ -370,56 +422,48 @@ function attachWatcher(rootNorm: string): void {
 			return;
 		}
 		const prefix = rel + '/';
-		for (const k of [...relPathSet]) {
+		for (const k of [...b.relPathSet]) {
 			if (k === rel || k.startsWith(prefix)) {
-				relPathSet.delete(k);
+				b.relPathSet.delete(k);
 			}
 		}
-		schedulePersistWorkspaceFileIndex();
-		removeWorkspaceSymbolsUnderPrefix(rel);
+		schedulePersistWorkspaceFileIndex(b);
+		removeWorkspaceSymbolsUnderPrefix(rootNorm, rel);
 		scheduleWorkspaceFsTouchNotify();
 	};
 
-	watcher.on('add', applyAdd);
-	watcher.on('change', applyChange);
-	watcher.on('unlink', applyUnlink);
-	watcher.on('unlinkDir', applyUnlinkDir);
+	b.watcher.on('add', applyAdd);
+	b.watcher.on('change', applyChange);
+	b.watcher.on('unlink', applyUnlink);
+	b.watcher.on('unlinkDir', applyUnlinkDir);
 }
 
-/**
- * 确保当前工作区索引已构建：异步全量扫描 + 启动文件监听；同一 root 的并发调用合并。
- */
 export async function ensureWorkspaceFileIndex(rootAbs: string): Promise<string[]> {
 	const rootNorm = path.normalize(path.resolve(rootAbs));
+	const b = getBucket(rootNorm);
 
-	if (cachedRoot === rootNorm && relPathSet.size > 0 && !inFlightRefresh) {
-		return sortedFromSet();
+	if (b.relPathSet.size > 0 && !b.inFlightRefresh) {
+		return sortedFromSet(b);
 	}
 
-	if (inFlightRefresh && cachedRoot === rootNorm) {
-		return inFlightRefresh;
+	if (b.inFlightRefresh) {
+		return b.inFlightRefresh;
 	}
 
-	if (cachedRoot !== rootNorm) {
-		stopWatcherOnly();
-		cachedRoot = rootNorm;
-		relPathSet = new Set();
-	}
-
-	inFlightRefresh = (async () => {
+	b.inFlightRefresh = (async () => {
 		const t0 = Date.now();
 		const list = await scanFullAsync(rootNorm);
 		console.log(`[fileIndex] scan done: ${list.length} files in ${Date.now() - t0}ms`);
-		relPathSet = new Set(list);
-		attachWatcher(rootNorm);
+		b.relPathSet = new Set(list);
+		attachWatcher(b);
 		console.log(`[fileIndex] watcher attached: +${Date.now() - t0}ms`);
-		schedulePersistWorkspaceFileIndex();
-		return sortedFromSet();
+		schedulePersistWorkspaceFileIndex(b);
+		return sortedFromSet(b);
 	})();
 
 	try {
-		return await inFlightRefresh;
+		return await b.inFlightRefresh;
 	} finally {
-		inFlightRefresh = null;
+		b.inFlightRefresh = null;
 	}
 }

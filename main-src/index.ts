@@ -5,8 +5,6 @@ import { initWindowsConsoleUtf8 } from './winUtf8.js';
 import { initSettingsStore, getRestorableWorkspace } from './settingsStore.js';
 import { ensureDefaultThread, initThreadStore } from './threadStore.js';
 import { registerIpc } from './ipc/register.js';
-import { setWorkspaceRoot } from './workspace.js';
-import { ensureWorkspaceFileIndex } from './workspaceFileIndex.js';
 import { configureAppWindowIcon, createAppWindow } from './appWindow.js';
 
 function resolveAppIconPath(): string | undefined {
@@ -46,27 +44,25 @@ app.whenReady().then(() => {
 	const restored = getRestorableWorkspace();
 	lap('restorableWorkspace resolved');
 
-	if (restored) {
-		setWorkspaceRoot(restored);
-		void ensureWorkspaceFileIndex(restored)
-			.then(() => lap('workspaceFileIndex ready'))
-			.catch(() => {});
-	}
-	initThreadStore(userData, restored ?? null);
+	const restoredUsable = restored && existsSync(restored) ? restored : null;
+	initThreadStore(userData, restoredUsable);
 	lap('threadStore init');
 
-	ensureDefaultThread(restored ?? null);
+	ensureDefaultThread(restoredUsable);
 	lap('defaultThread ensured');
 
 	registerIpc();
 	lap('IPC registered');
 
-	createAppWindow();
+	createAppWindow({
+		surface: 'agent',
+		initialWorkspace: restoredUsable,
+	});
 	lap('window created');
 
 	app.on('activate', () => {
 		if (BrowserWindow.getAllWindows().length === 0) {
-			createAppWindow();
+			createAppWindow({ surface: 'agent' });
 		}
 	});
 });

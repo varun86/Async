@@ -1,0 +1,626 @@
+import {
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	type Dispatch,
+	type MutableRefObject,
+	type SetStateAction,
+} from 'react';
+import type { ComposerMode } from '../ComposerPlusMenu';
+import { userMessageToSegments, type ComposerSegment } from '../composerSegments';
+import { applyLiveAgentChatPayload, type LiveAgentBlocksState } from '../liveAgentBlocks';
+import {
+	type AgentPendingPatch,
+	type ChatPlanExecutePayload,
+	type ChatStreamPayload,
+	type TurnTokenUsage,
+} from '../ipcTypes';
+import { parseQuestions, parsePlanDocument, toPlanMd, generatePlanFilename, type ParsedPlan, type PlanQuestion } from '../planParser';
+import { flattenAssistantTextPartsForSearch } from '../agentStructuredMessage';
+import { clearPersistedAgentFileChanges } from '../agentFileChangesPersist';
+import { translateChatError, type TFunction } from '../i18n';
+import type { ChatMessage } from '../threadTypes';
+
+export type StreamingToast = { key: number; ok: boolean; text: string } | null;
+
+export type StreamingSendOptions = {
+	threadId?: string;
+	modeOverride?: ComposerMode;
+	modelIdOverride?: string;
+	planExecute?: ChatPlanExecutePayload;
+	planBuildPathKey?: string;
+};
+
+type StreamingSendRuntime = {
+	shell: NonNullable<Window['asyncShell']> | undefined;
+	currentId: string | null;
+	setCurrentId: (id: string) => void;
+	loadMessages: (threadId: string) => Promise<unknown>;
+	refreshThreads: () => Promise<unknown> | void;
+	defaultModel: string;
+	composerMode: ComposerMode;
+	workspaceFileList: string[];
+	resendFromUserIndex: number | null;
+	setResendFromUserIndex: Dispatch<SetStateAction<number | null>>;
+	setInlineResendSegments: Dispatch<SetStateAction<ComposerSegment[]>>;
+	setComposerSegments: Dispatch<SetStateAction<ComposerSegment[]>>;
+	setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+	setStreamingThinking: Dispatch<SetStateAction<string>>;
+	clearStreamingToolPreviewNow: () => void;
+	resetLiveAgentBlocks: () => void;
+	beginStream: (threadId: string) => void;
+	resetStreamingSession: (options?: { clearThread?: boolean }) => void;
+	flashComposerAttachErr: (msg: string) => void;
+	t: TFunction;
+	clearAgentReviewForThread: (threadId: string) => void;
+	clearPlanQuestion: () => void;
+	clearMistakeLimitRequest: () => void;
+	planBuildPendingMarkerRef: MutableRefObject<{ threadId: string; pathKey: string } | null>;
+	setAwaitingReply: Dispatch<SetStateAction<boolean>>;
+	streamStartedAtRef: MutableRefObject<number | null>;
+};
+
+type StreamingSubscriptionRuntime = {
+	shell: NonNullable<Window['asyncShell']> | undefined;
+	composerMode: ComposerMode;
+	streamThreadRef: MutableRefObject<string | null>;
+	streamingToolPreviewClearTimerRef: MutableRefObject<number | null>;
+	setStreamingToolPreview: Dispatch<
+		SetStateAction<{ name: string; partialJson: string; index: number } | null>
+	>;
+	setLiveAssistantBlocks: Dispatch<SetStateAction<LiveAgentBlocksState>>;
+	markFirstToken: () => void;
+	setStreaming: Dispatch<SetStateAction<string>>;
+	setStreamingThinking: Dispatch<SetStateAction<string>>;
+	setToolApprovalRequest: Dispatch<
+		SetStateAction<{ approvalId: string; toolName: string; command?: string; path?: string } | null>
+	>;
+	setPlanQuestion: Dispatch<SetStateAction<PlanQuestion | null>>;
+	setPlanQuestionRequestId: Dispatch<SetStateAction<string | null>>;
+	setMistakeLimitRequest: Dispatch<
+		SetStateAction<{ recoveryId: string; consecutiveFailures: number; threshold: number } | null>
+	>;
+	t: TFunction;
+	showTransientToast: (ok: boolean, text: string, durationMs?: number) => void;
+	recordThoughtSeconds: (threadId: string, fallbackSeconds: number) => number;
+	setLastTurnUsage: Dispatch<SetStateAction<TurnTokenUsage | null>>;
+	resetStreamingSession: (options?: { clearThread?: boolean }) => void;
+	clearStreamingToolPreviewNow: () => void;
+	resetLiveAgentBlocks: () => void;
+	setFileChangesDismissed: Dispatch<SetStateAction<boolean>>;
+	setDismissedFiles: Dispatch<SetStateAction<Set<string>>>;
+	planBuildPendingMarkerRef: MutableRefObject<{ threadId: string; pathKey: string } | null>;
+	currentIdRef: MutableRefObject<string | null>;
+	setExecutedPlanKeys: Dispatch<SetStateAction<string[]>>;
+	setAgentReviewPendingByThread: Dispatch<SetStateAction<Record<string, AgentPendingPatch[]>>>;
+	setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+	setParsedPlan: Dispatch<SetStateAction<ParsedPlan | null>>;
+	setPlanFilePath: Dispatch<SetStateAction<string | null>>;
+	setPlanFileRelPath: Dispatch<SetStateAction<string | null>>;
+	loadMessages: (threadId: string) => Promise<unknown>;
+	refreshThreads: () => Promise<unknown> | void;
+};
+
+function escapeSubAgentXmlText(s: string): string {
+	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeStreamAttr(s: string): string {
+	return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+export function useStreamingChat() {
+	const [streaming, setStreaming] = useState('');
+	const [awaitingReply, setAwaitingReply] = useState(false);
+	const [thinkingTick, setThinkingTick] = useState(0);
+	const [thoughtSecondsByThread, setThoughtSecondsByThread] = useState<Record<string, number>>({});
+	const [subAgentBgToast, setSubAgentBgToast] = useState<StreamingToast>(null);
+
+	const subAgentBgToastTimerRef = useRef<number | null>(null);
+	const streamThreadRef = useRef<string | null>(null);
+	const streamStartedAtRef = useRef<number | null>(null);
+	const firstTokenAtRef = useRef<number | null>(null);
+
+	const clearToastTimer = useCallback(() => {
+		if (subAgentBgToastTimerRef.current !== null) {
+			window.clearTimeout(subAgentBgToastTimerRef.current);
+			subAgentBgToastTimerRef.current = null;
+		}
+	}, []);
+
+	const showTransientToast = useCallback(
+		(ok: boolean, text: string, durationMs = 4200) => {
+			clearToastTimer();
+			setSubAgentBgToast((prev) => ({
+				key: (prev?.key ?? 0) + 1,
+				ok,
+				text,
+			}));
+			subAgentBgToastTimerRef.current = window.setTimeout(() => {
+				setSubAgentBgToast(null);
+				subAgentBgToastTimerRef.current = null;
+			}, durationMs);
+		},
+		[clearToastTimer]
+	);
+
+	const beginStream = useCallback((threadId: string) => {
+		streamThreadRef.current = threadId;
+		streamStartedAtRef.current = Date.now();
+		firstTokenAtRef.current = null;
+		setStreaming('');
+		setAwaitingReply(true);
+	}, []);
+
+	const markFirstToken = useCallback(() => {
+		if (firstTokenAtRef.current === null) {
+			firstTokenAtRef.current = Date.now();
+		}
+	}, []);
+
+	const computeThoughtSeconds = useCallback((fallbackSeconds: number) => {
+		const start = streamStartedAtRef.current;
+		const firstTokenAt = firstTokenAtRef.current;
+		const end = Date.now();
+		if (start !== null && firstTokenAt !== null) {
+			return Math.max(0.1, (firstTokenAt - start) / 1000);
+		}
+		if (start !== null) {
+			return Math.max(0.1, (end - start) / 1000);
+		}
+		return fallbackSeconds;
+	}, []);
+
+	const recordThoughtSeconds = useCallback(
+		(threadId: string, fallbackSeconds: number) => {
+			const thinkSec = computeThoughtSeconds(fallbackSeconds);
+			setThoughtSecondsByThread((prev) => ({ ...prev, [threadId]: thinkSec }));
+			return thinkSec;
+		},
+		[computeThoughtSeconds]
+	);
+
+	const resetStreamingSession = useCallback((options?: { clearThread?: boolean }) => {
+		if (options?.clearThread !== false) {
+			streamThreadRef.current = null;
+		}
+		streamStartedAtRef.current = null;
+		firstTokenAtRef.current = null;
+		setAwaitingReply(false);
+		setStreaming('');
+	}, []);
+
+	useEffect(() => {
+		if (!awaitingReply || streaming.length > 0) {
+			return;
+		}
+		const id = window.setInterval(() => setThinkingTick((x) => x + 1), 100);
+		return () => window.clearInterval(id);
+	}, [awaitingReply, streaming.length]);
+
+	useEffect(() => () => clearToastTimer(), [clearToastTimer]);
+
+	return {
+		streaming,
+		setStreaming,
+		awaitingReply,
+		setAwaitingReply,
+		thinkingTick,
+		thoughtSecondsByThread,
+		setThoughtSecondsByThread,
+		subAgentBgToast,
+		showTransientToast,
+		beginStream,
+		markFirstToken,
+		recordThoughtSeconds,
+		resetStreamingSession,
+		streamThreadRef,
+		streamStartedAtRef,
+		firstTokenAtRef,
+	};
+}
+
+export function useStreamingChatControls(runtime: StreamingSendRuntime) {
+	const runtimeRef = useRef(runtime);
+	runtimeRef.current = runtime;
+
+	const sendMessage = useCallback(async (text: string, opts?: StreamingSendOptions) => {
+		const rt = runtimeRef.current;
+		const targetThreadId = opts?.threadId ?? rt.currentId;
+		if (!rt.shell || !targetThreadId) {
+			return;
+		}
+
+		const effectiveModelId = (opts?.modelIdOverride ?? rt.defaultModel).trim();
+		if (!effectiveModelId) {
+			rt.flashComposerAttachErr(rt.t('app.noModelSelected'));
+			return;
+		}
+
+		rt.clearPlanQuestion();
+
+		if (opts?.threadId && opts.threadId !== rt.currentId) {
+			await rt.shell.invoke('threads:select', opts.threadId);
+			rt.setCurrentId(opts.threadId);
+			await rt.loadMessages(opts.threadId);
+		}
+
+		rt.clearAgentReviewForThread(targetThreadId);
+		if (rt.resendFromUserIndex !== null) {
+			const resendIdx = rt.resendFromUserIndex;
+			rt.setInlineResendSegments([]);
+			rt.setMessages((messages) => [...messages.slice(0, resendIdx), { role: 'user', content: text }]);
+		} else {
+			rt.setComposerSegments([]);
+			rt.setMessages((messages) => [...messages, { role: 'user', content: text }]);
+		}
+
+		rt.setStreamingThinking('');
+		rt.clearStreamingToolPreviewNow();
+		rt.resetLiveAgentBlocks();
+		rt.beginStream(targetThreadId);
+
+		if (opts?.planExecute && opts.planBuildPathKey) {
+			const pathKey = opts.planBuildPathKey.trim().toLowerCase();
+			if (pathKey) {
+				rt.planBuildPendingMarkerRef.current = { threadId: targetThreadId, pathKey };
+			}
+		}
+
+		if (rt.resendFromUserIndex !== null) {
+			const resendIdx = rt.resendFromUserIndex;
+			rt.setResendFromUserIndex(null);
+			const result = (await rt.shell.invoke('chat:editResend', {
+				threadId: targetThreadId,
+				visibleIndex: resendIdx,
+				text,
+				mode: opts?.modeOverride ?? rt.composerMode,
+				modelId: effectiveModelId,
+			})) as { ok?: boolean };
+
+			if (!result?.ok) {
+				rt.setAwaitingReply(false);
+				rt.streamStartedAtRef.current = null;
+				rt.setResendFromUserIndex(resendIdx);
+				rt.setInlineResendSegments(userMessageToSegments(text, rt.workspaceFileList));
+				void rt.loadMessages(targetThreadId);
+			} else {
+				void rt.refreshThreads();
+			}
+			return;
+		}
+
+		await rt.shell.invoke('chat:send', {
+			threadId: targetThreadId,
+			text,
+			mode: opts?.modeOverride ?? rt.composerMode,
+			modelId: effectiveModelId,
+			planExecute: opts?.planExecute,
+		});
+		void rt.refreshThreads();
+	}, []);
+
+	const abortActiveStream = useCallback(async () => {
+		const rt = runtimeRef.current;
+		if (!rt.shell || !rt.currentId) {
+			return;
+		}
+		rt.planBuildPendingMarkerRef.current = null;
+		rt.clearMistakeLimitRequest();
+		await rt.shell.invoke('chat:abort', rt.currentId);
+		// 与 App 原逻辑一致：不 resetStreamingSession，由后端 done/error 收尾正文流式状态
+		rt.clearStreamingToolPreviewNow();
+		rt.resetLiveAgentBlocks();
+		rt.setAwaitingReply(false);
+	}, []);
+
+	return {
+		sendMessage,
+		abortActiveStream,
+	};
+}
+
+export function useStreamingChatSubscription(runtime: StreamingSubscriptionRuntime) {
+	const runtimeRef = useRef(runtime);
+	runtimeRef.current = runtime;
+
+	useEffect(() => {
+		const shell = runtime.shell;
+		if (!shell) {
+			return;
+		}
+		const unsub = shell.subscribeChat((raw: unknown) => {
+			const rt = runtimeRef.current;
+			const payload = raw as ChatStreamPayload;
+			if (payload.threadId !== rt.streamThreadRef.current) {
+				return;
+			}
+
+			const trackLiveBlocks = rt.composerMode === 'agent' || rt.composerMode === 'plan';
+			const applyToolInputDeltaUi = (p: { name: string; partialJson: string; index: number }) => {
+				if (rt.streamingToolPreviewClearTimerRef.current !== null) {
+					window.clearTimeout(rt.streamingToolPreviewClearTimerRef.current);
+					rt.streamingToolPreviewClearTimerRef.current = null;
+				}
+				rt.setStreamingToolPreview({
+					name: p.name,
+					partialJson: p.partialJson,
+					index: p.index,
+				});
+				if (trackLiveBlocks) {
+					rt.setLiveAssistantBlocks((st) =>
+						applyLiveAgentChatPayload(st, {
+							type: 'tool_input_delta',
+							name: p.name,
+							partialJson: p.partialJson,
+							index: p.index,
+						})
+					);
+				}
+			};
+
+			if (payload.type === 'delta') {
+				const subParent = payload.parentToolCallId;
+				if (subParent) {
+					const deltaText = payload.text;
+					rt.setStreaming((s) => {
+						const inner = escapeSubAgentXmlText(deltaText);
+						const p = escapeStreamAttr(subParent);
+						const d = payload.nestingDepth ?? 1;
+						return `${s}<sub_agent_delta parent="${p}" depth="${d}">${inner}</sub_agent_delta>`;
+					});
+					if (trackLiveBlocks) {
+						rt.setLiveAssistantBlocks((st) =>
+							applyLiveAgentChatPayload(st, {
+								type: 'delta',
+								text: deltaText,
+								parentToolCallId: subParent,
+								nestingDepth: payload.nestingDepth,
+							})
+						);
+					}
+				} else {
+					if (payload.text.length > 0) {
+						rt.markFirstToken();
+					}
+					rt.setStreaming((s) => s + payload.text);
+					if (trackLiveBlocks) {
+						rt.setLiveAssistantBlocks((st) =>
+							applyLiveAgentChatPayload(st, {
+								type: 'delta',
+								text: payload.text,
+							})
+						);
+					}
+				}
+			} else if (payload.type === 'tool_input_delta') {
+				if (!payload.parentToolCallId) {
+					applyToolInputDeltaUi({
+						name: payload.name,
+						partialJson: payload.partialJson,
+						index: payload.index,
+					});
+				}
+			} else if (payload.type === 'thinking_delta') {
+				const parentToolCallId = payload.parentToolCallId;
+				if (parentToolCallId) {
+					rt.setStreaming((s) => {
+						const inner = escapeSubAgentXmlText(payload.text);
+						const p = escapeStreamAttr(parentToolCallId);
+						const d = payload.nestingDepth ?? 1;
+						return `${s}<sub_agent_thinking parent="${p}" depth="${d}">${inner}</sub_agent_thinking>`;
+					});
+					if (trackLiveBlocks) {
+						rt.setLiveAssistantBlocks((st) =>
+							applyLiveAgentChatPayload(st, {
+								type: 'thinking_delta',
+								text: payload.text,
+								parentToolCallId,
+								nestingDepth: payload.nestingDepth,
+							})
+						);
+					}
+				} else {
+					rt.setStreamingThinking((s) => s + payload.text);
+					if (trackLiveBlocks) {
+						rt.setLiveAssistantBlocks((st) =>
+							applyLiveAgentChatPayload(st, {
+								type: 'thinking_delta',
+								text: payload.text,
+							})
+						);
+					}
+				}
+			} else if (payload.type === 'tool_call') {
+				if (!payload.parentToolCallId && rt.streamingToolPreviewClearTimerRef.current !== null) {
+					window.clearTimeout(rt.streamingToolPreviewClearTimerRef.current);
+					rt.streamingToolPreviewClearTimerRef.current = null;
+				}
+				const nest =
+					payload.parentToolCallId != null
+						? ` sub_parent="${escapeStreamAttr(payload.parentToolCallId)}" sub_depth="${payload.nestingDepth ?? 1}"`
+						: '';
+				const marker = `\n<tool_call tool="${payload.name}"${nest}>${payload.args}</tool_call>\n`;
+				rt.setStreaming((s) => s + marker);
+				if (trackLiveBlocks && !payload.parentToolCallId) {
+					rt.setLiveAssistantBlocks((st) =>
+						applyLiveAgentChatPayload(st, {
+							type: 'tool_call',
+							name: payload.name,
+							args: payload.args,
+							toolCallId: payload.toolCallId,
+						})
+					);
+				}
+			} else if (payload.type === 'tool_result') {
+				if (!payload.parentToolCallId) {
+					rt.setStreamingToolPreview(null);
+				}
+				const truncated =
+					payload.result.length > 3000 ? `${payload.result.slice(0, 3000)}\n... (truncated)` : payload.result;
+				const safe = truncated.split('</tool_result>').join('</tool\u200c_result>');
+				const marker = `<tool_result tool="${payload.name}" success="${payload.success}">${safe}</tool_result>\n`;
+				rt.setStreaming((s) => s + marker);
+				if (trackLiveBlocks && !payload.parentToolCallId) {
+					rt.setLiveAssistantBlocks((st) =>
+						applyLiveAgentChatPayload(st, {
+							type: 'tool_result',
+							name: payload.name,
+							result: truncated,
+							success: payload.success,
+							toolCallId: payload.toolCallId,
+						})
+					);
+				}
+			} else if (payload.type === 'tool_progress') {
+				if (trackLiveBlocks && !payload.parentToolCallId) {
+					rt.setLiveAssistantBlocks((st) =>
+						applyLiveAgentChatPayload(st, {
+							type: 'tool_progress',
+							name: payload.name,
+							phase: payload.phase,
+							detail: payload.detail,
+						})
+					);
+				}
+			} else if (payload.type === 'tool_approval_request') {
+				rt.setToolApprovalRequest({
+					approvalId: payload.approvalId,
+					toolName: payload.toolName,
+					command: payload.command,
+					path: payload.path,
+				});
+			} else if (payload.type === 'plan_question_request') {
+				rt.setPlanQuestion(payload.question);
+				rt.setPlanQuestionRequestId(payload.requestId);
+			} else if (payload.type === 'agent_mistake_limit') {
+				rt.setMistakeLimitRequest({
+					recoveryId: payload.recoveryId,
+					consecutiveFailures: payload.consecutiveFailures,
+					threshold: payload.threshold,
+				});
+			} else if (payload.type === 'sub_agent_background_done') {
+				const preview = payload.result.length > 240 ? `${payload.result.slice(0, 240)}…` : payload.result;
+				const text = payload.success
+					? rt.t('agent.subAgentBg.done', { preview })
+					: rt.t('agent.subAgentBg.fail', { preview });
+				rt.showTransientToast(payload.success, text, 6500);
+			} else if (payload.type === 'done') {
+				rt.recordThoughtSeconds(payload.threadId, 0.5);
+				if (payload.usage) {
+					rt.setLastTurnUsage(payload.usage);
+				}
+				// 与 App 一致：done 后保留 streamThreadRef，避免与旧实现行为漂移
+				rt.resetStreamingSession({ clearThread: false });
+				rt.setStreamingThinking('');
+				rt.setToolApprovalRequest(null);
+				rt.setMistakeLimitRequest(null);
+				rt.setPlanQuestionRequestId(null);
+				rt.clearStreamingToolPreviewNow();
+				rt.resetLiveAgentBlocks();
+				rt.setFileChangesDismissed(false);
+				rt.setDismissedFiles(new Set());
+
+				const pendingPlan = rt.planBuildPendingMarkerRef.current;
+				if (pendingPlan && pendingPlan.threadId === payload.threadId) {
+					rt.planBuildPendingMarkerRef.current = null;
+					if (pendingPlan.pathKey && rt.shell) {
+						void rt.shell.invoke('threads:markPlanExecuted', {
+							threadId: pendingPlan.threadId,
+							pathKey: pendingPlan.pathKey,
+						});
+						if (pendingPlan.threadId === rt.currentIdRef.current) {
+							rt.setExecutedPlanKeys((prev) =>
+								prev.includes(pendingPlan.pathKey) ? prev : [...prev, pendingPlan.pathKey]
+							);
+						}
+					}
+				}
+
+				clearPersistedAgentFileChanges(payload.threadId);
+				const pendingPatches = payload.pendingAgentPatches;
+				if (pendingPatches && pendingPatches.length > 0) {
+					rt.setAgentReviewPendingByThread((prev) => ({
+						...prev,
+						[payload.threadId]: pendingPatches,
+					}));
+				}
+
+				const fullText = payload.text ?? '';
+				const textForPlanMarkers = flattenAssistantTextPartsForSearch(fullText);
+				if (payload.threadId === rt.currentIdRef.current) {
+					rt.setMessages((messages) => {
+						const last = messages[messages.length - 1];
+						if (last?.role === 'assistant' && last.content === fullText) {
+							return messages;
+						}
+						return [...messages, { role: 'assistant', content: fullText }];
+					});
+				}
+
+				const question = parseQuestions(textForPlanMarkers);
+				if (question) {
+					rt.setPlanQuestion(question);
+					rt.setPlanQuestionRequestId(null);
+				} else {
+					rt.setPlanQuestion(null);
+					rt.setPlanQuestionRequestId(null);
+				}
+
+				const plan = parsePlanDocument(textForPlanMarkers);
+				if (plan) {
+					rt.setParsedPlan(plan);
+					const filename = generatePlanFilename(plan.name);
+					const markdown = toPlanMd(plan);
+					if (rt.shell) {
+						void (async () => {
+							const result = (await rt.shell!.invoke('plan:save', { filename, content: markdown })) as
+								| { ok: true; path: string; relPath?: string }
+								| { ok: false };
+							if (result.ok) {
+								rt.setPlanFilePath(result.path);
+								rt.setPlanFileRelPath(result.relPath ?? null);
+							}
+							await rt.shell!.invoke('plan:saveStructured', {
+								threadId: payload.threadId,
+								plan: {
+									title: plan.name,
+									steps: plan.todos.map((todo) => ({
+										id: todo.id,
+										title: todo.content.split(':')[0]?.trim() ?? todo.content,
+										description: todo.content,
+										status: 'pending' as const,
+									})),
+									updatedAt: Date.now(),
+								},
+							});
+						})();
+					}
+				}
+
+				void rt.loadMessages(payload.threadId);
+				void rt.refreshThreads();
+			} else if (payload.type === 'error') {
+				rt.recordThoughtSeconds(payload.threadId, 0.3);
+				rt.planBuildPendingMarkerRef.current = null;
+				rt.resetStreamingSession({ clearThread: false });
+				rt.setStreamingThinking('');
+				rt.setToolApprovalRequest(null);
+				rt.setMistakeLimitRequest(null);
+				rt.setPlanQuestionRequestId(null);
+				rt.clearStreamingToolPreviewNow();
+				rt.resetLiveAgentBlocks();
+				rt.setMessages((messages) => [
+					...messages,
+					{ role: 'assistant', content: rt.t('app.errorPrefix', { message: translateChatError(payload.message, rt.t) }) },
+				]);
+				void rt.refreshThreads();
+			}
+		});
+
+		return () => {
+			unsub();
+		};
+	}, [runtime.shell]);
+}

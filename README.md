@@ -1,26 +1,13 @@
 # Async IDE
 
-<p align="center">
-  <img src="docs/assets/async-logo-desktop.svg" width="120" height="120" alt="Async Logo" />
-</p>
 
-<p align="center">
-  <strong>An open-source desktop shell for AI coding: agent workflow, editor, Git, and terminal in one place.</strong><br/>
-  Built for people who like the Cursor-style workflow, but want something they can actually inspect, modify, and run with their own keys.
-</p>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/like%20Cursor-open%20source-818cf8?style=flat-square" alt="Like Cursor, open source" />
-  <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License" />
-  <img src="https://img.shields.io/badge/Electron-34-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron" />
-  <img src="https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" />
-  <img src="https://img.shields.io/badge/Monaco-0.52-0078D4?style=flat-square" alt="Monaco Editor" />
-</p>
+**An open-source desktop shell for AI coding: agent workflow, editor, Git, and terminal in one place.**  
+Built for people who like the Cursor-style workflow, but want something they can actually inspect, modify, and run with their own keys.
 
-<p align="center">
-  <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a>
-</p>
+
+
+[English](README.md) | [简体中文](README.zh-CN.md)
 
 ---
 
@@ -30,12 +17,14 @@ Async IDE is an attempt to build a **Cursor-like coding workflow in the open**. 
 
 The project is released under **Apache 2.0**, uses **BYOK** model access, and keeps threads, settings, and plans **local-first** by default.
 
-| Aspect | **Cursor** | **Async IDE** |
-| --- | --- | --- |
-| **License / delivery** | Proprietary product | **Open source** codebase you can inspect and fork |
-| **Model access** | Product billing / built-in integrations | **BYOK** for OpenAI, Anthropic, Gemini, and compatible APIs |
-| **Storage model** | Product-managed workflow | **Local-first** threads, settings, and plans |
-| **Focus** | Full IDE product | Desktop **shell** centered on agent workflow, editor, Git, and terminal |
+
+| Aspect                 | **Cursor**                              | **Async IDE**                                                           |
+| ---------------------- | --------------------------------------- | ----------------------------------------------------------------------- |
+| **License / delivery** | Proprietary product                     | **Open source** codebase you can inspect and fork                       |
+| **Model access**       | Product billing / built-in integrations | **BYOK** for OpenAI, Anthropic, Gemini, and compatible APIs             |
+| **Storage model**      | Product-managed workflow                | **Local-first** threads, settings, and plans                            |
+| **Focus**              | Full IDE product                        | Desktop **shell** centered on agent workflow, editor, Git, and terminal |
+
 
 ---
 
@@ -67,27 +56,20 @@ Recent commits have mostly focused on making the agent path feel more robust and
 ## Screenshots (partial)
 
 ### Agent Layout
-<p align="center">
-  <img src="docs/assets/workspace_1.png" width="3062" alt="Async Agent Layout" />
-</p>
+
+
 
 ### Model Settings
 
-<p align="center">
-  <img src="docs/assets/setting_1.png" width="1824" alt="Async Model Settings" />
-</p>
+
 
 ### Appearance Color Palette
 
-<p align="center">
-  <img src="docs/assets/setting_2.png" width="1829" alt="Async Appearance Color Palette" />
-</p>
+
 
 #### Cursor Theme
 
-<p align="center">
-  <img src="docs/assets/setting_3.png" width="1829" alt="Async Cursor Theme" />
-</p>
+
 
 ---
 
@@ -138,10 +120,10 @@ Recent commits have mostly focused on making the agent path feel more robust and
 ```
 
 - **Main / renderer IPC** via Electron `contextBridge` and `ipcMain`.
-- **`agentLoop.ts`** handles multi-round tool calls, partial JSON streaming, tool repair, and aborts.
+- `**agentLoop.ts`** handles multi-round tool calls, partial JSON streaming, tool repair, and aborts.
 - **Structured assistant messages** are persisted locally and expanded to provider-native tool formats when needed.
 - **Local persistence** stores threads, settings, and plans as JSON / Markdown under user data.
-- **`gitService`** provides the Git layer used by the UI for status, diff, staging, commit, and push.
+- `**gitService`** provides the Git layer used by the UI for status, diff, staging, commit, and push.
 - **LSP** integration uses TypeScript Language Server for in-editor intelligence.
 
 ## Project Structure
@@ -177,13 +159,13 @@ Async/
 
 ## Local Persistence
 
-Default layout under Electron **`userData`**:
+Default layout under Electron `**userData**`:
 
-- **`async/threads.json`**: threads and messages.
-- **`async/settings.json`**: models, keys, layout, and agent options.
-- **`.async/plans/`**: saved Plan documents (Markdown).
+- `**async/threads.json**`: threads and messages.
+- `**async/settings.json**`: models, keys, layout, and agent options.
+- `**.async/plans/**`: saved Plan documents (Markdown).
 
-The renderer may use **localStorage** for small UI flags, but **`threads.json`** is the source of truth for conversations.
+The renderer may use **localStorage** for small UI flags, but `**threads.json`** is the source of truth for conversations.
 
 ---
 
@@ -198,24 +180,18 @@ The renderer may use **localStorage** for small UI flags, but **`threads.json`**
 ### Install and Run
 
 1. **Clone**:
-
-   ```bash
+  ```bash
    git clone https://github.com/ZYKJShadow/Async.git
    cd Async
-   ```
-
+  ```
 2. **Install**:
-
-   ```bash
+  ```bash
    npm install
-   ```
-
+  ```
 3. **Build and launch the desktop app**:
-
-   ```bash
+  ```bash
    npm run desktop
-   ```
-
+  ```
    This builds the main and renderer bundles, then opens Electron with `dist/index.html`.
 
 ### Development
@@ -250,11 +226,11 @@ And yes, special thanks to Claude Code for its accidental source-map-powered "op
 
 ## Roadmap
 
-- [ ] Full **PTY** terminal support for a better interactive shell experience.
-- [ ] Deeper **LSP** integration: go-to-definition, diagnostics, and hover.
-- [ ] A **plugin / tool** extension API.
-- [ ] Better large-workspace context through indexing and retrieval.
-- [ ] **MCP** (Model Context Protocol) tool integration.
+- Full **PTY** terminal support for a better interactive shell experience.
+- Deeper **LSP** integration: go-to-definition, diagnostics, and hover.
+- A **plugin / tool** extension API.
+- Better large-workspace context through indexing and retrieval.
+- **MCP** (Model Context Protocol) tool integration.
 
 ---
 
