@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AgentActivityGroup } from './AgentActivityGroup';
@@ -108,7 +108,7 @@ type Props = {
 	allowAgentFileActions?: boolean;
 };
 
-export function ChatMarkdown({
+export const ChatMarkdown = memo(function ChatMarkdown({
 	content,
 	agentUi = false,
 	planUi = false,
@@ -435,4 +435,4 @@ export function ChatMarkdown({
 			})}
 		</div>
 	);
-}
+});

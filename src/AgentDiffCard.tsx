@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
 	countDiffAddDel,
 	diffPathToWorkspaceRel,
@@ -62,7 +62,7 @@ type Props = {
 	) => void;
 };
 
-export function AgentDiffCard({ diff, workspaceRoot, onOpenFile }: Props) {
+export const AgentDiffCard = memo(function AgentDiffCard({ diff, workspaceRoot, onOpenFile }: Props) {
 	const rawPath = extractDiffDisplayPath(diff);
 	const rel = diffPathToWorkspaceRel(rawPath, workspaceRoot);
 	const openTarget = (rel || rawPath.replace(/\\/g, '/')).trim();
@@ -186,4 +186,4 @@ export function AgentDiffCard({ diff, workspaceRoot, onOpenFile }: Props) {
 			</div>
 		</div>
 	);
-}
+});

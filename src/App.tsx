@@ -12,6 +12,8 @@ import {
 	createContext,
 	memo,
 	useContext,
+	type Dispatch,
+	type SetStateAction,
 	type ReactNode,
 	type RefObject,
 } from 'react';
@@ -69,10 +71,7 @@ import {
 	type ThemeTransitionOrigin,
 	writeStoredColorMode,
 } from './colorMode';
-import {
-	type UserLlmProvider,
-	type UserModelEntry,
-} from './modelCatalog';
+// modelCatalog types are re-exported via useSettings hook return type
 import { ComposerPlusMenu, type ComposerMode } from './ComposerPlusMenu';
 import { ComposerAtMenu } from './ComposerAtMenu';
 import { ComposerSlashMenu } from './ComposerSlashMenu';
@@ -100,7 +99,6 @@ import {
 	type AgentRuleScope,
 } from './agentSettingsTypes';
 import { normalizeIndexingSettings, type IndexingSettingsState } from './indexingSettingsTypes';
-import type { EditorSettings } from './EditorSettingsPanel';
 import { tabIdFromPath, type MarkdownTabView } from './EditorTabBar';
 import {
 	isMarkdownEditorPath,
@@ -120,7 +118,6 @@ import {
 	type GitUnavailableReason,
 } from './gitAvailability';
 import {
-	IconExplorer,
 	IconGitSCM, IconSearch, IconChevron,
 	IconPlus, IconCloseSmall, IconPencil, IconTrash, IconCheckCircle, IconSettings,
 	IconHistory, IconDotsHorizontal, IconArrowUpRight,
@@ -167,7 +164,6 @@ import {
 	readSidebarLayout,
 	readStoredShellLayoutModeFromKey,
 	syncDesktopSidebarLayout,
-	syncDesktopShellLayoutMode,
 	writeStoredShellLayoutMode,
 	type ShellLayoutMode,
 } from './app/shellLayoutStorage';
@@ -274,7 +270,44 @@ type OnSendOptions = {
 	planBuildPathKey?: string;
 };
 /** 与默认导出 App 中 `foundation` useMemo 的字段一致，供内层工作区壳消费 */
-type AppShellFoundation = Record<string, unknown>;
+type AppShellFoundation =
+	ReturnType<typeof useWorkspaceManager> &
+	ReturnType<typeof useGitIntegration> &
+	Omit<
+		ReturnType<typeof useSettings>,
+		| 'setModelProviders'
+		| 'setDefaultModel'
+		| 'setModelEntries'
+		| 'setEnabledModelIds'
+		| 'projectAgentSlice'
+		| 'setProjectAgentSlice'
+		| 'workspaceDiskSkills'
+		| 'setWorkspaceDiskSkills'
+		| 'diskSkillsRefreshTicker'
+		| 'setDiskSkillsRefreshTicker'
+		| 'openSettingsPage'
+	> & {
+		shell: Window['asyncShell'];
+		t: TFunction;
+		setLocale: (locale: AppLocale) => void;
+		locale: AppLocale;
+		ipcOk: string;
+		setIpcOk: Dispatch<SetStateAction<string>>;
+		indexingSettings: IndexingSettingsState;
+		setIndexingSettings: Dispatch<SetStateAction<IndexingSettingsState>>;
+		layoutPinnedBySurface: boolean;
+		appSurface: LayoutMode | undefined;
+		shellLayoutStorageKey: string;
+		sidebarLayoutStorageKey: string;
+		colorMode: AppColorMode;
+		setColorMode: Dispatch<SetStateAction<AppColorMode>>;
+		appearanceSettings: AppAppearanceSettings;
+		setAppearanceSettings: Dispatch<SetStateAction<AppAppearanceSettings>>;
+		effectiveScheme: 'light' | 'dark';
+		setTransitionOrigin: (origin?: ThemeTransitionOrigin) => void;
+		monacoChromeTheme: 'void-light' | 'void-dark';
+		openSettingsPageBase: ReturnType<typeof useSettings>['openSettingsPage'];
+	};
 
 const AppShellFoundationContext = createContext<AppShellFoundation | null>(null);
 
@@ -341,11 +374,9 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		}
 	}, [effectiveScheme]);
 
+	// 合并 appearanceSettings 相关的 DOM 更新,减少级联渲染
 	useEffect(() => {
 		applyAppearanceSettingsToDom(appearanceSettings, effectiveScheme);
-	}, [appearanceSettings, effectiveScheme]);
-
-	useEffect(() => {
 		if (!shell) {
 			return;
 		}
@@ -1802,8 +1833,10 @@ function AppMainWorkspaceInner() {
 		if (!shell || !currentId) {
 			return;
 		}
+		// 避免与 onSelectThread 中的手动调用重复
+		if (messagesThreadId === currentId) return;
 		void loadMessages(currentId);
-	}, [shell, currentId, loadMessages]);
+	}, [shell, currentId, loadMessages, messagesThreadId]);
 
 	const workspaceSwitchSeqRef = useRef(0);
 	const applyWorkspacePath = useCallback(
@@ -1954,7 +1987,7 @@ function AppMainWorkspaceInner() {
 		[flashComposerAttachErr, runDomEditCommand, runMonacoEditCommand, writeClipboardText]
 	);
 
-	const onNewThread = async () => {
+	const onNewThread = useCallback(async () => {
 		if (!shell) {
 			return;
 		}
@@ -1983,7 +2016,24 @@ function AppMainWorkspaceInner() {
 				composerRichHeroRef.current?.focus();
 			}
 		});
-	};
+	}, [
+		shell,
+		refreshThreads,
+		setCurrentId,
+		setLastTurnUsage,
+		setAwaitingReply,
+		setStreaming,
+		setStreamingThinking,
+		clearStreamingToolPreviewNow,
+		resetLiveAgentBlocks,
+		setParsedPlan,
+		setPlanFilePath,
+		setPlanFileRelPath,
+		loadMessages,
+		setComposerSegments,
+		setInlineResendSegments,
+		setResendFromUserIndex,
+	]);
 
 	onNewThreadRef.current = onNewThread;
 
@@ -2006,8 +2056,24 @@ function AppMainWorkspaceInner() {
 			}
 			await onNewThreadRef.current();
 		},
-		[workspace, openWorkspaceByPath, closeWorkspaceMenu]
+		[workspace, openWorkspaceByPath, closeWorkspaceMenu, setHiddenAgentWorkspacePaths]
 	);
+
+	// 优化的回调函数,避免 JSX 中创建内联函数
+	const handleCloseWorkspacePicker = useCallback(() => setWorkspacePickerOpen(false), []);
+	const handleCloseQuickOpen = useCallback(() => {
+		setQuickOpenOpen(false);
+		setQuickOpenSeed('');
+	}, []);
+	const handleCloseWorkspaceTools = useCallback(() => setWorkspaceToolsOpen(false), []);
+	const handleCloseModelPicker = useCallback(() => setModelPickerOpen(false), []);
+	const handleClosePlusMenu = useCallback(() => setPlusMenuOpen(false), []);
+	const handleCloseGitBranchPicker = useCallback(() => setGitBranchPickerOpen(false), []);
+	const handleToggleFileMenu = useCallback(() => toggleMenubarMenu('file'), [toggleMenubarMenu]);
+	const handleToggleEditMenu = useCallback(() => toggleMenubarMenu('edit'), [toggleMenubarMenu]);
+	const handleCloseEditorChatMore = useCallback(() => setEditorChatMoreOpen(false), []);
+	const handleOpenSettingsGeneral = useCallback(() => openSettingsPage('general'), [openSettingsPage]);
+	const handleOpenSettingsModels = useCallback(() => openSettingsPage('models'), [openSettingsPage]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -2048,9 +2114,10 @@ function AppMainWorkspaceInner() {
 			setResendFromUserIndex(null);
 			setComposerSegments([]);
 			setInlineResendSegments([]);
+			setAgentFilePreview(null);
 			await loadMessages(id);
 		},
-		[shell, workspace, openWorkspaceByPath, loadMessages, clearStreamingToolPreviewNow, resetLiveAgentBlocks]
+		[shell, workspace, openWorkspaceByPath, loadMessages, clearStreamingToolPreviewNow, resetLiveAgentBlocks, setAgentFilePreview]
 	);
 
 	const selectThreadByHistoryIndex = useCallback(
@@ -4154,11 +4221,20 @@ function AppMainWorkspaceInner() {
 		return idx;
 	}, [displayMessages]);
 
+	const segmentCacheRef = useRef<{ content: string; result: ReturnType<typeof segmentAssistantContentUnified> } | null>(null);
+
 	const agentFileChanges = useMemo(() => {
 		if (composerMode !== 'agent') return [];
 		const lastAssistant = [...displayMessages].reverse().find((m) => m.role === 'assistant');
 		if (!lastAssistant) return [];
-		const segs = segmentAssistantContentUnified(lastAssistant.content, { t });
+		// 如果内容未变，使用缓存的段分析结果
+		let segs;
+		if (segmentCacheRef.current?.content === lastAssistant.content) {
+			segs = segmentCacheRef.current.result;
+		} else {
+			segs = segmentAssistantContentUnified(lastAssistant.content, { t });
+			segmentCacheRef.current = { content: lastAssistant.content, result: segs };
+		}
 		const all = collectFileChanges(segs);
 		const afterDismiss =
 			dismissedFiles.size > 0 ? all.filter((f) => !dismissedFiles.has(f.path)) : all;
@@ -5333,9 +5409,7 @@ function AppMainWorkspaceInner() {
 								className={`ref-menu-item${fileMenuOpen ? ' is-active' : ''}`}
 								aria-expanded={fileMenuOpen}
 								aria-haspopup="menu"
-								onClick={() => {
-									toggleMenubarMenu('file');
-								}}
+								onClick={handleToggleFileMenu}
 							>
 								{t('app.menuFile')}
 							</button>
@@ -5370,9 +5444,7 @@ function AppMainWorkspaceInner() {
 								aria-expanded={editMenuOpen}
 								aria-haspopup="menu"
 								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => {
-									toggleMenubarMenu('edit');
-								}}
+								onClick={handleToggleEditMenu}
 							>
 								{t('app.menuEdit')}
 							</button>
@@ -5713,7 +5785,7 @@ function AppMainWorkspaceInner() {
 					<button
 						type="button"
 						className="ref-icon-tile ref-settings-btn"
-						onClick={() => openSettingsPage('general')}
+						onClick={handleOpenSettingsGeneral}
 						title={t('app.settings')}
 						aria-label={t('app.settingsAria')}
 					>
@@ -5939,7 +6011,7 @@ function AppMainWorkspaceInner() {
 											</label>
 											<div className="ref-editor-chat-history-section-label">{t('app.today')}</div>
 											<div className="ref-editor-chat-history-list">
-												{todayThreads.map(renderThreadItem)}
+												{todayThreads.map((th) => renderThreadItem(th))}
 											</div>
 											{archivedThreads.length > 0 ? (
 												<>
@@ -5947,7 +6019,7 @@ function AppMainWorkspaceInner() {
 														{t('app.archived')}
 													</div>
 													<div className="ref-editor-chat-history-list">
-														{archivedThreads.map(renderThreadItem)}
+														{archivedThreads.map((th) => renderThreadItem(th))}
 													</div>
 												</>
 											) : null}
@@ -5999,8 +6071,8 @@ function AppMainWorkspaceInner() {
 												className="ref-editor-chat-more-item"
 												role="menuitem"
 												onClick={() => {
-													setEditorChatMoreOpen(false);
-													openSettingsPage('general');
+													handleCloseEditorChatMore();
+													handleOpenSettingsGeneral();
 												}}
 											>
 												{t('app.settings')}
@@ -6074,7 +6146,7 @@ function AppMainWorkspaceInner() {
 				<section className="ref-drawer ref-drawer--terminal-only">
 					<div className="ref-drawer-head">
 						<span className="ref-drawer-title">{t('app.terminalDrawer')}</span>
-						<button type="button" className="ref-drawer-close" onClick={() => setWorkspaceToolsOpen(false)}>
+						<button type="button" className="ref-drawer-close" onClick={handleCloseWorkspaceTools}>
 							{t('app.terminalCollapse')}
 						</button>
 					</div>
@@ -6088,7 +6160,7 @@ function AppMainWorkspaceInner() {
 
 			<OpenWorkspaceModal
 				open={workspacePickerOpen}
-				onClose={() => setWorkspacePickerOpen(false)}
+				onClose={handleCloseWorkspacePicker}
 				shell={shell}
 				homePath={homePath}
 				onWorkspaceOpened={(p) => void applyWorkspacePath(p)}
@@ -6096,10 +6168,7 @@ function AppMainWorkspaceInner() {
 
 			<QuickOpenPalette
 				open={quickOpenOpen}
-				onClose={() => {
-					setQuickOpenOpen(false);
-					setQuickOpenSeed('');
-				}}
+				onClose={handleCloseQuickOpen}
 				workspaceOpen={!!workspace}
 				workspaceFiles={workspaceFileList}
 				recentFilePaths={quickOpenRecentFiles}
@@ -6108,7 +6177,7 @@ function AppMainWorkspaceInner() {
 				onOpenFile={(rel, a, b) => void onExplorerOpenFile(rel, a, b)}
 				onOpenWorkspaceFolder={(p) => void openWorkspaceByPath(p)}
 				onOpenWorkspacePicker={() => setWorkspacePickerOpen(true)}
-				onOpenSettings={() => openSettingsPage('general')}
+				onOpenSettings={handleOpenSettingsGeneral}
 				onFocusSearchSidebar={(q) => focusSearchSidebarFromQuickOpen(q)}
 				onGoToLine={goToLineInEditor}
 				initialQuery={quickOpenSeed}
@@ -6184,7 +6253,7 @@ function AppMainWorkspaceInner() {
 
 			<ComposerPlusMenu
 				open={plusMenuOpen}
-				onClose={() => setPlusMenuOpen(false)}
+				onClose={handleClosePlusMenu}
 				anchorRef={plusMenuAnchorRefForDropdown}
 				mode={composerMode}
 				onSelectMode={setComposerModePersist}
@@ -6192,7 +6261,7 @@ function AppMainWorkspaceInner() {
 
 			<GitBranchPickerDropdown
 				open={gitBranchPickerOpen}
-				onClose={() => setGitBranchPickerOpen(false)}
+				onClose={handleCloseGitBranchPicker}
 				anchorRef={composerGitBranchAnchorRef}
 				shell={shell ?? null}
 				repoReady={gitStatusOk}
@@ -6206,13 +6275,13 @@ function AppMainWorkspaceInner() {
 
 			<ModelPickerDropdown
 				open={modelPickerOpen}
-				onClose={() => setModelPickerOpen(false)}
+				onClose={handleCloseModelPicker}
 				anchorRef={modelPickerAnchorRefForDropdown}
 				items={modelPickerItems}
 				selectedId={defaultModel}
 				onSelectModel={(id) => void onPickDefaultModel(id)}
-				onNavigateToSettings={() => openSettingsPage('models')}
-				onAddModels={() => openSettingsPage('models')}
+				onNavigateToSettings={handleOpenSettingsModels}
+				onAddModels={handleOpenSettingsModels}
 				getThinkingLevel={(id) => thinkingByModelId[id] ?? 'medium'}
 				onThinkingLevelChange={(modelId, v) => {
 					setThinkingByModelId((prev) => ({ ...prev, [modelId]: v }));

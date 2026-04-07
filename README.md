@@ -56,19 +56,28 @@ Recent commits have mostly focused on making the agent path feel more robust and
 ## Screenshots (partial)
 
 ### Agent Layout
-
+<p align="center">
+  <img src="docs/assets/workspace_1.png" width="3062" alt="Async Agent 布局" />
+</p>
 
 
 ### Model Settings
-
+<p align="center">
+  <img src="docs/assets/setting_1.png" width="1824" alt="Async 模型设置" />
+</p>
 
 
 ### Appearance Color Palette
 
-
+<p align="center">
+  <img src="docs/assets/setting_2.png" width="1829" alt="Async 模型设置" />
+</p>
 
 #### Cursor Theme
 
+<p align="center">
+  <img src="docs/assets/setting_3.png" width="1829" alt="Async 模型设置" />
+</p>
 
 
 ---

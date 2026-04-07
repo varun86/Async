@@ -209,7 +209,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	agentPlanSummaryCard,
 }: AgentChatPanelProps) {
 	const isEditorRail = layout === 'editor-rail';
-	const conversationRenderKey = messagesThreadId ?? currentId ?? 'no-thread';
+	const conversationRenderKey = messagesThreadId ?? 'no-thread';
 	const messageTrackGap = isEditorRail ? 20 : 22;
 	const virtualListEnabled =
 		hasConversation && displayMessages.length >= MESSAGE_LIST_VIRTUAL_THRESHOLD;
