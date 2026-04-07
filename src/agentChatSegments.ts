@@ -1353,7 +1353,28 @@ export function segmentsFromClosedToolRound(
 
 /** 合并相邻 markdown 并折叠 activity_group，供 live blocks 与解析结果共用 */
 export function finalizeAssistantSegmentsForRender(segments: AssistantSegment[]): AssistantSegment[] {
-	return groupActivities(mergeAdjacentMarkdown(segments));
+	const deduped = deduplicatePlanTodos(mergeAdjacentMarkdown(segments));
+	return groupActivities(deduped);
+}
+
+/**
+ * 去重 plan_todo 段：同一条消息中可能有多个 TodoWrite 调用，
+ * 每次调用都是完整列表替换，因此只保留最后一个并移到末尾。
+ */
+function deduplicatePlanTodos(segments: AssistantSegment[]): AssistantSegment[] {
+	let lastPlanTodo: AssistantSegment | null = null;
+	const out: AssistantSegment[] = [];
+	for (const seg of segments) {
+		if (seg.type === 'plan_todo') {
+			lastPlanTodo = seg;
+		} else {
+			out.push(seg);
+		}
+	}
+	if (lastPlanTodo) {
+		out.push(lastPlanTodo);
+	}
+	return out;
 }
 
 function countLines(s: string): number {
