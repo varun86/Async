@@ -590,6 +590,10 @@
 	min-height: 100%;
 }
 
+.ref-editor-sidebar-file-list--virtual {
+	min-height: 0;
+}
+
 .ref-editor-sidebar-file-row {
 	display: flex;
 	align-items: center;

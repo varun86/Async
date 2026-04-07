@@ -30,7 +30,7 @@ export function useAgentChatPanelProps({
 		[shell]
 	);
 
-	return useMemo(
+	const result = useMemo(
 		() => ({
 			...rest,
 			onOpenWorkspaceFile,
@@ -54,7 +54,7 @@ export function useAgentChatPanelProps({
 			rest.inlineResendRootRef,
 			rest.onMessagesScroll,
 			rest.awaitingReply,
-			rest.thinkingTick,
+			rest.thinkingTickRef,
 			rest.streamStartedAtRef,
 			rest.firstTokenAtRef,
 			rest.thoughtSecondsByThread,
@@ -116,4 +116,11 @@ export function useAgentChatPanelProps({
 			rest.agentPlanSummaryCard,
 		]
 	);
+
+	if (import.meta.env.DEV) {
+		// 监控 props 重建频率
+		console.log(`[perf] useAgentChatPanelProps rebuilt: messages=${rest.displayMessages.length}, thread=${rest.messagesThreadId}`);
+	}
+
+	return result;
 }

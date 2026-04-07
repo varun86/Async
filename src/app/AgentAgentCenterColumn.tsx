@@ -33,6 +33,10 @@ export const AgentAgentCenterColumn = memo(function AgentAgentCenterColumn({
 	toggleAgentRightSidebarView,
 	chatPanelProps,
 }: AgentAgentCenterColumnProps) {
+	if (import.meta.env.DEV) {
+		console.log(`[perf] AgentAgentCenterColumn render: thread=${chatPanelProps.messagesThreadId}, hasConv=${hasConversation}`);
+	}
+	
 	return (
 		<main
 			className={`ref-center ref-center--agent-layout ${hasConversation ? 'ref-center--chat' : 'ref-center--empty-agent'}`}
@@ -82,5 +86,17 @@ export const AgentAgentCenterColumn = memo(function AgentAgentCenterColumn({
 
 			<AgentChatPanel layout="agent-center" {...chatPanelProps} />
 		</main>
+	);
+}, (prev, next) => {
+	// 自定义比较：只关注真正影响渲染的关键 props
+	return (
+		prev.hasConversation === next.hasConversation &&
+		prev.workspace === next.workspace &&
+		prev.workspaceBasename === next.workspaceBasename &&
+		prev.currentThreadTitle === next.currentThreadTitle &&
+		prev.hasAgentPlanSidebarContent === next.hasAgentPlanSidebarContent &&
+		prev.agentRightSidebarOpen === next.agentRightSidebarOpen &&
+		prev.agentRightSidebarView === next.agentRightSidebarView &&
+		prev.chatPanelProps === next.chatPanelProps // 引用比较，由 useAgentChatPanelProps 的 useMemo 保证
 	);
 });

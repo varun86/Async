@@ -6,7 +6,7 @@
  * liveTurn 由 true→false（回合结束）时：若仍展开则延迟平滑折叠。
  * 用户手动点击 toggle 后：不再自动覆盖，尊重用户选择。
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ActivityGroupSegment, ActivitySegment } from './agentChatSegments';
 import { AgentResultCard } from './AgentResultCard';
 
@@ -24,7 +24,7 @@ type Props = {
 	followingToolLikeWork?: boolean;
 };
 
-export function AgentActivityGroup({
+export const AgentActivityGroup = memo(function AgentActivityGroup({
 	group,
 	onOpenFile,
 	liveTurn = false,
@@ -136,7 +136,7 @@ export function AgentActivityGroup({
 			</div>
 		</div>
 	);
-}
+});
 
 function ActivityRow({
 	item,

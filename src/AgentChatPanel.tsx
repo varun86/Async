@@ -52,7 +52,7 @@ export type AgentChatPanelProps = {
 	inlineResendRootRef: RefObject<HTMLDivElement | null>;
 	onMessagesScroll: () => void;
 	awaitingReply: boolean;
-	thinkingTick: number;
+	thinkingTickRef: React.RefObject<number>;
 	streamStartedAtRef: RefObject<number | null>;
 	firstTokenAtRef: RefObject<number | null>;
 	thoughtSecondsByThread: Record<string, number>;
@@ -129,6 +129,62 @@ export type AgentChatPanelProps = {
 /** 达到条数后启用虚拟列表（与 .ref-messages-track 的 gap 对齐，减轻长对话 DOM 压力） */
 const MESSAGE_LIST_VIRTUAL_THRESHOLD = 48;
 
+/** 仅长列表挂载：短对话不调用 useVirtualizer，避免与 composer 测高等同步布局挤在同一任务 */
+const AgentMessagesVirtualizedTrack = memo(function AgentMessagesVirtualizedTrack({
+	viewportRef,
+	trackRef,
+	conversationRenderKey,
+	messageTrackGap,
+	count,
+	renderRow,
+}: {
+	viewportRef: RefObject<HTMLDivElement | null>;
+	trackRef: RefObject<HTMLDivElement | null>;
+	conversationRenderKey: string;
+	messageTrackGap: number;
+	count: number;
+	renderRow: (index: number) => ReactNode;
+}) {
+	const virtualizer = useVirtualizer({
+		count,
+		getScrollElement: () => viewportRef.current,
+		estimateSize: () => 140,
+		overscan: 12,
+		gap: messageTrackGap,
+		getItemKey: (index) => `${conversationRenderKey}-${index}`,
+	});
+	return (
+		<div
+			key={`messages-track-${conversationRenderKey}`}
+			ref={trackRef}
+			className="ref-messages-track ref-messages-track--virtual"
+			style={{
+				height: `${virtualizer.getTotalSize()}px`,
+				position: 'relative',
+				width: '100%',
+			}}
+		>
+			{virtualizer.getVirtualItems().map((vi) => (
+				<div
+					key={vi.key}
+					data-index={vi.index}
+					ref={virtualizer.measureElement}
+					className="ref-msg-virtual-row"
+					style={{
+						position: 'absolute',
+						top: 0,
+						left: 0,
+						width: '100%',
+						transform: `translateY(${vi.start}px)`,
+					}}
+				>
+					{renderRow(vi.index)}
+				</div>
+			))}
+		</div>
+	);
+});
+
 export const AgentChatPanel = memo(function AgentChatPanel({
 	layout = 'agent-center',
 	t,
@@ -144,7 +200,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	inlineResendRootRef,
 	onMessagesScroll,
 	awaitingReply,
-	thinkingTick,
+	thinkingTickRef,
 	streamStartedAtRef,
 	firstTokenAtRef,
 	thoughtSecondsByThread,
@@ -208,20 +264,14 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	scrollMessagesToBottom,
 	agentPlanSummaryCard,
 }: AgentChatPanelProps) {
+	if (import.meta.env.DEV) {
+		console.log(`[perf] AgentChatPanel render: thread=${messagesThreadId}, messages=${displayMessages.length}, hasConv=${hasConversation}`);
+	}
 	const isEditorRail = layout === 'editor-rail';
-	const conversationRenderKey = messagesThreadId ?? currentId ?? 'no-thread';
+	const conversationRenderKey = messagesThreadId ?? 'no-thread';
 	const messageTrackGap = isEditorRail ? 20 : 22;
 	const virtualListEnabled =
 		hasConversation && displayMessages.length >= MESSAGE_LIST_VIRTUAL_THRESHOLD;
-
-	const virtualizer = useVirtualizer({
-		count: virtualListEnabled ? displayMessages.length : 0,
-		getScrollElement: () => messagesViewportRef.current,
-		estimateSize: () => 140,
-		overscan: 12,
-		gap: messageTrackGap,
-		getItemKey: (index) => `${conversationRenderKey}-${index}`,
-	});
 
 	const messageNodeAtIndex = (i: number): ReactNode => {
 			const m = displayMessages[i];
@@ -244,7 +294,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			let liveThoughtMeta: ComponentProps<typeof ChatMarkdown>['liveThoughtMeta'] = null;
 			let thoughtAfterBody = false;
 			if (showLiveThought && stAt) {
-				void thinkingTick;
+				void thinkingTickRef.current; // 读取 ref 以建立依赖
 				const assistantTurnHasOutput =
 					streaming.trim().length > 0 ||
 					streamingToolPreview != null ||
@@ -411,34 +461,14 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			onScroll={onMessagesScroll}
 		>
 			{virtualListEnabled ? (
-				<div
-					key={`messages-track-${conversationRenderKey}`}
-					ref={messagesTrackRef}
-					className="ref-messages-track ref-messages-track--virtual"
-					style={{
-						height: `${virtualizer.getTotalSize()}px`,
-						position: 'relative',
-						width: '100%',
-					}}
-				>
-					{virtualizer.getVirtualItems().map((vi) => (
-						<div
-							key={vi.key}
-							data-index={vi.index}
-							ref={virtualizer.measureElement}
-							className="ref-msg-virtual-row"
-							style={{
-								position: 'absolute',
-								top: 0,
-								left: 0,
-								width: '100%',
-								transform: `translateY(${vi.start}px)`,
-							}}
-						>
-							{messageNodeAtIndex(vi.index)}
-						</div>
-					))}
-				</div>
+				<AgentMessagesVirtualizedTrack
+					viewportRef={messagesViewportRef}
+					trackRef={messagesTrackRef}
+					conversationRenderKey={conversationRenderKey}
+					messageTrackGap={messageTrackGap}
+					count={displayMessages.length}
+					renderRow={messageNodeAtIndex}
+				/>
 			) : (
 				<div
 					key={`messages-track-${conversationRenderKey}`}

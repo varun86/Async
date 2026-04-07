@@ -113,7 +113,8 @@ function escapeStreamAttr(s: string): string {
 export function useStreamingChat() {
 	const [streaming, setStreaming] = useState('');
 	const [awaitingReply, setAwaitingReply] = useState(false);
-	const [thinkingTick, setThinkingTick] = useState(0);
+	// 改为 ref 避免每秒 10 次重渲染
+	const thinkingTickRef = useRef(0);
 	const [thoughtSecondsByThread, setThoughtSecondsByThread] = useState<Record<string, number>>({});
 	const [subAgentBgToast, setSubAgentBgToast] = useState<StreamingToast>(null);
 
@@ -191,11 +192,16 @@ export function useStreamingChat() {
 		setStreaming('');
 	}, []);
 
+	// thinkingTick 改为 ref 后仍需触发 UI 更新（思考计时器显示），使用 forceUpdate
+	const [, forceUpdate] = useState(0);
 	useEffect(() => {
 		if (!awaitingReply || streaming.length > 0) {
 			return;
 		}
-		const id = window.setInterval(() => setThinkingTick((x) => x + 1), 100);
+		const id = window.setInterval(() => {
+			thinkingTickRef.current += 1;
+			forceUpdate(x => x + 1); // 仅更新显示思考时间的组件
+		}, 1000); // 降低到 1 秒一次，足够显示秒数
 		return () => window.clearInterval(id);
 	}, [awaitingReply, streaming.length]);
 
@@ -206,7 +212,7 @@ export function useStreamingChat() {
 		setStreaming,
 		awaitingReply,
 		setAwaitingReply,
-		thinkingTick,
+		thinkingTickRef,
 		thoughtSecondsByThread,
 		setThoughtSecondsByThread,
 		subAgentBgToast,

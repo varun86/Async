@@ -4,6 +4,7 @@ import { existsSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import * as pty from 'node-pty';
 import { getWorkspaceRootForWebContents, resolveWorkspacePath } from './workspace.js';
+import { isWindows } from './platform.js';
 
 type Session = { pty: pty.IPty; sender: WebContents };
 
@@ -34,7 +35,8 @@ export function registerTerminalPtyIpc(): void {
 				}
 			}
 		}
-		const isWin = process.platform === 'win32';
+		// 使用统一的平台检测
+		const isWin = isWindows();
 		const shell = isWin ? process.env.ComSpec || 'cmd.exe' : process.env.SHELL || '/bin/bash';
 		/** Windows：启动时切 UTF-8 代码页，避免终端内中文乱码。 */
 		const args: string[] = isWin ? ['/k', 'chcp 65001>nul'] : ['-i'];

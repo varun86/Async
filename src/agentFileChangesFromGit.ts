@@ -5,6 +5,12 @@ export function normalizeWorkspaceRelPath(p: string): string {
 	return p.trim().replace(/\\/g, '/').replace(/^\.\//, '');
 }
 
+/**
+ * 判断是否应该忽略路径大小写（Windows 文件系统不区分大小写）
+ * 
+ * 使用 navigator.platform 检测（浏览器环境）
+ * 注意：Electron 主进程应使用 process.platform
+ */
 function shouldIgnoreWorkspacePathCase(): boolean {
 	if (typeof navigator === 'undefined') {
 		return false;

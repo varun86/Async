@@ -23,6 +23,7 @@ import {
 } from './shellLayoutStorage';
 
 type SettingsGetPayload = LoadedSettingsSnapshot & {
+	language?: string;
 	ui?: {
 		sidebarLayout?: { left?: unknown; right?: unknown };
 		colorMode?: string;

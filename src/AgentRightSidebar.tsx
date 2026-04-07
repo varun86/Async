@@ -1,4 +1,4 @@
-import { memo, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
+import { memo, useEffect, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
 import { AgentFilePreviewPanel } from './AgentFilePreviewPanel';
 import { ChatMarkdown } from './ChatMarkdown';
 import { VoidSelect } from './VoidSelect';
@@ -10,6 +10,8 @@ import {
 	IconEye,
 	IconGitSCM,
 	IconRefresh,
+	IconArrowUp,
+	IconArrowUpRight,
 } from './icons';
 import type { TFunction } from './i18n';
 import type { ModelPickerItem } from './ModelPickerDropdown';
@@ -127,6 +129,170 @@ function GitDiffLines({ diff, t }: { diff: string; t: TFunction }) {
 	);
 }
 
+type CommitAction = 'commit' | 'commit-push' | 'commit-pr';
+
+function CommitModal({
+	t,
+	gitBranch,
+	changeCount,
+	diffTotals,
+	commitMsg,
+	setCommitMsg,
+	onClose,
+	onCommit,
+	previousBranch,
+}: {
+	t: TFunction;
+	gitBranch: string;
+	changeCount: number;
+	diffTotals: { additions: number; deletions: number };
+	commitMsg: string;
+	setCommitMsg: (msg: string) => void;
+	onClose: () => void;
+	onCommit: (action: CommitAction, includeUnstaged: boolean, isDraft: boolean) => void;
+	previousBranch?: string;
+}) {
+	const [selectedAction, setSelectedAction] = useState<CommitAction>('commit');
+	const [isDraft, setIsDraft] = useState(false);
+	const [includeUnstaged, setIncludeUnstaged] = useState(true);
+
+	const showBranchWarning = previousBranch && previousBranch !== gitBranch;
+
+	return (
+		<div className="ref-commit-modal-overlay" onClick={onClose}>
+			<div className="ref-commit-modal" onClick={(e) => e.stopPropagation()}>
+				<div className="ref-commit-modal-header">
+					<div className="ref-commit-modal-icon">
+						<IconGitSCM />
+					</div>
+					<button type="button" className="ref-commit-modal-close" onClick={onClose} aria-label={t('app.close')}>
+						<IconCloseSmall />
+					</button>
+				</div>
+				
+				<h2 className="ref-commit-modal-title">{t('app.commitYourChanges')}</h2>
+				
+				<div className="ref-commit-modal-section">
+					<div className="ref-commit-modal-row">
+						<span className="ref-commit-modal-label">{t('app.branch')}</span>
+						<span className="ref-commit-modal-value">
+							<IconArrowUpRight />
+							{gitBranch || 'master'}
+						</span>
+					</div>
+					
+					<div className="ref-commit-modal-row">
+						<span className="ref-commit-modal-label">{t('app.changes')}</span>
+						<span className="ref-commit-modal-value">
+							{t('app.commitFiles', { count: String(changeCount) })}
+							{diffTotals.additions > 0 && (
+								<span className="ref-commit-stat-add">+{diffTotals.additions}</span>
+							)}
+							{diffTotals.deletions > 0 && (
+								<span className="ref-commit-stat-del">-{diffTotals.deletions}</span>
+							)}
+						</span>
+					</div>
+					
+					<label className="ref-commit-modal-toggle">
+						<input
+							type="checkbox"
+							checked={includeUnstaged}
+							onChange={(e) => setIncludeUnstaged(e.target.checked)}
+						/>
+						<span className="ref-commit-modal-toggle-slider"></span>
+						<span className="ref-commit-modal-toggle-label">{t('app.includeUnstaged')}</span>
+					</label>
+				</div>
+				
+				<div className="ref-commit-modal-section">
+					<div className="ref-commit-modal-section-header">
+						<span className="ref-commit-modal-label">{t('app.commitMessage')}</span>
+						<button type="button" className="ref-commit-modal-link">
+							{t('app.customInstructions')}
+						</button>
+					</div>
+					<textarea
+						className="ref-commit-modal-textarea"
+						placeholder={t('app.leaveBlankAutogenerate')}
+						value={commitMsg}
+						onChange={(e) => setCommitMsg(e.target.value)}
+						autoFocus
+					/>
+				</div>
+				
+				<div className="ref-commit-modal-section">
+					<h3 className="ref-commit-modal-section-title">{t('app.nextSteps')}</h3>
+					<div className="ref-commit-modal-actions">
+						<button
+							type="button"
+							className={`ref-commit-modal-action ${selectedAction === 'commit' ? 'is-active' : ''}`}
+							onClick={() => setSelectedAction('commit')}
+						>
+							<IconGitSCM />
+							<span>{t('app.commit')}</span>
+							{selectedAction === 'commit' && <span className="ref-commit-modal-check">✓</span>}
+						</button>
+						<button
+							type="button"
+							className={`ref-commit-modal-action ${selectedAction === 'commit-push' ? 'is-active' : ''}`}
+							onClick={() => setSelectedAction('commit-push')}
+						>
+							<IconArrowUp />
+							<span>{t('app.commitPush')}</span>
+							{selectedAction === 'commit-push' && <span className="ref-commit-modal-check">✓</span>}
+						</button>
+						<button
+							type="button"
+							className={`ref-commit-modal-action ${selectedAction === 'commit-pr' ? 'is-active' : ''}`}
+							onClick={() => setSelectedAction('commit-pr')}
+						>
+							<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+								<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+							</svg>
+							<span>{t('app.commitAndCreatePR')}</span>
+							{selectedAction === 'commit-pr' && <span className="ref-commit-modal-check">✓</span>}
+						</button>
+					</div>
+				</div>
+				
+				{showBranchWarning && (
+					<div className="ref-commit-modal-warning">
+						<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" className="ref-commit-modal-warning-icon">
+							<path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 10.5a.75.75 0 110-1.5.75.75 0 010 1.5zM8.75 4.5v4a.75.75 0 01-1.5 0v-4a.75.75 0 011.5 0z"/>
+						</svg>
+						<span>
+							{t('app.commitBranchWarning', {
+								oldBranch: previousBranch,
+								newBranch: gitBranch,
+							})}
+						</span>
+					</div>
+				)}
+				
+				<div className="ref-commit-modal-footer">
+					<label className="ref-commit-modal-toggle">
+						<input
+							type="checkbox"
+							checked={isDraft}
+							onChange={(e) => setIsDraft(e.target.checked)}
+						/>
+						<span className="ref-commit-modal-toggle-slider"></span>
+						<span className="ref-commit-modal-toggle-label">{t('app.draft')}</span>
+					</label>
+					<button
+						type="button"
+						className="ref-commit-modal-continue"
+						onClick={() => onCommit(selectedAction, includeUnstaged, isDraft)}
+					>
+						{t('app.continue')}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 function RightSidebarTabs({
 	t,
 	hasPlan,
@@ -153,15 +319,6 @@ function RightSidebarTabs({
 					<IconDoc />
 				</button>
 			) : null}
-			<button
-				type="button"
-				aria-label={t('app.tabGit')}
-				title={t('app.tabGit')}
-				className={`ref-right-icon-tab ${activeView === 'git' ? 'is-active' : ''}`}
-				onClick={() => openView('git')}
-			>
-				<IconGitSCM />
-			</button>
 			<button
 				type="button"
 				aria-label={t('common.close')}
@@ -226,6 +383,15 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 	onCommitAndPush,
 	gitActionError,
 }: AgentRightSidebarProps) {
+	// 用户打开 Git 视图时刷新状态
+	useEffect(() => {
+		if (view === 'git' && open) {
+			void refreshGit();
+		}
+	}, [view, open, refreshGit]);
+	
+	const [showCommitModal, setShowCommitModal] = useState(false);
+	
 	const agentFilePreviewTitle =
 		agentFilePreview?.relPath?.split('/').pop() || agentFilePreview?.relPath || t('app.filePreview');
 	const gitTitle =
@@ -482,13 +648,28 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 						<span className="ref-agent-review-kicker">{t('app.tabGit')}</span>
 						<span className="ref-agent-review-title">{gitTitle}</span>
 					</div>
-					<RightSidebarTabs
-						t={t}
-						hasPlan={hasAgentPlanSidebarContent}
-						activeView="git"
-						openView={openView}
-						closeSidebar={closeSidebar}
-					/>
+					<div className="ref-agent-review-actions">
+						{gitUnavailableReason === 'none' && changeCount > 0 && (
+							<button
+								type="button"
+								className="ref-git-commit-btn-top"
+								onClick={() => setShowCommitModal(true)}
+							>
+								<IconGitSCM />
+								<span>{t('app.commit')}</span>
+								<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+									<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+								</svg>
+							</button>
+						)}
+						<RightSidebarTabs
+							t={t}
+							hasPlan={hasAgentPlanSidebarContent}
+							activeView="git"
+							openView={openView}
+							closeSidebar={closeSidebar}
+						/>
+					</div>
 				</div>
 				<div className="ref-right-panel-stage">
 					<div className="ref-right-panel-view ref-right-panel-view--agent">
@@ -565,28 +746,6 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 										})}
 									</div>
 								) : null}
-								{gitUnavailableReason === 'none' ? (
-									<>
-										<input
-											className="ref-commit-field"
-											placeholder={t('app.commitPlaceholder')}
-											value={commitMsg}
-											onChange={(e) => setCommitMsg(e.target.value)}
-										/>
-										<div className="ref-commit-actions">
-											<button type="button" className="ref-commit-btn" onClick={onCommitOnly}>
-												{t('app.commit')}
-											</button>
-											<button
-												type="button"
-												className="ref-commit-btn-secondary"
-												onClick={onCommitAndPush}
-											>
-												{t('app.commitPush')}
-											</button>
-										</div>
-									</>
-								) : null}
 								{gitUnavailableReason === 'none' && gitActionError ? (
 									<p className="ref-git-action-error">{gitActionError}</p>
 								) : null}
@@ -594,6 +753,28 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 						</div>
 					</div>
 				</div>
+				
+				{showCommitModal && (
+					<CommitModal
+						t={t}
+						gitBranch={gitBranch}
+						changeCount={changeCount}
+						diffTotals={diffTotals}
+						commitMsg={commitMsg}
+						setCommitMsg={setCommitMsg}
+						onClose={() => setShowCommitModal(false)}
+						onCommit={(action, includeUnstaged, isDraft) => {
+							setShowCommitModal(false);
+							// TODO: Pass includeUnstaged and isDraft to commit functions
+							if (action === 'commit') {
+								onCommitOnly();
+							} else if (action === 'commit-push') {
+								onCommitAndPush();
+							}
+							// commit-pr can be implemented later
+						}}
+					/>
+				)}
 			</div>
 		);
 	}

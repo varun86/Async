@@ -49,6 +49,24 @@ export function useGitIntegration(shell: Shell | undefined, workspace: string | 
 			setGitChangedPaths(r.changedPaths ?? []);
 			setGitBranchList(Array.isArray(r.branches) ? r.branches : []);
 			setGitBranchListCurrent(typeof r.current === 'string' ? r.current : '');
+			
+			// 直接获取 diffPreviews
+			const changedPaths = r.changedPaths ?? [];
+			if (changedPaths.length > 0) {
+				setDiffLoading(true);
+				try {
+					const diffR = (await shell.invoke('git:diffPreviews', changedPaths)) as
+						| { ok: true; previews: Record<string, DiffPreview> }
+						| { ok: false };
+					if (diffR.ok) {
+						setDiffPreviews(diffR.previews);
+					}
+				} catch (e) {
+					console.error('[Git] Failed to load diff previews:', e);
+				} finally {
+					setDiffLoading(false);
+				}
+			}
 		} else {
 			setGitStatusOk(false);
 			setGitBranch('—');
@@ -67,27 +85,41 @@ export function useGitIntegration(shell: Shell | undefined, workspace: string | 
 		setGitBranchListCurrent(c);
 	}, []);
 
-	// workspace 变化时刷新 git 状态
+	// workspace 变化时刷新 git：延后到空闲再跑，避免与切工作区首帧、大组件提交抢主线程（有仓库时 fullStatus + 后续 diff 很重）
 	useEffect(() => {
 		if (!workspace || !shell) {
 			return;
 		}
-		void refreshGit();
+		const idle =
+			typeof window.requestIdleCallback === 'function'
+				? window.requestIdleCallback.bind(window)
+				: (cb: IdleRequestCallback) =>
+						window.setTimeout(
+							() => cb({ didTimeout: true, timeRemaining: () => 0 } as IdleDeadline),
+							1
+						);
+		const cancel =
+			typeof window.cancelIdleCallback === 'function'
+				? window.cancelIdleCallback.bind(window)
+				: (id: number) => window.clearTimeout(id);
+		// 增加 timeout 到 2000ms，给切换工作区后的渲染和交互留出更多时间
+		const id = idle(
+			() => {
+				void refreshGit();
+			},
+			{ timeout: 2000 }
+		);
+		return () => cancel(id);
 	}, [workspace, shell, refreshGit]);
 
-	// 文件系统变化时刷新 git 状态
-	useEffect(() => {
-		const sub = shell?.subscribeWorkspaceFsTouched;
-		if (!shell || !sub) {
-			return;
-		}
-		const unsub = sub(() => {
-			void refreshGit();
-		});
-		return unsub;
-	}, [shell, refreshGit]);
+	// 注意：已移除文件系统变化时的自动刷新
+	// Git 状态现在只在以下场景刷新：
+	// 1. workspace 变化时
+	// 2. 用户打开源代码管理视图时（由组件手动调用 refreshGit）
+	// 3. AI 修改代码后（agent review/commit/revert 等操作）
+	// 这样可以避免高频的文件系统事件导致不必要的 Git 命令执行
 
-	// diffPreviews 懒加载：在 gitChangedPaths 稳定后异步拉取，不阻塞 refreshGit 关键路径
+	// diffPreviews 懒加载：作为备用机制（现在主要在 refreshGit 中直接获取）
 	const diffPreviewsGenRef = useRef(0);
 	const gitPathsKey = useMemo(() => gitChangedPaths.join('\n'), [gitChangedPaths]);
 	useEffect(() => {
@@ -99,22 +131,49 @@ export function useGitIntegration(shell: Shell | undefined, workspace: string | 
 		const gen = ++diffPreviewsGenRef.current;
 		setDiffLoading(true);
 		let cancelled = false;
-		void (async () => {
-			try {
-				const r = (await shell.invoke('git:diffPreviews', gitChangedPaths)) as
-					| { ok: true; previews: Record<string, DiffPreview> }
-					| { ok: false };
-				if (!cancelled && gen === diffPreviewsGenRef.current && r.ok) {
-					setDiffPreviews(r.previews);
+		let fetchStarted = false;
+		const pathsSnapshot = gitChangedPaths;
+		const idle =
+			typeof window.requestIdleCallback === 'function'
+				? window.requestIdleCallback.bind(window)
+				: (cb: IdleRequestCallback) =>
+						window.setTimeout(
+							() => cb({ didTimeout: true, timeRemaining: () => 0 } as IdleDeadline),
+							1
+						);
+		const cancelIdle =
+			typeof window.cancelIdleCallback === 'function'
+				? window.cancelIdleCallback.bind(window)
+				: (id: number) => window.clearTimeout(id);
+		const idleId = idle(
+			() => {
+				if (cancelled) {
+					return;
 				}
-			} finally {
-				if (!cancelled && gen === diffPreviewsGenRef.current) {
-					setDiffLoading(false);
-				}
-			}
-		})();
+				fetchStarted = true;
+				void (async () => {
+					try {
+						const r = (await shell.invoke('git:diffPreviews', pathsSnapshot)) as
+							| { ok: true; previews: Record<string, DiffPreview> }
+							| { ok: false };
+						if (!cancelled && gen === diffPreviewsGenRef.current && r.ok) {
+							setDiffPreviews(r.previews);
+						}
+					} finally {
+						if (!cancelled && gen === diffPreviewsGenRef.current) {
+							setDiffLoading(false);
+						}
+					}
+				})();
+			},
+			{ timeout: 2500 }
+		);
 		return () => {
 			cancelled = true;
+			cancelIdle(idleId);
+			if (!fetchStarted && gen === diffPreviewsGenRef.current) {
+				setDiffLoading(false);
+			}
 		};
 	// treeEpoch 确保文件系统变化后也重新拉取
 	// eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,6 +1,6 @@
-import { memo, type RefObject } from 'react';
+import { memo, useEffect, type RefObject } from 'react';
 import { FileTypeIcon } from './fileTypeIcons';
-import { changeBadgeLabel, changeBadgeVariant, GitUnavailableState } from './gitBadge';
+import { GitUnavailableState } from './gitBadge';
 import { type GitUnavailableReason } from './gitAvailability';
 import { useI18n } from './i18n';
 import {
@@ -15,6 +15,7 @@ import {
 	IconSearch,
 } from './icons';
 import type { SettingsNavId } from './SettingsPage';
+import { EditorGitScmPathList } from './GitScmVirtualLists';
 import {
 	WorkspaceExplorer,
 	type GitPathStatusMap,
@@ -38,6 +39,7 @@ interface EditorLeftSidebarProps {
 	editorExplorerScrollRef: RefObject<HTMLDivElement | null>;
 	workspaceExplorerActions: WorkspaceExplorerActions | null;
 	gitPathStatus: GitPathStatusMap;
+	/** 随 Git 刷新 / 工作区切换递增；在已处于 Git 视图时用于补拉 diff 预览 */
 	treeEpoch: number;
 	editorSidebarSearchQuery: string;
 	setEditorSidebarSearchQuery: (q: string) => void;
@@ -49,7 +51,8 @@ interface EditorLeftSidebarProps {
 	gitChangedPaths: string[];
 	fileMenuNewFile: () => void;
 	revealWorkspaceInOs: (path: string) => void;
-	refreshGit: () => void;
+	refreshGit: () => void | Promise<void>;
+	loadGitDiffPreviews: () => void | Promise<void>;
 	onExplorerOpenFile: (rel: string) => void;
 	setWorkspacePickerOpen: (v: boolean) => void;
 	openSettingsPage: (nav: SettingsNavId) => void;
@@ -81,12 +84,21 @@ export const EditorLeftSidebar = memo(function EditorLeftSidebar({
 	fileMenuNewFile,
 	revealWorkspaceInOs,
 	refreshGit,
+	loadGitDiffPreviews,
 	onExplorerOpenFile,
 	setWorkspacePickerOpen,
 	openSettingsPage,
 }: EditorLeftSidebarProps) {
 	const { t } = useI18n();
 	const hasShellAndWorkspace = Boolean(shell && workspace);
+
+	// 切换工作区后若当前已在 Git 视图，补拉 diff（勿依赖 treeEpoch，否则每次 refreshGit 都会触发）
+	useEffect(() => {
+		if (editorLeftSidebarView !== 'git' || !hasShellAndWorkspace) {
+			return;
+		}
+		void loadGitDiffPreviews();
+	}, [editorLeftSidebarView, hasShellAndWorkspace, workspace, loadGitDiffPreviews]);
 
 	return (
 		<div className="ref-left-editor-nest">
@@ -117,7 +129,10 @@ export const EditorLeftSidebar = memo(function EditorLeftSidebar({
 					title={t('app.tabGit')}
 					aria-label={t('app.tabGit')}
 					aria-pressed={editorLeftSidebarView === 'git'}
-					onClick={() => setEditorLeftSidebarView('git')}
+					onClick={() => {
+						setEditorLeftSidebarView('git');
+						void Promise.resolve(refreshGit()).then(() => loadGitDiffPreviews());
+					}}
 				>
 					<IconGitSCM />
 				</button>
@@ -314,72 +329,52 @@ export const EditorLeftSidebar = memo(function EditorLeftSidebar({
 										className="ref-editor-sidebar-action"
 										aria-label={t('app.explorerRefreshAria')}
 										title={t('common.refresh')}
-										onClick={refreshGit}
+										onClick={() =>
+											void Promise.resolve(refreshGit()).then(() => loadGitDiffPreviews())
+										}
 									>
 										<IconRefresh />
 									</button>
 								</div>
 							) : null}
 						</div>
-						<div className="ref-editor-sidebar-scroll ref-editor-sidebar-scroll--list">
-							<div className="ref-editor-sidebar-file-list">
-								{!hasShellAndWorkspace ? (
-									<div className="ref-editor-sidebar-empty">
-										<p className="ref-editor-sidebar-empty-copy">{t('app.explorerPlaceholder')}</p>
-										<button
-											type="button"
-											className="ref-open-workspace ref-open-workspace--inline"
-											onClick={() => setWorkspacePickerOpen(true)}
-										>
-											{t('app.openWorkspace')}
-										</button>
-									</div>
-								) : gitUnavailableReason !== 'none' ? (
-									<div className="ref-editor-sidebar-empty">
-										<GitUnavailableState t={t} reason={gitUnavailableReason} detail={gitLines[0] ?? ''} />
-									</div>
-								) : gitChangedPaths.length === 0 ? (
-									<div className="ref-editor-sidebar-empty">
-										<p className="ref-editor-sidebar-empty-copy">{t('app.gitNoChanges')}</p>
-									</div>
-								) : (
-									gitChangedPaths.map((rel) => {
-										const normalizedRel = rel.replace(/\\/g, '/');
-										const fileName = normalizedRel.includes('/')
-											? normalizedRel.slice(normalizedRel.lastIndexOf('/') + 1)
-											: normalizedRel;
-										const dir = normalizedRel.includes('/')
-											? normalizedRel.slice(0, normalizedRel.lastIndexOf('/'))
-											: workspaceBasename;
-										const status = gitPathStatus[rel];
-										const label = status?.label ?? '';
-										return (
+						{!hasShellAndWorkspace ||
+						gitUnavailableReason !== 'none' ||
+						gitChangedPaths.length === 0 ? (
+							<div className="ref-editor-sidebar-scroll ref-editor-sidebar-scroll--list">
+								<div className="ref-editor-sidebar-file-list">
+									{!hasShellAndWorkspace ? (
+										<div className="ref-editor-sidebar-empty">
+											<p className="ref-editor-sidebar-empty-copy">{t('app.explorerPlaceholder')}</p>
 											<button
-												key={rel}
 												type="button"
-												className={`ref-editor-sidebar-file-row ${editorSidebarSelectedRel === normalizedRel ? 'is-active' : ''}`}
-												onClick={() => onExplorerOpenFile(rel)}
-												title={normalizedRel}
+												className="ref-open-workspace ref-open-workspace--inline"
+												onClick={() => setWorkspacePickerOpen(true)}
 											>
-												<span className="ref-editor-sidebar-file-icon" aria-hidden>
-													<FileTypeIcon fileName={fileName} isDirectory={false} />
-												</span>
-												<span className="ref-editor-sidebar-file-main">
-													<span className="ref-editor-sidebar-file-name">{fileName}</span>
-													<span className="ref-editor-sidebar-file-path">{dir}</span>
-												</span>
-												<span
-													className={`ref-explorer-badge ref-explorer-badge--${changeBadgeVariant(label)}`}
-													title={status ? changeBadgeLabel(status.label, t) : t('app.gitChangedFallback')}
-												>
-													{label || '•'}
-												</span>
+												{t('app.openWorkspace')}
 											</button>
-										);
-									})
-								)}
+										</div>
+									) : gitUnavailableReason !== 'none' ? (
+										<div className="ref-editor-sidebar-empty">
+											<GitUnavailableState t={t} reason={gitUnavailableReason} detail={gitLines[0] ?? ''} />
+										</div>
+									) : (
+										<div className="ref-editor-sidebar-empty">
+											<p className="ref-editor-sidebar-empty-copy">{t('app.gitNoChanges')}</p>
+										</div>
+									)}
+								</div>
 							</div>
-						</div>
+						) : (
+							<EditorGitScmPathList
+								paths={gitChangedPaths}
+								gitPathStatus={gitPathStatus}
+								workspaceBasename={workspaceBasename}
+								editorSidebarSelectedRel={editorSidebarSelectedRel.replace(/\\/g, '/')}
+								onExplorerOpenFile={onExplorerOpenFile}
+								t={t}
+							/>
+						)}
 					</>
 				) : null}
 			</div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { ToolCallSegment } from './agentChatSegments';
 import { useI18n } from './i18n';
 
@@ -41,7 +41,7 @@ type Props = {
 	segment: ToolCallSegment;
 };
 
-export function AgentToolCard({ segment }: Props) {
+export const AgentToolCard = memo(function AgentToolCard({ segment }: Props) {
 	const { t } = useI18n();
 	const [expanded, setExpanded] = useState(false);
 	const icon = TOOL_ICONS[segment.name] ?? '🔧';
@@ -94,7 +94,7 @@ export function AgentToolCard({ segment }: Props) {
 			)}
 		</div>
 	);
-}
+});
 
 function formatArgs(name: string, args: Record<string, unknown>): string {
 	if (name === 'str_replace') {

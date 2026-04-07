@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { FileTypeIcon } from './fileTypeIcons';
 import { buildFileEditPreviewDiff, type FileEditSegment } from './agentChatSegments';
 import { useI18n } from './i18n';
@@ -45,7 +45,7 @@ function buildPreviewLines(edit: FileEditSegment): PreviewLine[] {
 	return lines;
 }
 
-export function AgentEditCard({ edit, isReverted = false, allowReviewActions = false, onOpenFile }: Props) {
+export const AgentEditCard = memo(function AgentEditCard({ edit, isReverted = false, allowReviewActions = false, onOpenFile }: Props) {
 	const { t } = useI18n();
 	const name = basename(edit.path) || t('agent.review.unknownPath');
 	const previewLines = useMemo(() => buildPreviewLines(edit), [edit]);
@@ -220,4 +220,4 @@ export function AgentEditCard({ edit, isReverted = false, allowReviewActions = f
 			) : null}
 		</div>
 	);
-}
+});

@@ -110,18 +110,53 @@ export function useThreads(shell: Shell | undefined) {
 	const loadMessages = useCallback(
 		async (id: string) => {
 			if (!shell) return;
-			const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+			const dev = import.meta.env.DEV;
+			const tIpcStart = dev && typeof performance !== 'undefined' ? performance.now() : 0;
 			const r = (await shell.invoke('threads:messages', id)) as {
 				ok: boolean;
 				messages?: ChatMessage[];
 			};
-			if (t0 && typeof performance !== 'undefined') {
-				console.log(`[perf] loadMessages: ${(performance.now() - t0).toFixed(1)}ms`);
+			const tIpcEnd = dev && typeof performance !== 'undefined' ? performance.now() : 0;
+			if (dev && tIpcStart) {
+				console.log(`[perf] loadMessages: ipc=${(tIpcEnd - tIpcStart).toFixed(1)}ms`);
 			}
 			if (r.ok && r.messages) {
-				if (currentIdRef.current !== id) return;
+				if (currentIdRef.current !== id) {
+					if (dev) {
+						console.log(
+							`[perf] loadMessages: stale ignored (wanted ${id}, currentId=${currentIdRef.current})`
+						);
+					}
+					return;
+				}
+				if (dev && typeof performance !== 'undefined') {
+					let approxContentChars = 0;
+					for (const m of r.messages) {
+						if (typeof m.content === 'string') {
+							approxContentChars += m.content.length;
+						}
+					}
+					console.log(
+						`[perf] loadMessages: payload messages=${r.messages.length}, approxContentChars=${approxContentChars}`
+					);
+				}
 				setMessages(r.messages);
 				setMessagesThreadId(id);
+				if (dev && typeof performance !== 'undefined') {
+					const ipcEnd = tIpcEnd;
+					queueMicrotask(() => {
+						console.log(
+							`[perf] loadMessages: microtask Δ=${(performance.now() - ipcEnd).toFixed(1)}ms after ipc (before paint)`
+						);
+					});
+					requestAnimationFrame(() => {
+						requestAnimationFrame(() => {
+							console.log(
+								`[perf] loadMessages: toPaint Δ=${(performance.now() - ipcEnd).toFixed(1)}ms after ipc (≈after frame)`
+							);
+						});
+					});
+				}
 			}
 		},
 		[shell]

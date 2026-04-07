@@ -4470,6 +4470,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	font-size: 11.5px;
 	line-height: 1.55;
 	min-width: 0;
+	background: transparent !important;
 }
 
 .ref-result-card-line:hover {
@@ -4483,6 +4484,14 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 
 .ref-result-card-line--read {
 	flex-wrap: nowrap;
+	background: transparent !important;
+}
+
+.ref-result-card-line--read,
+.ref-result-card-line--read *,
+.ref-result-card-line--read code,
+.ref-result-card-line--read code * {
+	background: transparent !important;
 }
 
 .ref-result-card-line--dir {
@@ -4568,6 +4577,15 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 
 .ref-result-card-line--plain {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	background: transparent !important;
+}
+
+/* 移除命令输出（plain）的所有背景色 - 包括 Monaco 高亮生成的 */
+.ref-result-card-line--plain,
+.ref-result-card-line--plain *,
+.ref-result-card-line--plain code,
+.ref-result-card-line--plain code * {
+	background: transparent !important;
 }
 
 /* ???? + ???? */
@@ -6869,6 +6887,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 .ref-model-pill {
 	display: inline-flex;
 	align-items: center;
+	justify-content: center;
 	gap: 8px;
 	padding: 8px 14px;
 	border-radius: var(--void-pill);
@@ -7037,8 +7056,8 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 42px;
-	height: 34px;
+	width: 32px;
+	height: 28px;
 	border: none;
 	border-radius: 9px;
 	background: transparent;
@@ -9074,6 +9093,345 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	filter: brightness(0.95);
 }
 
+/* Git Commit Button in Toolbar */
+.ref-git-commit-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px;
+	border-radius: 20px;
+	border: 1px solid var(--void-border-soft);
+	background: var(--void-bg-1);
+	color: var(--void-fg-0);
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.ref-git-commit-btn:hover {
+	background: var(--void-bg-2);
+	border-color: var(--void-border);
+}
+
+.ref-git-commit-btn svg:last-child {
+	opacity: 0.6;
+}
+
+/* Git Commit Button in Top Header */
+.ref-git-commit-btn-top {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px;
+	border-radius: 8px;
+	border: 1px solid var(--void-border-soft);
+	background: var(--void-bg-1);
+	color: var(--void-fg-0);
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.15s ease;
+	margin-right: 8px;
+}
+
+.ref-git-commit-btn-top:hover {
+	background: var(--void-bg-2);
+	border-color: var(--void-border);
+}
+
+.ref-git-commit-btn-top svg:last-child {
+	opacity: 0.6;
+}
+
+/* Agent Review Actions Container */
+.ref-agent-review-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+/* Commit Modal */
+.ref-commit-modal-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(0, 0, 0, 0.6);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1000;
+	backdrop-filter: blur(4px);
+}
+
+.ref-commit-modal {
+	background: var(--void-bg-0);
+	border-radius: 16px;
+	border: 1px solid var(--void-border-soft);
+	width: 90%;
+	max-width: 480px;
+	max-height: 90vh;
+	overflow-y: auto;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.ref-commit-modal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 20px 24px 0;
+}
+
+.ref-commit-modal-icon {
+	width: 32px;
+	height: 32px;
+	border-radius: 8px;
+	background: var(--void-bg-2);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--void-fg-0);
+}
+
+.ref-commit-modal-close {
+	width: 32px;
+	height: 32px;
+	border-radius: 8px;
+	border: none;
+	background: transparent;
+	color: var(--void-fg-2);
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: all 0.15s ease;
+}
+
+.ref-commit-modal-close:hover {
+	background: var(--void-bg-2);
+	color: var(--void-fg-0);
+}
+
+.ref-commit-modal-title {
+	margin: 16px 24px;
+	font-size: 20px;
+	font-weight: 600;
+	color: var(--void-fg-0);
+}
+
+.ref-commit-modal-section {
+	padding: 0 24px 20px;
+}
+
+.ref-commit-modal-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 10px 0;
+}
+
+.ref-commit-modal-label {
+	font-size: 13px;
+	color: var(--void-fg-2);
+}
+
+.ref-commit-modal-value {
+	font-size: 13px;
+	color: var(--void-fg-0);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.ref-commit-stat-add {
+	color: #4ade80;
+	margin-left: 8px;
+}
+
+.ref-commit-stat-del {
+	color: #f87171;
+	margin-left: 4px;
+}
+
+.ref-commit-modal-toggle {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	cursor: pointer;
+	padding: 8px 0;
+}
+
+.ref-commit-modal-toggle input[type="checkbox"] {
+	display: none;
+}
+
+.ref-commit-modal-toggle-slider {
+	width: 36px;
+	height: 20px;
+	border-radius: 10px;
+	background: var(--void-bg-2);
+	position: relative;
+	transition: background 0.2s ease;
+}
+
+.ref-commit-modal-toggle-slider::after {
+	content: '';
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--void-fg-2);
+	transition: all 0.2s ease;
+}
+
+.ref-commit-modal-toggle input:checked + .ref-commit-modal-toggle-slider {
+	background: linear-gradient(135deg, var(--void-primary, #818cf8) 0%, color-mix(in srgb, var(--void-primary, #818cf8) 80%, white) 100%);
+	box-shadow: 0 2px 8px color-mix(in srgb, var(--void-primary, #818cf8) 40%, transparent);
+}
+
+.ref-commit-modal-toggle input:checked + .ref-commit-modal-toggle-slider::after {
+	transform: translateX(16px);
+	background: white;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.ref-commit-modal-toggle-label {
+	font-size: 13px;
+	color: var(--void-fg-0);
+}
+
+.ref-commit-modal-section-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 8px;
+}
+
+.ref-commit-modal-link {
+	font-size: 12px;
+	color: var(--void-fg-2);
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 0;
+}
+
+.ref-commit-modal-link:hover {
+	color: var(--void-fg-0);
+}
+
+.ref-commit-modal-textarea {
+	width: 100%;
+	min-height: 80px;
+	padding: 12px;
+	border-radius: 8px;
+	border: 1px solid var(--void-border-soft);
+	background: var(--void-bg-1);
+	color: var(--void-fg-0);
+	font-size: 13px;
+	font-family: inherit;
+	resize: vertical;
+	outline: none;
+	transition: border-color 0.15s ease;
+}
+
+.ref-commit-modal-textarea:focus {
+	border-color: var(--void-border);
+}
+
+.ref-commit-modal-section-title {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--void-fg-0);
+	margin: 0 0 12px;
+}
+
+.ref-commit-modal-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	border-radius: 8px;
+	border: 1px solid var(--void-border-soft);
+	overflow: hidden;
+}
+
+.ref-commit-modal-action {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px;
+	background: transparent;
+	border: none;
+	color: var(--void-fg-0);
+	font-size: 13px;
+	cursor: pointer;
+	transition: background 0.15s ease;
+	position: relative;
+}
+
+.ref-commit-modal-action:hover {
+	background: var(--void-bg-1);
+}
+
+.ref-commit-modal-action.is-active {
+	background: var(--void-bg-2);
+}
+
+.ref-commit-modal-check {
+	margin-left: auto;
+	color: var(--void-primary);
+	font-size: 16px;
+}
+
+/* Commit Modal Warning */
+.ref-commit-modal-warning {
+	margin: 0 24px 16px;
+	padding: 12px 16px;
+	border-radius: 8px;
+	background: rgba(248, 113, 113, 0.1);
+	border: 1px solid rgba(248, 113, 113, 0.3);
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	font-size: 13px;
+	color: #fca5a5;
+	line-height: 1.5;
+}
+
+.ref-commit-modal-warning-icon {
+	flex-shrink: 0;
+	margin-top: 1px;
+	color: #f87171;
+}
+
+.ref-commit-modal-footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 16px 24px 24px;
+	border-top: 1px solid var(--void-border-soft);
+}
+
+.ref-commit-modal-continue {
+	padding: 10px 24px;
+	border-radius: 20px;
+	border: none;
+	background: var(--void-fg-0);
+	color: var(--void-bg-0);
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: opacity 0.15s ease;
+}
+
+.ref-commit-modal-continue:hover {
+	opacity: 0.9;
+}
+
 .ref-drawer {
 	border-top: 1px solid var(--void-border-soft);
 	background: linear-gradient(180deg, rgba(22, 22, 28, 0.98) 0%, var(--void-bg-1) 100%);
@@ -9785,12 +10143,12 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	color: var(--void-fg-3);
 	font-size: 12px;
 	cursor: pointer;
-	padding: 4px 0 4px 2px;
+	padding: 4px 6px;
 	border-radius: 6px;
 	opacity: 0;
 	pointer-events: none;
 	font-family: inherit;
-	text-align: right;
+	text-align: center;
 	white-space: nowrap;
 	line-height: 1.35;
 	flex-shrink: 0;

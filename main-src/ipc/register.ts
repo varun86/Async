@@ -34,8 +34,8 @@ import {
 	patchMcpServerConfigs,
 	removeMcpServerConfig,
 } from '../settingsStore.js';
-import { getMcpManager, destroyMcpManager } from '../mcp/index.js';
-import type { McpServerConfig, McpServerStatus } from '../mcp/mcpTypes.js';
+import { getMcpManager, destroyMcpManager } from '../mcp';
+import type { McpServerConfig } from '../mcp';
 import {
 	appendMessage,
 	createThread,
@@ -57,7 +57,6 @@ import {
 	getExecutedPlanFileKeys,
 	markPlanFileExecuted,
 	type ChatMessage,
-	type ThreadPlan,
 } from '../threadStore.js';
 import { compressForSend } from '../agent/conversationCompress.js';
 import { flattenAssistantTextPartsForSearch } from '../../src/agentStructuredMessage.js';
@@ -2228,18 +2227,30 @@ ipcMain.handle(
 		if (!root) {
 			return { ok: false as const, error: 'No workspace' };
 		}
+		const dev = process.env.NODE_ENV !== 'production';
+		const tStart = dev ? performance.now() : 0;
 		return await gitService.withGitWorkspaceRootAsync(root, async () => {
 			try {
+				const tProbe0 = dev ? performance.now() : 0;
 				const probe = await gitService.gitProbeContext();
+				const tProbe1 = dev ? performance.now() : 0;
+				if (dev) {
+					console.log(`[perf][git][main] fullStatus probe=${(tProbe1 - tProbe0).toFixed(1)}ms root=${root}`);
+				}
 				if (!probe.ok) {
 					return { ok: false as const, error: probe.message };
 				}
 				const gitTop = probe.topLevel;
-				const [porcelain, branch, branchListOut] = await Promise.all([
+				const tGit0 = dev ? performance.now() : 0;
+				const [porcelain, branch] = await Promise.all([
 					gitService.gitStatusPorcelain(),
 					gitService.gitBranch(),
-					gitService.gitListLocalBranches(),
 				]);
+				const tGit1 = dev ? performance.now() : 0;
+				if (dev) {
+					console.log(`[perf][git][main] fullStatus gitCmds=${(tGit1 - tGit0).toFixed(1)}ms`);
+				}
+				const tParse0 = dev ? performance.now() : 0;
 				const lines = porcelain ? porcelain.split('\n').filter(Boolean) : [];
 				const rawPathStatus = gitService.parseGitPathStatus(lines);
 				const rawOrdered = gitService.listPorcelainPaths(lines);
@@ -2259,14 +2270,18 @@ ipcMain.handle(
 						changedPaths.push(wsRel);
 					}
 				}
+				if (dev) {
+					const tDone = performance.now();
+					console.log(
+						`[perf][git][main] fullStatus parse=${(tDone - tParse0).toFixed(1)}ms lines=${lines.length} changed=${changedPaths.length} total=${(tDone - tStart).toFixed(1)}ms`
+					);
+				}
 				return {
 					ok: true as const,
 					branch,
 					lines,
 					pathStatus,
 					changedPaths,
-					branches: branchListOut.branches,
-					current: branchListOut.current,
 				};
 			} catch (e) {
 				return {
@@ -2328,14 +2343,30 @@ ipcMain.handle(
 			return { ok: false as const, error: 'No workspace' };
 		}
 		const list = Array.isArray(relPaths) ? relPaths : [];
+		const dev = process.env.NODE_ENV !== 'production';
+		const tStart = dev ? performance.now() : 0;
 		try {
 			return await gitService.withGitWorkspaceRootAsync(root, async () => {
+				const tProbe0 = dev ? performance.now() : 0;
 				const probe = await gitService.gitProbeContext();
+				const tProbe1 = dev ? performance.now() : 0;
+				if (dev) {
+					console.log(`[perf][git][main] diffPreviews probe=${(tProbe1 - tProbe0).toFixed(1)}ms paths=${list.length}`);
+				}
 				if (!probe.ok) {
 					return { ok: false as const, error: probe.message };
 				}
+				const tDiff0 = dev ? performance.now() : 0;
 				const fullDiffRaw = await gitService.gitDiffHeadUnified(root);
+				const tDiff1 = dev ? performance.now() : 0;
+				const tBuild0 = dev ? performance.now() : 0;
 				const previews = await gitService.buildDiffPreviewsMap(list, fullDiffRaw, root, probe.topLevel);
+				if (dev) {
+					const tDone = performance.now();
+					console.log(
+						`[perf][git][main] diffPreviews diff=${(tDiff1 - tDiff0).toFixed(1)}ms build=${(tDone - tBuild0).toFixed(1)}ms bytes=${fullDiffRaw.length} keys=${Object.keys(previews).length} total=${(tDone - tStart).toFixed(1)}ms`
+					);
+				}
 				return { ok: true as const, previews };
 			});
 		} catch (e) {

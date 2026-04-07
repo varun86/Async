@@ -1,11 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
-import { createTwoFilesPatch } from 'diff';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 import { isPathInsideRoot } from './workspace.js';
 
 const execFileAsync = promisify(execFile);
+const PROBE_CACHE_TTL_MS = 5000;
 
 /** IPC 在调用 git 前用当前窗口的 workspace root 包裹异步逻辑。 */
 const gitWorkspaceAls = new AsyncLocalStorage<string>();
@@ -24,6 +24,8 @@ type ExecFileLikeError = Error & {
 };
 
 export type GitFailureKind = 'missing' | 'not_repo' | 'unknown';
+type GitProbeResult = { ok: true; topLevel: string } | { ok: false; reason: GitFailureKind; message: string };
+const gitProbeCache = new Map<string, { expiresAt: number; result: GitProbeResult }>();
 
 function gitErrorText(error: unknown): string {
 	if (error instanceof Error) {
@@ -120,15 +122,18 @@ export async function gitRevParseShowToplevel(): Promise<string | null> {
 	return probe.ok ? probe.topLevel : null;
 }
 
-export async function gitProbeContext(): Promise<
-	| { ok: true; topLevel: string }
-	| { ok: false; reason: GitFailureKind; message: string }
-> {
+export async function gitProbeContext(): Promise<GitProbeResult> {
 	let ws: string;
 	try {
 		ws = repoRoot();
 	} catch {
 		return { ok: false, reason: 'unknown', message: 'No workspace' };
+	}
+	const key = path.resolve(ws).toLowerCase();
+	const now = Date.now();
+	const cached = gitProbeCache.get(key);
+	if (cached && cached.expiresAt > now) {
+		return cached.result;
 	}
 	try {
 		const { stdout } = await execFileAsync(
@@ -143,16 +148,22 @@ export async function gitProbeContext(): Promise<
 		);
 		const line = stdout.trim();
 		if (!line) {
-			return { ok: false, reason: 'unknown', message: 'Git command failed' };
+			const result: GitProbeResult = { ok: false, reason: 'unknown', message: 'Git command failed' };
+			gitProbeCache.set(key, { expiresAt: now + PROBE_CACHE_TTL_MS, result });
+			return result;
 		}
-		return { ok: true, topLevel: path.resolve(line) };
+		const result: GitProbeResult = { ok: true, topLevel: path.resolve(line) };
+		gitProbeCache.set(key, { expiresAt: now + PROBE_CACHE_TTL_MS, result });
+		return result;
 	} catch (error) {
 		const reason = classifyGitFailure(error);
-		return {
+		const result: GitProbeResult = {
 			ok: false,
 			reason,
 			message: normalizeGitFailureMessage(error),
 		};
+		gitProbeCache.set(key, { expiresAt: now + PROBE_CACHE_TTL_MS, result });
+		return result;
 	}
 }
 
@@ -450,17 +461,9 @@ export async function buildDiffPreviewsMap(
 	}
 
 	if (fallbacks.length > 0) {
-		const settled = await Promise.all(
-			fallbacks.map(async (wsRel) => {
-				try {
-					return [wsRel, await getDiffPreview(wsRel, { maxChars }, root)] as const;
-				} catch {
-					return [wsRel, { diff: '', isBinary: false, additions: 0, deletions: 0 } as DiffPreview] as const;
-				}
-			})
-		);
-		for (const [wsRel, preview] of settled) {
-			out[wsRel] = preview;
+		// 避免逐文件 fallback 再次触发 N 次 git diff（大仓库下会造成秒级阻塞）。
+		for (const wsRel of fallbacks) {
+			out[wsRel] = { diff: '', isBinary: false, additions: 0, deletions: 0 };
 		}
 	}
 
