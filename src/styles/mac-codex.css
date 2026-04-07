@@ -3078,7 +3078,6 @@
 :root[data-ui-style='mac-codex'] .ref-left--agent-layout .ref-agent-workspace-row-shell::before {
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-bg-soft) 92%, transparent) 0%, color-mix(in srgb, var(--surface-panel-bg) 88%, transparent) 100%);
-	/* 仅内高光，避免外扩阴影落在下方「暂无对话」区域形成块状脏影 */
 	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 4%, transparent);
 }
 
@@ -3157,7 +3156,6 @@
 	color: var(--color-text-primary);
 }
 
-/* 仅「未打开工作区」大卡片区需要底板；「某工作区下暂无对话」保持透明，避免出现底部色块/阴影感 */
 :root[data-ui-style='mac-codex'] .ref-left--agent-layout .ref-agent-workspace-empty {
 	color: var(--color-text-tertiary);
 	background: transparent;

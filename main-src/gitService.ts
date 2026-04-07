@@ -83,7 +83,8 @@ async function git(args: string[], cwd?: string): Promise<string> {
 	if (stderr && !stdout) {
 		return stderr.trim();
 	}
-	return stdout.trim();
+	// 只去掉末尾的空白字符,保留前导空格(对 git status --porcelain 很重要)
+	return stdout.replace(/[\r\n]+$/, '');
 }
 
 /** 单次 `git diff HEAD`（全量），用于批量构建各文件预览，避免每文件起一个子进程。 */
