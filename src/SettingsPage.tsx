@@ -363,6 +363,8 @@ type Props = {
 	onChangeAppearanceSettings: (next: AppAppearanceSettings) => void | Promise<void>;
 };
 
+export type SettingsPageProps = Props;
+
 export function SettingsPage({
 	onClose,
 	initialNav,

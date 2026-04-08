@@ -293,7 +293,6 @@ export const AppMenubar = memo(function AppMenubar(props: AppMenubarProps) {
 								isDesktopShell={!!shell}
 								windowMaximized={localWindowMaximized}
 								onNewWindow={onNewWindow}
-								onNewEditorWindow={onNewEditorWindow}
 								onMinimize={onMinimize}
 								onToggleMaximize={onToggleMaximize}
 								onCloseWindow={onCloseWindow}

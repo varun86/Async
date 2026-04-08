@@ -1,5 +1,4 @@
 import {
-	Activity,
 	Suspense,
 	lazy,
 	useCallback,
@@ -10,18 +9,11 @@ import {
 	useState,
 	useTransition,
 	memo,
-	type Dispatch,
-	type SetStateAction,
-	type ReactNode,
 	type RefObject,
 } from 'react';
 import type { editor as MonacoEditorNS } from 'monaco-editor';
 
-const DrawerPtyTerminal = lazy(() =>
-	import('./DrawerPtyTerminal').then((m) => ({ default: m.DrawerPtyTerminal }))
-);
 import { ChatMarkdown } from './ChatMarkdown';
-import { OpenWorkspaceModal } from './OpenWorkspaceModal';
 import { type WorkspaceExplorerActions } from './WorkspaceExplorer';
 import {
 	type ChatPlanExecutePayload,
@@ -45,13 +37,11 @@ import {
 	normalizeWorkspaceRelPath,
 	workspaceRelPathsEqual,
 } from './agentFileChangesFromGit';
-import { ModelPickerDropdown } from './ModelPickerDropdown';
-import { GitBranchPickerDropdown } from './GitBranchPickerDropdown';
 import {
 	AgentCommandPermissionDropdown,
 	type CommandPermissionMode,
 } from './AgentCommandPermissionDropdown';
-import type { SettingsNavId } from './SettingsPage';
+import type { SettingsNavId, SettingsPageProps } from './SettingsPage';
 import {
 	applyThemePresetToAppearance,
 	applyAppearanceSettingsToDom,
@@ -70,9 +60,7 @@ import {
 	writeStoredColorMode,
 } from './colorMode';
 // modelCatalog types are re-exported via useSettings hook return type
-import { ComposerPlusMenu, type ComposerMode } from './ComposerPlusMenu';
-import { ComposerAtMenu } from './ComposerAtMenu';
-import { ComposerSlashMenu } from './ComposerSlashMenu';
+import { type ComposerMode } from './ComposerPlusMenu';
 import {
 	pendingPlanQuestionFromMessages,
 	parsePlanDocument,
@@ -91,7 +79,6 @@ import { getAtMentionRange } from './composerAtMention';
 import { textBeforeCaretForAt } from './composerRichDom';
 import { useComposerAtMention, type AtComposerSlot } from './useComposerAtMention';
 import { useComposerSlashCommand } from './useComposerSlashCommand';
-import { BrandLogo } from './BrandLogo';
 import {
 	type AgentCustomization,
 	type AgentRuleScope,
@@ -105,9 +92,6 @@ import {
 	stripPlanFrontmatterForPreview,
 } from './editorMarkdownView';
 import { isPlanMdPath, planExecutedKey } from './planExecutedKey';
-import { MenubarFileMenu } from './MenubarFileMenu';
-import { MenubarWindowMenu } from './MenubarWindowMenu';
-import { QuickOpenPalette, quickOpenPrimaryShortcutLabel, saveShortcutLabel } from './quickOpenPalette';
 import { workspaceRelativeFileUrl } from './workspaceUri';
 import { voidShellDebugLog } from './tabCloseDebug';
 import {
@@ -116,9 +100,8 @@ import {
 	type GitUnavailableReason,
 } from './gitAvailability';
 import {
-	IconGitSCM, IconSearch, IconChevron,
-	IconPlus, IconCloseSmall, IconPencil, IconTrash, IconCheckCircle, IconSettings,
-	IconHistory, IconDotsHorizontal, IconArrowUpRight,
+	IconGitSCM, IconChevron,
+	IconPencil, IconTrash, IconCheckCircle,
 } from './icons';
 import { useGitIntegration } from './hooks/useGitIntegration';
 import { useSettings } from './hooks/useSettings';
@@ -143,15 +126,11 @@ import { normWorkspaceRootKey } from './workspaceRootKey';
 import { useAgentFileReview, type AgentFilePreviewState } from './hooks/useAgentFileReview';
 import { useComposer } from './hooks/useComposer';
 import { useEditorTabs, type EditorInlineDiffState, clampEditorTerminalHeight } from './hooks/useEditorTabs';
-import { AgentChatPanel } from './AgentChatPanel';
-import { AgentLeftSidebar } from './AgentLeftSidebar';
-import { AgentRightSidebar } from './AgentRightSidebar';
 import { AppWorkspaceWelcome } from './app/AppWorkspaceWelcome';
 import { AgentAgentCenterColumn } from './app/AgentAgentCenterColumn';
 import type { ComposerAnchorSlot } from './ChatComposer';
 import { AppProvider } from './AppContext';
 import { ComposerActionsProvider } from './ComposerActionsContext';
-import { EditorLeftSidebar } from './EditorLeftSidebar';
 import { runDesktopShellInit } from './app/desktopShellInit';
 import {
 	DEFAULT_SHELL_LAYOUT_MODE_KEY,
@@ -172,14 +151,17 @@ import {
 	useAppShellGit,
 	useAppShellSettings,
 } from './app/appShellContexts';
+import { AppShellMenubar } from './app/AppShellMenubar';
+import { AppShellOverlays } from './app/AppShellOverlays';
+import { ShellLeftRailGroup, ShellCenterRightGroup } from './app/ShellWorkspaceColumns';
+import { formatThreadRowSubtitle, threadRowTitle } from './app/threadRowUi';
 
-const SettingsPage = lazy(() => import('./SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const EditorMainPanel = lazy(() => import('./EditorMainPanel').then((m) => ({ default: m.EditorMainPanel })));
 
 type LayoutMode = ShellLayoutMode;
 type AgentRightSidebarView = 'git' | 'plan' | 'file';
 type EditorLeftSidebarView = 'explorer' | 'search' | 'git';
-import { useI18n, type AppLocale, type TFunction } from './i18n';
+import { useI18n, type AppLocale } from './i18n';
 import { hideBootSplash } from './bootSplash';
 import { debugDiffHead, diffCreatesNewFile, sameStringArray } from './appDiffUtils';
 
@@ -202,58 +184,6 @@ function workspacePathParent(full: string): string {
 
 function shellCommandPermissionMode(agent: AgentCustomization | undefined): CommandPermissionMode {
 	return agent?.confirmShellCommands === false ? 'always' : 'ask';
-}
-
-function threadFileBasename(rel: string): string {
-	const n = rel.replace(/\\/g, '/');
-	const i = n.lastIndexOf('/');
-	return i >= 0 ? n.slice(i + 1) : n;
-}
-
-function formatThreadRowSubtitle(tr: TFunction, t: ThreadInfo, isActive: boolean): ReactNode {
-	const paths = t.filePaths ?? [];
-	const fc = Math.max(t.fileCount ?? 0, paths.length);
-	const add = t.additions ?? 0;
-	const del = t.deletions ?? 0;
-	const hasDiff = t.hasAgentDiff ?? false;
-
-	if (t.isAwaitingReply) {
-		const fb = (t.subtitleFallback ?? '').trim();
-		if (fb) {
-			return fb;
-		}
-	}
-
-	if (isActive && hasDiff && paths.length > 0) {
-		const names = paths.map(threadFileBasename);
-		let s = names.join(', ');
-		if (s.length > 52) {
-			s = `${s.slice(0, 50)}…`;
-		}
-		return <>{tr('app.threadEdited', { names: s })}</>;
-	}
-	if (!isActive && hasDiff && (add > 0 || del > 0 || fc > 0)) {
-		const n = fc > 0 ? fc : 1;
-		return (
-			<>
-				<span className="ref-thread-meta-add">+{add}</span>{' '}
-				<span className="ref-thread-meta-del">−{del}</span>
-				<span className="ref-thread-meta-sep"> · </span>
-				{n === 1 ? tr('app.threadFilesOne', { n }) : tr('app.threadFilesMany', { n })}
-			</>
-		);
-	}
-	const fb = (t.subtitleFallback ?? '').trim();
-	return fb || '\u00a0';
-}
-
-function threadRowTitle(tr: TFunction, t: ThreadInfo): string {
-	if (t.isAwaitingReply) {
-		return t.title.startsWith('Draft:') || t.title.startsWith('草稿：')
-			? t.title
-			: tr('app.draftPrefix', { title: t.title });
-	}
-	return t.title;
 }
 
 function useAsyncShell() {
@@ -5502,6 +5432,110 @@ function AppMainWorkspaceInner() {
 		onSelectTab,
 	});
 
+	const editorLeftSidebarProps = useMemo(
+		() => ({
+			shell,
+			workspace,
+			workspaceBasename,
+			ipcOk,
+			editorLeftSidebarView,
+			setEditorLeftSidebarView,
+			editorExplorerCollapsed,
+			toggleEditorExplorerCollapsed,
+			editorSidebarWorkspaceLabel,
+			editorSidebarSelectedRel,
+			editorExplorerScrollRef,
+			workspaceExplorerActions,
+			gitPathStatus,
+			treeEpoch,
+			editorSidebarSearchQuery,
+			setEditorSidebarSearchQuery,
+			normalizedEditorSidebarSearchQuery,
+			editorSidebarSearchResults,
+			editorSidebarSearchInputRef,
+			fileMenuNewFile,
+			revealWorkspaceInOs,
+			onExplorerOpenFile,
+			setWorkspacePickerOpen,
+			openSettingsPage,
+		}),
+		[
+			shell,
+			workspace,
+			workspaceBasename,
+			ipcOk,
+			editorLeftSidebarView,
+			setEditorLeftSidebarView,
+			editorExplorerCollapsed,
+			toggleEditorExplorerCollapsed,
+			editorSidebarWorkspaceLabel,
+			editorSidebarSelectedRel,
+			editorExplorerScrollRef,
+			workspaceExplorerActions,
+			gitPathStatus,
+			treeEpoch,
+			editorSidebarSearchQuery,
+			setEditorSidebarSearchQuery,
+			normalizedEditorSidebarSearchQuery,
+			editorSidebarSearchResults,
+			editorSidebarSearchInputRef,
+			fileMenuNewFile,
+			revealWorkspaceInOs,
+			onExplorerOpenFile,
+			setWorkspacePickerOpen,
+			openSettingsPage,
+		]
+	);
+
+	const shellWorkspaceCenterMain = useMemo(() => {
+		if (layoutMode === 'agent') {
+			return (
+				<AgentAgentCenterColumn
+					t={t}
+					hasConversation={hasConversation}
+					workspace={workspace}
+					workspaceBasename={workspaceBasename}
+					currentThreadTitle={currentThreadTitle}
+					onPlanNewIdea={onPlanNewIdea}
+					hasAgentPlanSidebarContent={hasAgentPlanSidebarContent}
+					agentRightSidebarOpen={agentRightSidebarOpen}
+					agentRightSidebarView={agentRightSidebarView}
+					toggleAgentRightSidebarView={toggleAgentRightSidebarView}
+					chatPanelProps={agentChatPanelProps}
+				/>
+			);
+		}
+		return (
+			<Suspense
+				fallback={
+					<main
+						className="ref-center ref-center--editor-workspace ref-center--editor-shell"
+						aria-label={t('app.editorWorkspaceMainAria')}
+						aria-busy="true"
+					>
+						<div className="ref-editor-center-split" />
+					</main>
+				}
+			>
+				<EditorMainPanel {...editorMainPanelProps} />
+			</Suspense>
+		);
+	}, [
+		layoutMode,
+		t,
+		hasConversation,
+		workspace,
+		workspaceBasename,
+		currentThreadTitle,
+		onPlanNewIdea,
+		hasAgentPlanSidebarContent,
+		agentRightSidebarOpen,
+		agentRightSidebarView,
+		toggleAgentRightSidebarView,
+		agentChatPanelProps,
+		editorMainPanelProps,
+	]);
+
 	const composerActions = useMemo(
 		() => ({
 			onSend: composerInvokeSend,
@@ -5532,423 +5566,165 @@ function AppMainWorkspaceInner() {
 		}
 	}
 
-	// 渲染完成后记录耗时并追踪触发源
-	if (import.meta.env.DEV) {
-		// eslint-disable-next-line react-hooks/rules-of-hooks
-		useEffect(() => {
-			const renderTime = performance.now() - appRenderStartRef.current;
-			if (renderTime > 10) {
-				// 检查哪些关键 state 发生了变化
-				const triggers = [];
-				if (messagesThreadId) triggers.push(`thread=${messagesThreadId}`);
-				if (messages.length > 0) triggers.push(`msgs=${messages.length}`);
-				if (streaming) triggers.push('streaming');
-				if (awaitingReply) triggers.push('awaiting');
-				console.log(`[perf] App render completed in ${renderTime.toFixed(1)}ms, count=${appRenderCountRef.current}, triggers: ${triggers.join(', ') || 'none'}`);
-			}
-		});
-	}
+	// 渲染完成后记录耗时并追踪触发源（必须无条件调用 hook，仅在 DEV 内记录）
+	useEffect(() => {
+		if (!import.meta.env.DEV) {
+			return;
+		}
+		const renderTime = performance.now() - appRenderStartRef.current;
+		if (renderTime > 10) {
+			const triggers = [];
+			if (messagesThreadId) triggers.push(`thread=${messagesThreadId}`);
+			if (messages.length > 0) triggers.push(`msgs=${messages.length}`);
+			if (streaming) triggers.push('streaming');
+			if (awaitingReply) triggers.push('awaiting');
+			console.log(
+				`[perf] App render completed in ${renderTime.toFixed(1)}ms, count=${appRenderCountRef.current}, triggers: ${triggers.join(', ') || 'none'}`
+			);
+		}
+	});
+
+	const shellSettingsPageProps = useMemo(
+		(): SettingsPageProps => ({
+			initialNav: settingsInitialNav,
+			onClose: () => void closeSettingsPage(),
+			defaultModel,
+			modelProviders,
+			modelEntries,
+			onChangeModelProviders,
+			onChangeModelEntries,
+			onPickDefaultModel: (id) => void onPickDefaultModel(id),
+			agentCustomization: mergedAgentCustomization,
+			onChangeAgentCustomization: onChangeMergedAgentCustomization,
+			editorSettings,
+			onChangeEditorSettings: setEditorSettings,
+			onPersistLanguage: (loc) => void onPersistLanguage(loc),
+			indexingSettings,
+			onChangeIndexingSettings: setIndexingSettings,
+			onPersistIndexingPatch,
+			mcpServers,
+			onChangeMcpServers: setMcpServers,
+			mcpStatuses,
+			onRefreshMcpStatuses: onRefreshMcpStatuses,
+			onStartMcpServer,
+			onStopMcpServer,
+			onRestartMcpServer,
+			shell: shell ?? null,
+			workspaceOpen: !!workspace,
+			onOpenSkillCreator: startSkillCreatorFlow,
+			onOpenWorkspaceSkillFile: handleOpenWorkspaceSkillFile,
+			onDeleteWorkspaceSkillDisk: handleDeleteWorkspaceSkillDisk,
+			colorMode,
+			onChangeColorMode: (m, origin) => void onChangeColorMode(m, origin),
+			effectiveColorScheme: effectiveScheme,
+			appearanceSettings,
+			onChangeAppearanceSettings: setAppearanceSettings,
+		}),
+		[
+			settingsInitialNav,
+			closeSettingsPage,
+			defaultModel,
+			modelProviders,
+			modelEntries,
+			onChangeModelProviders,
+			onChangeModelEntries,
+			onPickDefaultModel,
+			mergedAgentCustomization,
+			onChangeMergedAgentCustomization,
+			editorSettings,
+			setEditorSettings,
+			onPersistLanguage,
+			indexingSettings,
+			setIndexingSettings,
+			onPersistIndexingPatch,
+			mcpServers,
+			setMcpServers,
+			mcpStatuses,
+			onRefreshMcpStatuses,
+			onStartMcpServer,
+			onStopMcpServer,
+			onRestartMcpServer,
+			shell,
+			workspace,
+			startSkillCreatorFlow,
+			handleOpenWorkspaceSkillFile,
+			handleDeleteWorkspaceSkillDisk,
+			colorMode,
+			onChangeColorMode,
+			effectiveScheme,
+			appearanceSettings,
+			setAppearanceSettings,
+		]
+	);
 
 	return (
 		<AppProvider shell={shell} workspace={workspace} t={t}>
 		<ComposerActionsProvider value={composerActions}>
 		<div className={`ref-shell ${layoutMode === 'agent' ? 'ref-shell--agent-layout' : ''}`}>
-			<header className={`ref-menubar ${layoutMode === 'agent' ? 'ref-menubar--agent' : ''}`}>
-				<div className="ref-menubar-left">
-					<div className="ref-brand-block-simple">
-						<BrandLogo className="ref-brand-logo" size={22} />
-					</div>
-					<nav className="ref-menu-nav" aria-label={t('app.menu')}>
-						<div className="ref-menu-dropdown-wrap" ref={fileMenuRef}>
-							<button
-								type="button"
-								className={`ref-menu-item${fileMenuOpen ? ' is-active' : ''}`}
-								aria-expanded={fileMenuOpen}
-								aria-haspopup="menu"
-								onClick={handleToggleFileMenu}
-							>
-								{t('app.menuFile')}
-							</button>
-							{fileMenuOpen ? (
-								<MenubarFileMenu
-									onClose={() => setMenubarMenu('file', false)}
-									isDesktopShell={!!shell}
-									hasWorkspace={!!workspace}
-									folderRecents={folderRecents}
-									canSave={false}
-									canEditorClose={!!activeTabId}
-									canCloseFolder={!!shell && !!workspace}
-									shortcutSave={saveShortcutLabel()}
-									onNewFile={() => void fileMenuNewFile()}
-									onNewWindow={() => void fileMenuNewWindow()}
-									onOpenFile={() => void fileMenuOpenFile()}
-									onOpenFolder={() => void fileMenuOpenFolder()}
-									onOpenRecentPath={(p) => void openWorkspaceByPath(p)}
-									onSave={() => void onSaveFile()}
-									onSaveAs={() => void fileMenuSaveAs()}
-									onRevert={() => void fileMenuRevertFile()}
-									onCloseEditor={() => fileMenuCloseEditor()}
-									onCloseFolder={() => void closeWorkspaceFolder()}
-									onQuit={() => void fileMenuQuit()}
-								/>
-							) : null}
-						</div>
-						<div className="ref-menu-dropdown-wrap" ref={editMenuRef}>
-							<button
-								type="button"
-								className={`ref-menu-item${editMenuOpen ? ' is-active' : ''}`}
-								aria-expanded={editMenuOpen}
-								aria-haspopup="menu"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={handleToggleEditMenu}
-							>
-								{t('app.menuEdit')}
-							</button>
-							{editMenuOpen ? (
-								<div className="ref-menu-dropdown" role="menu" aria-label={t('app.menuEdit')}>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canEditUndoRedo}
-										onMouseDown={(e) => e.preventDefault()}
-										onClick={() => {
-											void executeEditAction('undo');
-											setMenubarMenu('edit', false);
-										}}
-									>
-										<span>{t('app.edit.undo')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+Z</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canEditUndoRedo}
-										onMouseDown={(e) => e.preventDefault()}
-										onClick={() => {
-											void executeEditAction('redo');
-											setMenubarMenu('edit', false);
-										}}
-									>
-										<span>{t('app.edit.redo')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+Shift+Z</kbd>
-									</button>
-									<div className="ref-menu-dropdown-sep" role="separator" />
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canEditCut}
-										onMouseDown={(e) => e.preventDefault()}
-										onClick={() => {
-											void executeEditAction('cut');
-											setMenubarMenu('edit', false);
-										}}
-									>
-										<span>{t('app.edit.cut')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+X</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canEditCopy}
-										onMouseDown={(e) => e.preventDefault()}
-										onClick={() => {
-											void executeEditAction('copy');
-											setMenubarMenu('edit', false);
-										}}
-									>
-										<span>{t('app.edit.copy')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+C</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canEditPaste}
-										onMouseDown={(e) => e.preventDefault()}
-										onClick={() => {
-											void executeEditAction('paste');
-											setMenubarMenu('edit', false);
-										}}
-									>
-										<span>{t('app.edit.paste')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+V</kbd>
-									</button>
-									<div className="ref-menu-dropdown-sep" role="separator" />
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canEditSelectAll}
-										onMouseDown={(e) => e.preventDefault()}
-										onClick={() => {
-											void executeEditAction('selectAll');
-											setMenubarMenu('edit', false);
-										}}
-									>
-										<span>{t('app.edit.selectAll')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+A</kbd>
-									</button>
-								</div>
-							) : null}
-						</div>
-						<div className="ref-menu-dropdown-wrap" ref={viewMenuRef}>
-							<button
-								type="button"
-								className={`ref-menu-item${viewMenuOpen ? ' is-active' : ''}`}
-								aria-expanded={viewMenuOpen}
-								aria-haspopup="menu"
-								onClick={() => {
-									toggleMenubarMenu('view');
-								}}
-							>
-								{t('app.menuView')}
-							</button>
-							{viewMenuOpen ? (
-								<div className="ref-menu-dropdown" role="menu" aria-label={t('app.menuView')}>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										onClick={() => {
-											toggleSidebarVisibility();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.toggleSidebar')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+B</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canToggleTerminal}
-										onClick={() => {
-											toggleTerminalVisibility();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.toggleTerminal')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+J</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canToggleDiffPanel}
-										onClick={() => {
-											toggleDiffPanelVisibility();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.toggleDiffPanel')}</span>
-										<kbd className="ref-menu-kbd">Alt+Ctrl+B</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										onClick={() => {
-											openQuickOpen('');
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.find')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+F</kbd>
-									</button>
-									<div className="ref-menu-dropdown-sep" role="separator" />
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canGoPrevThread}
-										onClick={() => {
-											void goToPreviousThread();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.previousThread')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+Shift+[</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canGoNextThread}
-										onClick={() => {
-											void goToNextThread();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.nextThread')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+Shift+]</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canGoBackThread}
-										onClick={() => {
-											void goThreadBack();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.back')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+[</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										disabled={!canGoForwardThread}
-										onClick={() => {
-											void goThreadForward();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.forward')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+]</kbd>
-									</button>
-									<div className="ref-menu-dropdown-sep" role="separator" />
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										onClick={() => {
-											zoomInUi();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.zoomIn')}</span>
-										<kbd className="ref-menu-kbd">Ctrl++</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										onClick={() => {
-											zoomOutUi();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.zoomOut')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+-</kbd>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										onClick={() => {
-											resetUiZoom();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.actualSize')}</span>
-										<kbd className="ref-menu-kbd">Ctrl+0</kbd>
-									</button>
-									<div className="ref-menu-dropdown-sep" role="separator" />
-									<button
-										type="button"
-										role="menuitem"
-										className="ref-menu-dropdown-item ref-menu-dropdown-item--row"
-										onClick={() => {
-											void toggleFullscreen();
-											setMenubarMenu('view', false);
-										}}
-									>
-										<span>{t('app.view.toggleFullscreen')}</span>
-									</button>
-								</div>
-							) : null}
-						</div>
-						<div className="ref-menu-dropdown-wrap" ref={windowMenuRef}>
-							<button
-								type="button"
-								className={`ref-menu-item${windowMenuOpen ? ' is-active' : ''}`}
-								aria-expanded={windowMenuOpen}
-								aria-haspopup="menu"
-								onClick={() => {
-									toggleMenubarMenu('window');
-								}}
-							>
-								{t('app.menuWindow')}
-							</button>
-							{windowMenuOpen ? (
-								<MenubarWindowMenu
-									onClose={() => setMenubarMenu('window', false)}
-									isDesktopShell={!!shell}
-									windowMaximized={windowMaximized}
-									onNewWindow={() => void fileMenuNewWindow()}
-									onNewEditorWindow={() => void fileMenuNewEditorWindow()}
-									onMinimize={() => void windowMenuMinimize()}
-									onToggleMaximize={() => void windowMenuToggleMaximize()}
-									onCloseWindow={() => void windowMenuCloseWindow()}
-								/>
-							) : null}
-						</div>
-						<button type="button" className="ref-menu-item">
-							{t('app.menuHelp')}
-						</button>
-						{layoutMode === 'editor' && workspace ? (
-							<div className="ref-menu-dropdown-wrap" ref={terminalMenuRef}>
-								<button
-									type="button"
-									className={`ref-menu-item${terminalMenuOpen ? ' is-active' : ''}`}
-									aria-expanded={terminalMenuOpen}
-									aria-haspopup="menu"
-									onClick={() => {
-										toggleMenubarMenu('terminal');
-									}}
-								>
-									{t('app.menuTerminal')}
-									<IconChevron className="ref-menu-chevron" />
-								</button>
-								{terminalMenuOpen ? (
-									<div className="ref-menu-dropdown" role="menu">
-										<button
-											type="button"
-											role="menuitem"
-											className="ref-menu-dropdown-item"
-											onClick={() => spawnEditorTerminal()}
-										>
-											{t('app.menuNewTerminal')}
-										</button>
-									</div>
-								) : null}
-							</div>
-						) : null}
-					</nav>
-				</div>
-				<div className={`ref-menubar-center ${layoutMode === 'agent' ? 'ref-menubar-center--hidden' : ''}`}>
-					{layoutMode !== 'agent' ? (
-						<button
-							type="button"
-							className="ref-global-search-btn"
-							aria-label={t('quickOpen.menubarAria')}
-							title={t('quickOpen.placeholder')}
-							onClick={() => openQuickOpen('')}
-						>
-							<IconSearch className="ref-global-search-icon" />
-							<span className="ref-global-search-text">{t('quickOpen.menubarSummary')}</span>
-							<kbd className="ref-global-search-kbd">{quickOpenPrimaryShortcutLabel()}</kbd>
-						</button>
-					) : null}
-				</div>
-				<div className="ref-menubar-right">
-					<button
-						type="button"
-						className="ref-icon-tile ref-settings-btn"
-						onClick={handleOpenSettingsGeneral}
-						title={t('app.settings')}
-						aria-label={t('app.settingsAria')}
-					>
-						<IconSettings />
-					</button>
-				</div>
-			</header>
+			<AppShellMenubar
+				layoutMode={layoutMode}
+				t={t}
+				shell={shell}
+				workspace={workspace}
+				folderRecents={folderRecents}
+				activeTabId={activeTabId}
+				windowMaximized={windowMaximized}
+				fileMenuRef={fileMenuRef}
+				editMenuRef={editMenuRef}
+				viewMenuRef={viewMenuRef}
+				windowMenuRef={windowMenuRef}
+				terminalMenuRef={terminalMenuRef}
+				fileMenuOpen={fileMenuOpen}
+				editMenuOpen={editMenuOpen}
+				viewMenuOpen={viewMenuOpen}
+				windowMenuOpen={windowMenuOpen}
+				terminalMenuOpen={terminalMenuOpen}
+				handleToggleFileMenu={handleToggleFileMenu}
+				handleToggleEditMenu={handleToggleEditMenu}
+				setMenubarMenu={setMenubarMenu}
+				toggleMenubarMenu={toggleMenubarMenu}
+				fileMenuNewFile={fileMenuNewFile}
+				fileMenuNewWindow={fileMenuNewWindow}
+				fileMenuNewEditorWindow={fileMenuNewEditorWindow}
+				fileMenuOpenFile={fileMenuOpenFile}
+				fileMenuOpenFolder={fileMenuOpenFolder}
+				openWorkspaceByPath={openWorkspaceByPath}
+				onSaveFile={onSaveFile}
+				fileMenuSaveAs={fileMenuSaveAs}
+				fileMenuRevertFile={fileMenuRevertFile}
+				fileMenuCloseEditor={fileMenuCloseEditor}
+				closeWorkspaceFolder={closeWorkspaceFolder}
+				fileMenuQuit={fileMenuQuit}
+				canEditUndoRedo={canEditUndoRedo}
+				canEditCut={canEditCut}
+				canEditCopy={canEditCopy}
+				canEditPaste={canEditPaste}
+				canEditSelectAll={canEditSelectAll}
+				executeEditAction={executeEditAction}
+				toggleSidebarVisibility={toggleSidebarVisibility}
+				canToggleTerminal={canToggleTerminal}
+				toggleTerminalVisibility={toggleTerminalVisibility}
+				canToggleDiffPanel={canToggleDiffPanel}
+				toggleDiffPanelVisibility={toggleDiffPanelVisibility}
+				openQuickOpen={openQuickOpen}
+				canGoPrevThread={canGoPrevThread}
+				goToPreviousThread={goToPreviousThread}
+				canGoNextThread={canGoNextThread}
+				goToNextThread={goToNextThread}
+				canGoBackThread={canGoBackThread}
+				goThreadBack={goThreadBack}
+				canGoForwardThread={canGoForwardThread}
+				goThreadForward={goThreadForward}
+				zoomInUi={zoomInUi}
+				zoomOutUi={zoomOutUi}
+				resetUiZoom={resetUiZoom}
+				toggleFullscreen={toggleFullscreen}
+				windowMenuMinimize={windowMenuMinimize}
+				windowMenuToggleMaximize={windowMenuToggleMaximize}
+				windowMenuCloseWindow={windowMenuCloseWindow}
+				spawnEditorTerminal={spawnEditorTerminal}
+				handleOpenSettingsGeneral={handleOpenSettingsGeneral}
+			/>
 
 			{isEditorHomeMode ? (
 				<AppWorkspaceWelcome
@@ -5971,512 +5747,134 @@ function AppMainWorkspaceInner() {
 								: `${leftSidebarOpen ? railWidths.left : 0}px ${leftSidebarOpen ? RESIZE_HANDLE_PX : 0}px minmax(0, 1fr) ${RESIZE_HANDLE_PX}px ${railWidths.right}px`,
 					}}
 				>
-				<aside
-					className={`ref-left ${leftSidebarOpen ? '' : 'is-collapsed'} ${
-						layoutMode === 'editor' ? 'ref-left--editor-embedded' : 'ref-left--agent-layout'
-					}`}
-					aria-label={t('app.projectAndAgent')}
-				>
-					{layoutMode === 'agent' ? (
-						<AgentLeftSidebar {...agentLeftSidebarProps} />
-					) : (
-				/* ═══ Editor 布局：左侧 = 文件树 ═══ */
-				<EditorLeftSidebar
-					shell={shell}
-					workspace={workspace}
-					workspaceBasename={workspaceBasename}
-					ipcOk={ipcOk}
-					editorLeftSidebarView={editorLeftSidebarView}
-					setEditorLeftSidebarView={setEditorLeftSidebarView}
-					editorExplorerCollapsed={editorExplorerCollapsed}
-					toggleEditorExplorerCollapsed={toggleEditorExplorerCollapsed}
-					editorSidebarWorkspaceLabel={editorSidebarWorkspaceLabel}
-					editorSidebarSelectedRel={editorSidebarSelectedRel}
-					editorExplorerScrollRef={editorExplorerScrollRef}
-					workspaceExplorerActions={workspaceExplorerActions}
-					gitPathStatus={gitPathStatus}
-					treeEpoch={treeEpoch}
-					editorSidebarSearchQuery={editorSidebarSearchQuery}
-					setEditorSidebarSearchQuery={setEditorSidebarSearchQuery}
-					normalizedEditorSidebarSearchQuery={normalizedEditorSidebarSearchQuery}
-					editorSidebarSearchResults={editorSidebarSearchResults}
-					editorSidebarSearchInputRef={editorSidebarSearchInputRef}
-					fileMenuNewFile={() => void fileMenuNewFile()}
-					revealWorkspaceInOs={(p) => void revealWorkspaceInOs(p)}
-					onExplorerOpenFile={(rel) => void onExplorerOpenFile(rel)}
-					setWorkspacePickerOpen={setWorkspacePickerOpen}
-					openSettingsPage={openSettingsPage}
+				<ShellLeftRailGroup
+					layoutMode={layoutMode}
+					leftSidebarOpen={leftSidebarOpen}
+					t={t}
+					beginResizeLeft={beginResizeLeft}
+					resetRailWidths={resetRailWidths}
+					agentLeftSidebarProps={agentLeftSidebarProps}
+					editorLeftSidebarProps={editorLeftSidebarProps}
 				/>
-				)}
-				</aside>
-
-				<div
-					className={`ref-resize-handle ${leftSidebarOpen ? '' : 'is-collapsed'}`}
-					role="separator"
-					aria-orientation="vertical"
-					aria-label={t('app.resizeLeftAria')}
-					title={t('app.resizeLeftTitle')}
-					onMouseDown={leftSidebarOpen ? beginResizeLeft : undefined}
-					onDoubleClick={resetRailWidths}
+				<ShellCenterRightGroup
+					layoutMode={layoutMode}
+					agentRightSidebarOpen={agentRightSidebarOpen}
+					t={t}
+					centerMain={shellWorkspaceCenterMain}
+					hasConversation={hasConversation}
+					onPlanNewIdea={onPlanNewIdea}
+					agentChatPanelProps={agentChatPanelProps}
+					agentRightSidebarProps={agentRightSidebarProps}
+					beginResizeRight={beginResizeRight}
+					resetRailWidths={resetRailWidths}
+					threadsChrono={threadsChrono}
+					currentId={currentId}
+					onSelectThread={onSelectThread}
+					confirmDeleteId={confirmDeleteId}
+					onDeleteThread={onDeleteThread}
+					editorThreadHistoryOpen={editorThreadHistoryOpen}
+					setEditorThreadHistoryOpen={setEditorThreadHistoryOpen}
+					editorChatMoreOpen={editorChatMoreOpen}
+					setEditorChatMoreOpen={setEditorChatMoreOpen}
+					editorHistoryMenuRef={editorHistoryMenuRef}
+					editorMoreMenuRef={editorMoreMenuRef}
+					threadSearch={threadSearch}
+					setThreadSearch={setThreadSearch}
+					todayThreads={todayThreads}
+					archivedThreads={archivedThreads}
+					renderThreadItem={renderThreadItem}
+					setComposerModePersist={setComposerModePersist}
+					onNewThread={onNewThread}
+					setWorkspaceToolsOpen={setWorkspaceToolsOpen}
+					handleCloseEditorChatMore={handleCloseEditorChatMore}
+					handleOpenSettingsGeneral={handleOpenSettingsGeneral}
 				/>
-
-				{layoutMode === 'agent' ? (
-					<AgentAgentCenterColumn
-						t={t}
-						hasConversation={hasConversation}
-						workspace={workspace}
-						workspaceBasename={workspaceBasename}
-						currentThreadTitle={currentThreadTitle}
-						onPlanNewIdea={onPlanNewIdea}
-						hasAgentPlanSidebarContent={hasAgentPlanSidebarContent}
-						agentRightSidebarOpen={agentRightSidebarOpen}
-						agentRightSidebarView={agentRightSidebarView}
-						toggleAgentRightSidebarView={toggleAgentRightSidebarView}
-						chatPanelProps={agentChatPanelProps}
-					/>
-				) : (
-				<Suspense
-					fallback={
-						<main
-							className="ref-center ref-center--editor-workspace ref-center--editor-shell"
-							aria-label={t('app.editorWorkspaceMainAria')}
-							aria-busy="true"
-						>
-							<div className="ref-editor-center-split" />
-						</main>
-					}
-				>
-					<EditorMainPanel {...editorMainPanelProps} />
-				</Suspense>
-				)}
-
-				<div
-					className={`ref-resize-handle ${
-						layoutMode === 'agent' && !agentRightSidebarOpen ? 'is-collapsed' : ''
-					}`}
-					role="separator"
-					aria-orientation="vertical"
-					aria-label={t('app.resizeRightAria')}
-					title={t('app.resizeRightTitle')}
-					onMouseDown={layoutMode === 'agent' && !agentRightSidebarOpen ? undefined : beginResizeRight}
-					onDoubleClick={resetRailWidths}
-				/>
-
-				{layoutMode === 'agent' ? (
-				<AgentRightSidebar {...agentRightSidebarProps} />
-				) : (
-				/* ═══ Editor 布局：右侧 = Agent 对话（与 Agent 布局同一套消息与输入） ═══ */
-				<aside
-					className={`ref-right ref-right--editor-chat ref-right--editor-shell ${hasConversation ? 'ref-right--editor-chat--active' : ''}`}
-					aria-label={t('app.editorAgentChatRail')}
-					onKeyDown={onPlanNewIdea}
-				>
-					<div className="ref-editor-chat-panel">
-						<div className="ref-editor-chat-tab-rail">
-							<nav
-								className="ref-editor-chat-tabs-scroll"
-								aria-label={t('app.editorChatTabListAria')}
-							>
-								{threadsChrono.map((th) => {
-									const active = th.id === currentId;
-									return (
-										<div
-											key={th.id}
-											className={`ref-editor-chat-tab-shell ${active ? 'is-active' : ''}`}
-										>
-											<button
-												type="button"
-												className="ref-editor-chat-tab-main"
-												aria-current={active ? 'true' : undefined}
-												title={threadRowTitle(t, th)}
-												onClick={() => {
-													setEditorThreadHistoryOpen(false);
-													void onSelectThread(th.id);
-												}}
-											>
-												<span className="ref-editor-chat-tab-label">{threadRowTitle(t, th)}</span>
-											</button>
-											<button
-												type="button"
-												className={`ref-editor-chat-tab-close ${
-													confirmDeleteId === th.id ? 'ref-editor-chat-tab-close--confirm' : ''
-												}`}
-												title={
-													confirmDeleteId === th.id ? t('common.confirmDelete') : t('common.deleteThread')
-												}
-												aria-label={
-													confirmDeleteId === th.id ? t('common.confirmDelete') : t('common.deleteThread')
-												}
-												onClick={(e) => void onDeleteThread(e, th.id)}
-											>
-												{confirmDeleteId === th.id ? (
-													<span className="ref-editor-chat-tab-close-confirm-label">{t('common.confirm')}</span>
-												) : (
-													<IconCloseSmall className="ref-editor-chat-tab-close-svg" />
-												)}
-											</button>
-										</div>
-									);
-								})}
-							</nav>
-							<div className="ref-editor-chat-tab-actions">
-								<button
-									type="button"
-									className="ref-editor-chat-icon-btn"
-									title={t('app.newAgent')}
-									aria-label={t('app.newAgent')}
-									onClick={() => {
-										setEditorThreadHistoryOpen(false);
-										setEditorChatMoreOpen(false);
-										void onNewThread();
-									}}
-								>
-									<IconPlus className="ref-editor-chat-icon-btn-svg" />
-								</button>
-								<div className="ref-editor-chat-menu-wrap" ref={editorHistoryMenuRef}>
-									<button
-										type="button"
-										className={`ref-editor-chat-icon-btn ${editorThreadHistoryOpen ? 'is-active' : ''}`}
-										title={t('app.editorChatHistoryAria')}
-										aria-label={t('app.editorChatHistoryAria')}
-										aria-expanded={editorThreadHistoryOpen}
-										aria-haspopup="dialog"
-										onClick={() => {
-											setEditorChatMoreOpen(false);
-											setEditorThreadHistoryOpen((o) => !o);
-										}}
-									>
-										<IconHistory className="ref-editor-chat-icon-btn-svg" />
-									</button>
-									{editorThreadHistoryOpen ? (
-										<div className="ref-editor-chat-dropdown ref-editor-chat-dropdown--history" role="dialog">
-											<label className="ref-editor-chat-history-search">
-												<IconSearch className="ref-editor-chat-history-search-ico" aria-hidden />
-												<input
-													type="search"
-													className="ref-editor-chat-history-input"
-													placeholder={t('app.editorChatSearchThreads')}
-													value={threadSearch}
-													onChange={(e) => setThreadSearch(e.target.value)}
-													aria-label={t('app.editorChatSearchThreads')}
-												/>
-											</label>
-											<div className="ref-editor-chat-history-section-label">{t('app.today')}</div>
-											<div className="ref-editor-chat-history-list">
-												{todayThreads.map((th) => renderThreadItem(th))}
-											</div>
-											{archivedThreads.length > 0 ? (
-												<>
-													<div className="ref-editor-chat-history-section-label ref-editor-chat-history-section-label--arch">
-														{t('app.archived')}
-													</div>
-													<div className="ref-editor-chat-history-list">
-														{archivedThreads.map((th) => renderThreadItem(th))}
-													</div>
-												</>
-											) : null}
-										</div>
-									) : null}
-								</div>
-								<div className="ref-editor-chat-menu-wrap" ref={editorMoreMenuRef}>
-									<button
-										type="button"
-										className={`ref-editor-chat-icon-btn ${editorChatMoreOpen ? 'is-active' : ''}`}
-										title={t('app.editorChatMoreAria')}
-										aria-label={t('app.editorChatMoreAria')}
-										aria-expanded={editorChatMoreOpen}
-										aria-haspopup="menu"
-										onClick={() => {
-											setEditorThreadHistoryOpen(false);
-											setEditorChatMoreOpen((o) => !o);
-										}}
-									>
-										<IconDotsHorizontal className="ref-editor-chat-icon-btn-svg" />
-									</button>
-									{editorChatMoreOpen ? (
-										<div className="ref-editor-chat-dropdown ref-editor-chat-dropdown--more" role="menu">
-											<button
-												type="button"
-												className="ref-editor-chat-more-item"
-												role="menuitem"
-												onClick={() => {
-													setEditorChatMoreOpen(false);
-													setComposerModePersist('plan');
-													void onNewThread();
-												}}
-											>
-												{t('app.planNewIdea')}
-											</button>
-											<button
-												type="button"
-												className="ref-editor-chat-more-item"
-												role="menuitem"
-												onClick={() => {
-													setEditorChatMoreOpen(false);
-													setWorkspaceToolsOpen(true);
-												}}
-											>
-												{t('app.quickTerminal')}
-											</button>
-											<button
-												type="button"
-												className="ref-editor-chat-more-item"
-												role="menuitem"
-												onClick={() => {
-													handleCloseEditorChatMore();
-													handleOpenSettingsGeneral();
-												}}
-											>
-												{t('app.settings')}
-											</button>
-										</div>
-									) : null}
-								</div>
-							</div>
-						</div>
-						<AgentChatPanel layout="editor-rail" {...agentChatPanelProps} />
-					</div>
-				</aside>
-				)}
 			</div>
 			)}
 
-			{activeWorkspaceMenuItem && workspaceMenuPosition ? (
-				<div
-					ref={workspaceMenuRef}
-					className="ref-agent-workspace-menu ref-agent-workspace-menu--floating"
-					role="menu"
-					style={{
-						top: workspaceMenuPosition.top,
-						left: workspaceMenuPosition.left,
-						transform: 'translateX(-100%)',
-					}}
-				>
-					<button
-						type="button"
-						className="ref-agent-workspace-menu-item"
-						role="menuitem"
-						onClick={() => void revealWorkspaceInOs(activeWorkspaceMenuItem.path)}
-					>
-						<span className="ref-agent-workspace-menu-item-icon" aria-hidden>
-							<IconArrowUpRight />
-						</span>
-						<span className="ref-agent-workspace-menu-item-copy">
-							<span className="ref-agent-workspace-menu-item-label">{t('app.workspaceMenuOpenInExplorer')}</span>
-						</span>
-					</button>
-					<button
-						type="button"
-						className="ref-agent-workspace-menu-item"
-						role="menuitem"
-						onClick={() => beginWorkspaceAliasEdit(activeWorkspaceMenuItem.path)}
-					>
-						<span className="ref-agent-workspace-menu-item-icon" aria-hidden>
-							<IconPencil />
-						</span>
-						<span className="ref-agent-workspace-menu-item-copy">
-							<span className="ref-agent-workspace-menu-item-label">{t('app.workspaceMenuEditName')}</span>
-						</span>
-					</button>
-					<button
-						type="button"
-						className="ref-agent-workspace-menu-item is-destructive"
-						role="menuitem"
-						onClick={() => removeWorkspaceFromSidebar(activeWorkspaceMenuItem.path)}
-					>
-						<span className="ref-agent-workspace-menu-item-icon" aria-hidden>
-							<IconTrash />
-						</span>
-						<span className="ref-agent-workspace-menu-item-copy">
-							<span className="ref-agent-workspace-menu-item-label">{t('app.workspaceMenuRemove')}</span>
-						</span>
-					</button>
-				</div>
-			) : null}
-
-			{workspaceToolsOpen ? (
-				<section className="ref-drawer ref-drawer--terminal-only">
-					<div className="ref-drawer-head">
-						<span className="ref-drawer-title">{t('app.terminalDrawer')}</span>
-						<button type="button" className="ref-drawer-close" onClick={handleCloseWorkspaceTools}>
-							{t('app.terminalCollapse')}
-						</button>
-					</div>
-					<div className="ref-drawer-terminal">
-						<Suspense fallback={<div className="ref-drawer-terminal-loading" />}>
-							<DrawerPtyTerminal placeholder={t('app.terminalStarting')} />
-						</Suspense>
-					</div>
-				</section>
-			) : null}
-
-			<OpenWorkspaceModal
-				open={workspacePickerOpen}
-				onClose={handleCloseWorkspacePicker}
-				shell={shell}
-				homePath={homePath}
-				onWorkspaceOpened={(p) => void applyWorkspacePath(p)}
-			/>
-
-			<QuickOpenPalette
-				open={quickOpenOpen}
-				onClose={handleCloseQuickOpen}
-				workspaceOpen={!!workspace}
-				workspaceFiles={workspaceFileList}
-				recentFilePaths={quickOpenRecentFiles}
-				homeRecentFolders={homeRecents}
-				activeFilePath={filePath.trim()}
-				onOpenFile={(rel, a, b) => void onExplorerOpenFile(rel, a, b)}
-				onOpenWorkspaceFolder={(p) => void openWorkspaceByPath(p)}
-				onOpenWorkspacePicker={() => setWorkspacePickerOpen(true)}
-				onOpenSettings={handleOpenSettingsGeneral}
-				onFocusSearchSidebar={(q) => focusSearchSidebarFromQuickOpen(q)}
-				onGoToLine={goToLineInEditor}
-				initialQuery={quickOpenSeed}
-				searchWorkspaceSymbols={shell && indexingSettings.symbolIndexEnabled ? searchWorkspaceSymbolsFn : undefined}
+			<AppShellOverlays
 				t={t}
+				shell={shell}
+				workspace={workspace}
+				homePath={homePath}
+				workspaceFileList={workspaceFileList}
+				homeRecents={homeRecents}
+				filePath={filePath}
+				indexingSettingsSymbolIndexEnabled={indexingSettings.symbolIndexEnabled}
+				searchWorkspaceSymbolsFn={searchWorkspaceSymbolsFn}
+				applyWorkspacePath={applyWorkspacePath}
+				openWorkspaceByPath={openWorkspaceByPath}
+				workspaceMenuRef={workspaceMenuRef}
+				activeWorkspaceMenuItem={activeWorkspaceMenuItem}
+				workspaceMenuPosition={workspaceMenuPosition}
+				revealWorkspaceInOs={revealWorkspaceInOs}
+				beginWorkspaceAliasEdit={beginWorkspaceAliasEdit}
+				removeWorkspaceFromSidebar={removeWorkspaceFromSidebar}
+				workspaceToolsOpen={workspaceToolsOpen}
+				handleCloseWorkspaceTools={handleCloseWorkspaceTools}
+				workspacePickerOpen={workspacePickerOpen}
+				handleCloseWorkspacePicker={handleCloseWorkspacePicker}
+				setWorkspacePickerOpen={setWorkspacePickerOpen}
+				quickOpenOpen={quickOpenOpen}
+				handleCloseQuickOpen={handleCloseQuickOpen}
+				quickOpenRecentFiles={quickOpenRecentFiles}
+				quickOpenSeed={quickOpenSeed}
+				onExplorerOpenFile={onExplorerOpenFile}
+				handleOpenSettingsGeneral={handleOpenSettingsGeneral}
+				focusSearchSidebarFromQuickOpen={focusSearchSidebarFromQuickOpen}
+				goToLineInEditor={goToLineInEditor}
+				settingsPageOpen={settingsPageOpen}
+				settingsOpenPending={settingsOpenPending}
+				closeSettingsPage={closeSettingsPage}
+				settingsPageProps={shellSettingsPageProps}
+				layoutSwitchPending={layoutSwitchPending}
+				layoutSwitchTarget={layoutSwitchTarget}
+				plusMenuOpen={plusMenuOpen}
+				handleClosePlusMenu={handleClosePlusMenu}
+				plusMenuAnchorRefForDropdown={plusMenuAnchorRefForDropdown}
+				composerMode={composerMode}
+				setComposerModePersist={setComposerModePersist}
+				gitBranchPickerOpen={gitBranchPickerOpen}
+				handleCloseGitBranchPicker={handleCloseGitBranchPicker}
+				composerGitBranchAnchorRef={composerGitBranchAnchorRef}
+				gitStatusOk={gitStatusOk}
+				gitBranchList={gitBranchList}
+				gitBranchListCurrent={gitBranchListCurrent}
+				onGitBranchListFresh={onGitBranchListFresh}
+				gitBranch={gitBranch}
+				refreshGit={refreshGit}
+				showTransientToast={showTransientToast}
+				modelPickerOpen={modelPickerOpen}
+				handleCloseModelPicker={handleCloseModelPicker}
+				modelPickerAnchorRefForDropdown={modelPickerAnchorRefForDropdown}
+				modelPickerItems={modelPickerItems}
+				defaultModel={defaultModel}
+				onPickDefaultModel={onPickDefaultModel}
+				handleOpenSettingsModels={handleOpenSettingsModels}
+				thinkingByModelId={thinkingByModelId}
+				setThinkingByModelId={setThinkingByModelId}
+				atMenuOpen={atMention.atMenuOpen}
+				atMenuItems={atMention.atMenuItems}
+				atMenuHighlight={atMention.atMenuHighlight}
+				atCaretRect={atMention.atCaretRect}
+				setAtMenuHighlight={atMention.setAtMenuHighlight}
+				applyAtSelection={atMention.applyAtSelection}
+				closeAtMenu={atMention.closeAtMenu}
+				slashMenuOpen={slashCommand.slashMenuOpen}
+				slashQuery={slashCommand.slashQuery}
+				slashMenuItems={slashCommand.slashMenuItems}
+				slashMenuHighlight={slashCommand.slashMenuHighlight}
+				slashCaretRect={slashCommand.slashCaretRect}
+				setSlashMenuHighlight={slashCommand.setSlashMenuHighlight}
+				applySlashSelection={slashCommand.applySlashSelection}
+				closeSlashMenu={slashCommand.closeSlashMenu}
+				saveToastVisible={saveToastVisible}
+				saveToastKey={saveToastKey}
+				subAgentBgToast={subAgentBgToast}
+				composerAttachErr={composerAttachErr}
 			/>
 
-			<Activity mode={settingsPageOpen || settingsOpenPending ? 'visible' : 'hidden'}>
-				<div className="ref-settings-backdrop" role="presentation" onClick={() => void closeSettingsPage()}>
-					<div className="ref-settings-mount" onClick={(e) => e.stopPropagation()}>
-						<Suspense
-							fallback={
-								<div className="ref-settings-open-loading" role="status" aria-live="polite">
-									<span className="ref-settings-open-loading-spinner" aria-hidden />
-									<span>{t('common.loading')}</span>
-								</div>
-							}
-						>
-							<SettingsPage
-								initialNav={settingsInitialNav}
-								onClose={() => void closeSettingsPage()}
-								defaultModel={defaultModel}
-								modelProviders={modelProviders}
-								modelEntries={modelEntries}
-								onChangeModelProviders={onChangeModelProviders}
-								onChangeModelEntries={onChangeModelEntries}
-								onPickDefaultModel={(id) => void onPickDefaultModel(id)}
-								agentCustomization={mergedAgentCustomization}
-								onChangeAgentCustomization={onChangeMergedAgentCustomization}
-								editorSettings={editorSettings}
-								onChangeEditorSettings={setEditorSettings}
-								onPersistLanguage={(loc) => void onPersistLanguage(loc)}
-								indexingSettings={indexingSettings}
-								onChangeIndexingSettings={setIndexingSettings}
-								onPersistIndexingPatch={onPersistIndexingPatch}
-								mcpServers={mcpServers}
-								onChangeMcpServers={setMcpServers}
-								mcpStatuses={mcpStatuses}
-								onRefreshMcpStatuses={onRefreshMcpStatuses}
-								onStartMcpServer={onStartMcpServer}
-								onStopMcpServer={onStopMcpServer}
-								onRestartMcpServer={onRestartMcpServer}
-								shell={shell ?? null}
-								workspaceOpen={!!workspace}
-								onOpenSkillCreator={startSkillCreatorFlow}
-								onOpenWorkspaceSkillFile={handleOpenWorkspaceSkillFile}
-								onDeleteWorkspaceSkillDisk={handleDeleteWorkspaceSkillDisk}
-								colorMode={colorMode}
-								onChangeColorMode={(m, origin) => void onChangeColorMode(m, origin)}
-								effectiveColorScheme={effectiveScheme}
-								appearanceSettings={appearanceSettings}
-								onChangeAppearanceSettings={setAppearanceSettings}
-							/>
-						</Suspense>
-					</div>
-				</div>
-			</Activity>
 
-			{layoutSwitchPending && layoutSwitchTarget === 'editor' ? (
-				<div className="ref-layout-switch-loading" role="status" aria-live="polite">
-					<div className="ref-layout-switch-loading-card">
-						<BrandLogo className="ref-layout-switch-loading-logo" size={34} />
-						<div className="ref-layout-switch-loading-copy">
-							<strong>{t('app.switchingToEditor')}</strong>
-							<span>{t('app.switchingToEditorHint')}</span>
-						</div>
-						<span className="ref-layout-switch-loading-spinner" aria-hidden />
-					</div>
-				</div>
-			) : null}
-
-			<ComposerPlusMenu
-				open={plusMenuOpen}
-				onClose={handleClosePlusMenu}
-				anchorRef={plusMenuAnchorRefForDropdown}
-				mode={composerMode}
-				onSelectMode={setComposerModePersist}
-			/>
-
-			<GitBranchPickerDropdown
-				open={gitBranchPickerOpen}
-				onClose={handleCloseGitBranchPicker}
-				anchorRef={composerGitBranchAnchorRef}
-				shell={shell ?? null}
-				repoReady={gitStatusOk}
-				branches={gitBranchList}
-				listCurrent={gitBranchListCurrent}
-				onBranchListFresh={onGitBranchListFresh}
-				displayBranch={gitBranch}
-				onAfterGitChange={() => void refreshGit()}
-				onNotify={showTransientToast}
-			/>
-
-			<ModelPickerDropdown
-				open={modelPickerOpen}
-				onClose={handleCloseModelPicker}
-				anchorRef={modelPickerAnchorRefForDropdown}
-				items={modelPickerItems}
-				selectedId={defaultModel}
-				onSelectModel={(id) => void onPickDefaultModel(id)}
-				onNavigateToSettings={handleOpenSettingsModels}
-				onAddModels={handleOpenSettingsModels}
-				getThinkingLevel={(id) => thinkingByModelId[id] ?? 'medium'}
-				onThinkingLevelChange={(modelId, v) => {
-					setThinkingByModelId((prev) => ({ ...prev, [modelId]: v }));
-					if (shell) {
-						void shell.invoke('settings:set', { models: { thinkingByModelId: { [modelId]: v } } });
-					}
-				}}
-			/>
-
-			<ComposerAtMenu
-				open={atMention.atMenuOpen}
-				items={atMention.atMenuItems}
-				highlightIndex={atMention.atMenuHighlight}
-				caretRect={atMention.atCaretRect}
-				onHighlight={atMention.setAtMenuHighlight}
-				onSelect={atMention.applyAtSelection}
-				onClose={atMention.closeAtMenu}
-			/>
-
-			<ComposerSlashMenu
-				open={slashCommand.slashMenuOpen}
-				query={slashCommand.slashQuery}
-				items={slashCommand.slashMenuItems}
-				highlightIndex={slashCommand.slashMenuHighlight}
-				caretRect={slashCommand.slashCaretRect}
-				onHighlight={slashCommand.setSlashMenuHighlight}
-				onSelect={slashCommand.applySlashSelection}
-				onClose={slashCommand.closeSlashMenu}
-			/>
-
-			{saveToastVisible ? <div key={saveToastKey} className="ref-save-toast">Saved ✓</div> : null}
-			{subAgentBgToast ? (
-				<div
-					key={subAgentBgToast.key}
-					className={`ref-sub-agent-bg-toast ${subAgentBgToast.ok ? 'is-ok' : 'is-err'}`}
-					role="status"
-				>
-					{subAgentBgToast.text}
-				</div>
-			) : null}
-			{composerAttachErr ? (
-				<div className="ref-sub-agent-bg-toast is-err" role="alert">
-					{composerAttachErr}
-				</div>
-			) : null}
 		</div>
 		</ComposerActionsProvider>
 		</AppProvider>
