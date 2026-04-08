@@ -9,9 +9,7 @@ import {
 	useRef,
 	useState,
 	useTransition,
-	createContext,
 	memo,
-	useContext,
 	type Dispatch,
 	type SetStateAction,
 	type ReactNode,
@@ -140,7 +138,7 @@ import { useAgentLeftSidebarProps } from './hooks/useAgentLeftSidebarProps';
 import { useEditorMainPanelProps } from './hooks/useEditorMainPanelProps';
 import { useWorkspaceManager } from './hooks/useWorkspaceManager';
 import { useThreads } from './hooks/useThreads';
-import { type ThreadInfo } from './threadTypes';
+import { type ChatMessage, type ThreadInfo } from './threadTypes';
 import { normWorkspaceRootKey } from './workspaceRootKey';
 import { useAgentFileReview, type AgentFilePreviewState } from './hooks/useAgentFileReview';
 import { useComposer } from './hooks/useComposer';
@@ -167,6 +165,13 @@ import {
 	writeStoredShellLayoutMode,
 	type ShellLayoutMode,
 } from './app/shellLayoutStorage';
+import {
+	AppShellProviders,
+	useAppShellChrome,
+	useAppShellWorkspace,
+	useAppShellGit,
+	useAppShellSettings,
+} from './app/appShellContexts';
 
 const SettingsPage = lazy(() => import('./SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const EditorMainPanel = lazy(() => import('./EditorMainPanel').then((m) => ({ default: m.EditorMainPanel })));
@@ -269,48 +274,6 @@ type OnSendOptions = {
 	/** 非空时在本轮 stream 成功 done 后标记该计划文件已执行 Build */
 	planBuildPathKey?: string;
 };
-/** 与默认导出 App 中 `foundation` useMemo 的字段一致，供内层工作区壳消费 */
-type AppShellFoundation =
-	ReturnType<typeof useWorkspaceManager> &
-	ReturnType<typeof useGitIntegration> &
-	Omit<
-		ReturnType<typeof useSettings>,
-		| 'setModelProviders'
-		| 'setDefaultModel'
-		| 'setModelEntries'
-		| 'setEnabledModelIds'
-		| 'projectAgentSlice'
-		| 'setProjectAgentSlice'
-		| 'workspaceDiskSkills'
-		| 'setWorkspaceDiskSkills'
-		| 'diskSkillsRefreshTicker'
-		| 'setDiskSkillsRefreshTicker'
-		| 'openSettingsPage'
-	> & {
-		shell: Window['asyncShell'];
-		t: TFunction;
-		setLocale: (locale: AppLocale) => void;
-		locale: AppLocale;
-		ipcOk: string;
-		setIpcOk: Dispatch<SetStateAction<string>>;
-		indexingSettings: IndexingSettingsState;
-		setIndexingSettings: Dispatch<SetStateAction<IndexingSettingsState>>;
-		layoutPinnedBySurface: boolean;
-		appSurface: LayoutMode | undefined;
-		shellLayoutStorageKey: string;
-		sidebarLayoutStorageKey: string;
-		colorMode: AppColorMode;
-		setColorMode: Dispatch<SetStateAction<AppColorMode>>;
-		appearanceSettings: AppAppearanceSettings;
-		setAppearanceSettings: Dispatch<SetStateAction<AppAppearanceSettings>>;
-		effectiveScheme: 'light' | 'dark';
-		setTransitionOrigin: (origin?: ThemeTransitionOrigin) => void;
-		monacoChromeTheme: 'void-light' | 'void-dark';
-		openSettingsPageBase: ReturnType<typeof useSettings>['openSettingsPage'];
-	};
-
-const AppShellFoundationContext = createContext<AppShellFoundation | null>(null);
-
 
 export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	const shell = useAsyncShell();
@@ -466,7 +429,7 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		applyLoadedSettings,
 	} = useSettings(shell, workspace, t);
 
-	const foundation = useMemo(
+	const chromeSlice = useMemo(
 		() => ({
 			shell,
 			t,
@@ -487,6 +450,32 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			effectiveScheme,
 			setTransitionOrigin,
 			monacoChromeTheme,
+		}),
+		[
+			shell,
+			t,
+			setLocale,
+			locale,
+			ipcOk,
+			setIpcOk,
+			indexingSettings,
+			setIndexingSettings,
+			layoutPinnedBySurface,
+			appSurface,
+			shellLayoutStorageKey,
+			sidebarLayoutStorageKey,
+			colorMode,
+			setColorMode,
+			appearanceSettings,
+			setAppearanceSettings,
+			effectiveScheme,
+			setTransitionOrigin,
+			monacoChromeTheme,
+		]
+	);
+
+	const workspaceSlice = useMemo(
+		() => ({
 			workspace,
 			setWorkspace,
 			workspaceFileList,
@@ -500,6 +489,26 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			setHiddenAgentWorkspacePaths,
 			collapsedAgentWorkspacePaths,
 			setCollapsedAgentWorkspacePaths,
+		}),
+		[
+			workspace,
+			setWorkspace,
+			workspaceFileList,
+			homeRecents,
+			setHomeRecents,
+			folderRecents,
+			setFolderRecents,
+			workspaceAliases,
+			setWorkspaceAliases,
+			hiddenAgentWorkspacePaths,
+			setHiddenAgentWorkspacePaths,
+			collapsedAgentWorkspacePaths,
+			setCollapsedAgentWorkspacePaths,
+		]
+	);
+
+	const gitSlice = useMemo(
+		() => ({
 			gitBranch,
 			gitLines,
 			gitPathStatus,
@@ -518,6 +527,31 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			refreshGit,
 			loadGitDiffPreviews,
 			onGitBranchListFresh,
+		}),
+		[
+			gitBranch,
+			gitLines,
+			gitPathStatus,
+			gitChangedPaths,
+			gitStatusOk,
+			gitBranchList,
+			gitBranchListCurrent,
+			diffPreviews,
+			diffLoading,
+			gitActionError,
+			setGitActionError,
+			treeEpoch,
+			gitBranchPickerOpen,
+			setGitBranchPickerOpen,
+			diffTotals,
+			refreshGit,
+			loadGitDiffPreviews,
+			onGitBranchListFresh,
+		]
+	);
+
+	const settingsSlice = useMemo(
+		() => ({
 			modelProviders,
 			defaultModel,
 			modelEntries,
@@ -554,56 +588,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			applyLoadedSettings,
 		}),
 		[
-			shell,
-			t,
-			setLocale,
-			locale,
-			ipcOk,
-			setIpcOk,
-			indexingSettings,
-			setIndexingSettings,
-			layoutPinnedBySurface,
-			appSurface,
-			shellLayoutStorageKey,
-			sidebarLayoutStorageKey,
-			colorMode,
-			setColorMode,
-			appearanceSettings,
-			setAppearanceSettings,
-			effectiveScheme,
-			setTransitionOrigin,
-			monacoChromeTheme,
-			workspace,
-			setWorkspace,
-			workspaceFileList,
-			homeRecents,
-			setHomeRecents,
-			folderRecents,
-			setFolderRecents,
-			workspaceAliases,
-			setWorkspaceAliases,
-			hiddenAgentWorkspacePaths,
-			setHiddenAgentWorkspacePaths,
-			collapsedAgentWorkspacePaths,
-			setCollapsedAgentWorkspacePaths,
-			gitBranch,
-			gitLines,
-			gitPathStatus,
-			gitChangedPaths,
-			gitStatusOk,
-			gitBranchList,
-			gitBranchListCurrent,
-			diffPreviews,
-			diffLoading,
-			gitActionError,
-			setGitActionError,
-			treeEpoch,
-			gitBranchPickerOpen,
-			setGitBranchPickerOpen,
-			diffTotals,
-			refreshGit,
-			loadGitDiffPreviews,
-			onGitBranchListFresh,
 			modelProviders,
 			defaultModel,
 			modelEntries,
@@ -642,9 +626,14 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	);
 
 	return (
-		<AppShellFoundationContext.Provider value={foundation}>
+		<AppShellProviders
+			chrome={chromeSlice}
+			workspace={workspaceSlice}
+			git={gitSlice}
+			settings={settingsSlice}
+		>
 			<AppMainWorkspace />
-		</AppShellFoundationContext.Provider>
+		</AppShellProviders>
 	);
 }
 
@@ -669,6 +658,9 @@ function AppMainWorkspaceInner() {
 		effectiveScheme,
 		setTransitionOrigin,
 		monacoChromeTheme,
+	} = useAppShellChrome();
+
+	const {
 		workspace,
 		setWorkspace,
 		workspaceFileList,
@@ -682,6 +674,9 @@ function AppMainWorkspaceInner() {
 		setHiddenAgentWorkspacePaths,
 		collapsedAgentWorkspacePaths,
 		setCollapsedAgentWorkspacePaths,
+	} = useAppShellWorkspace();
+
+	const {
 		gitBranch,
 		gitLines,
 		gitPathStatus,
@@ -700,6 +695,9 @@ function AppMainWorkspaceInner() {
 		refreshGit,
 		loadGitDiffPreviews,
 		onGitBranchListFresh,
+	} = useAppShellGit();
+
+	const {
 		modelProviders,
 		defaultModel,
 		modelEntries,
@@ -734,7 +732,7 @@ function AppMainWorkspaceInner() {
 		onStopMcpServer,
 		onRestartMcpServer,
 		applyLoadedSettings,
-	} = useContext(AppShellFoundationContext)!;
+	} = useAppShellSettings();
 
 	const {
 		threads,
@@ -1237,7 +1235,9 @@ function AppMainWorkspaceInner() {
 		return ordered;
 	}, [folderRecents, workspace]);
 
-	useEffect(() => {
+	// useLayoutEffect：commit 后同步执行，避免 useEffect 异步触发导致在两个 paint 帧间
+	// 出现额外的 agentSidebarWorkspaces 无效渲染。
+	useLayoutEffect(() => {
 		setAgentWorkspaceOrder((prev) => {
 			const candidateSet = new Set(agentSidebarWorkspaceCandidates);
 			const next = prev.filter((path) => candidateSet.has(path));
@@ -1851,7 +1851,8 @@ function AppMainWorkspaceInner() {
 		return () => window.clearTimeout(id);
 	}, [layoutMode, editorLeftSidebarView]);
 
-	useEffect(() => {
+	// useLayoutEffect：与上方 agentWorkspaceOrder 同理，避免额外 paint 帧。
+	useLayoutEffect(() => {
 		setEditorExplorerCollapsed(false);
 	}, [workspace]);
 
@@ -1863,14 +1864,75 @@ function AppMainWorkspaceInner() {
 		return () => window.cancelAnimationFrame(id);
 	}, [layoutMode, editorLeftSidebarView, editorExplorerCollapsed, workspace, scrollEditorExplorerToTop]);
 
+	/**
+	 * fileChanges 状态恢复：从 localStorage 读取已保留/撤销记录并同批写入 state。
+	 * 使用 ref 追踪上次计算的 {threadId, hash}，避免 streaming 期间重复计算。
+	 * 被 onMessagesLoaded（loadMessages 的 onLoad 回调）和后续 useEffect 共用。
+	 */
+	const fileChangesLastHashRef = useRef<{ threadId: string | null; hash: string }>({ threadId: null, hash: '' });
+	const restoreFileChangesState = useCallback(
+		(threadId: string | null, msgs: ChatMessage[], loadedThreadId: string | null) => {
+			if (!threadId || loadedThreadId !== threadId) {
+				if (fileChangesLastHashRef.current.threadId === null && fileChangesLastHashRef.current.hash === '') return;
+				fileChangesLastHashRef.current = { threadId: null, hash: '' };
+				setFileChangesDismissed(false);
+				setDismissedFiles(new Set());
+				setRevertedFiles(new Set());
+				setRevertedChangeKeys(new Set());
+				return;
+			}
+			const last = [...msgs].reverse().find((m) => m.role === 'assistant');
+			const content = last?.content ?? '';
+			if (!content.trim()) {
+				if (fileChangesLastHashRef.current.threadId === threadId && fileChangesLastHashRef.current.hash === '') return;
+				fileChangesLastHashRef.current = { threadId, hash: '' };
+				setFileChangesDismissed(false);
+				setDismissedFiles(new Set());
+				setRevertedFiles(new Set());
+				setRevertedChangeKeys(new Set());
+				return;
+			}
+			const hash = hashAgentAssistantContent(content);
+			if (fileChangesLastHashRef.current.threadId === threadId && fileChangesLastHashRef.current.hash === hash) {
+				return; // 相同 hash，跳过重复计算
+			}
+			fileChangesLastHashRef.current = { threadId, hash };
+			const stored = readPersistedAgentFileChanges(threadId);
+			if (!stored || stored.contentHash !== hash) {
+				if (stored) clearPersistedAgentFileChanges(threadId);
+				setFileChangesDismissed(false);
+				setDismissedFiles(new Set());
+				setRevertedFiles(new Set());
+				setRevertedChangeKeys(new Set());
+				return;
+			}
+			setFileChangesDismissed(stored.fileChangesDismissed);
+			setDismissedFiles(new Set(stored.dismissedPaths));
+			setRevertedFiles(new Set(stored.revertedPaths));
+			setRevertedChangeKeys(new Set(stored.revertedChangeKeys));
+		},
+		[setFileChangesDismissed, setDismissedFiles, setRevertedFiles, setRevertedChangeKeys]
+	);
+
+	/**
+	 * loadMessages 的 onLoad 回调：在 startTransition 内与 setMessages 同批执行，
+	 * 避免 messages 变化后 useEffect 级联触发额外 render 轮次。
+	 */
+	const onMessagesLoaded = useCallback(
+		(msgs: ChatMessage[], threadId: string) => {
+			restoreFileChangesState(threadId, msgs, threadId);
+		},
+		[restoreFileChangesState]
+	);
+
 	useEffect(() => {
 		if (!shell || !currentId) {
 			return;
 		}
 		// 避免与 onSelectThread 中的手动调用重复
 		if (messagesThreadId === currentId) return;
-		void loadMessages(currentId);
-	}, [shell, currentId, loadMessages, messagesThreadId]);
+		void loadMessages(currentId, onMessagesLoaded);
+	}, [shell, currentId, loadMessages, messagesThreadId, onMessagesLoaded]);
 
 	const workspaceSwitchSeqRef = useRef(0);
 	const applyWorkspacePath = useCallback(
@@ -1890,16 +1952,28 @@ function AppMainWorkspaceInner() {
 					/* ignore */
 				}
 			};
+			const t0 = performance.now();
+			console.log(`[perf][renderer] workspace switch START → ${next}`);
 			mark('start');
 			clearWorkspaceConversationState();
 			setWorkspace(next);
 			mark('workspace-set');
+			console.log(`[perf][renderer] workspace:openPath+setState done in ${(performance.now() - t0).toFixed(1)}ms`);
 			// 并行而非串行，且 refreshGit 由 workspace 变化的 effect 触发，此处不重复调用
-			await refreshThreads();
+			const threadId = await refreshThreads();
 			mark('threads-done');
 			measure('void-ws:apply-path:threads', 'start', 'threads-done');
+			console.log(`[perf][renderer] refreshThreads IPC round-trip done in ${(performance.now() - t0).toFixed(1)}ms`);
+			// 直接调用 loadMessages，避免通过 effect (currentId 变化 → loadMessages)
+			// 间接触发导致多出一帧空白 render。去重 ref 确保 effect 不会发起重复 IPC。
+			if (threadId) {
+				await loadMessages(threadId, onMessagesLoaded);
+				mark('messages-done');
+				measure('void-ws:apply-path:messages', 'threads-done', 'messages-done');
+				console.log(`[perf][renderer] loadMessages done in ${(performance.now() - t0).toFixed(1)}ms`);
+			}
 		},
-		[clearWorkspaceConversationState, refreshThreads]
+		[clearWorkspaceConversationState, refreshThreads, loadMessages, onMessagesLoaded]
 	);
 
 	const openWorkspaceByPath = useCallback(
@@ -2176,7 +2250,7 @@ function AppMainWorkspaceInner() {
 			if (dev) {
 				console.log(`[perf] onSelectThread: calling loadMessages for ${id}`);
 			}
-			await loadMessages(id);
+			await loadMessages(id, onMessagesLoaded);
 			if (dev) {
 				const tAfterLoad = performance.now();
 				console.log(
@@ -2192,7 +2266,7 @@ function AppMainWorkspaceInner() {
 				});
 			}
 		},
-		[shell, workspace, openWorkspaceByPath, loadMessages, clearStreamingToolPreviewNow, resetLiveAgentBlocks, setAgentFilePreview]
+		[shell, workspace, openWorkspaceByPath, loadMessages, onMessagesLoaded, clearStreamingToolPreviewNow, resetLiveAgentBlocks, setAgentFilePreview]
 	);
 
 	const selectThreadByHistoryIndex = useCallback(
@@ -3004,7 +3078,7 @@ function AppMainWorkspaceInner() {
 							previousLength: previousContent.length,
 							contentLength: content.length,
 							diffLength: previewDiff.length,
-							hunkCount: buildAgentFilePreviewHunks(previewDiff).length,
+							hunkCount: (await buildAgentFilePreviewHunks(previewDiff)).length,
 							diffHead: debugDiffHead(previewDiff),
 						});
 					}
@@ -3046,7 +3120,7 @@ function AppMainWorkspaceInner() {
 						voidShellDebugLog('agent-file-preview:open:git-authoritative', {
 							relPath: normalizedRel,
 							diffLength: gitPreviewDiff.length,
-							hunkCount: buildAgentFilePreviewHunks(gitPreviewDiff).length,
+							hunkCount: (await buildAgentFilePreviewHunks(gitPreviewDiff)).length,
 							isBinary: gitPreviewIsBinary,
 							additions: gitPreviewAdditions,
 							deletions: gitPreviewDeletions,
@@ -3091,7 +3165,7 @@ function AppMainWorkspaceInner() {
 						voidShellDebugLog('agent-file-preview:open:git-full', {
 							relPath: normalizedRel,
 							diffLength: previewDiff.length,
-							hunkCount: buildAgentFilePreviewHunks(previewDiff).length,
+							hunkCount: (await buildAgentFilePreviewHunks(previewDiff)).length,
 							isBinary,
 							additions,
 							deletions,
@@ -3108,7 +3182,7 @@ function AppMainWorkspaceInner() {
 						voidShellDebugLog('agent-file-preview:open:git-cached-fallback', {
 							relPath: normalizedRel,
 							diffLength: previewDiff.length,
-							hunkCount: buildAgentFilePreviewHunks(previewDiff).length,
+							hunkCount: (await buildAgentFilePreviewHunks(previewDiff)).length,
 							isBinary,
 							additions,
 							deletions,
@@ -3123,7 +3197,7 @@ function AppMainWorkspaceInner() {
 				previewDiff &&
 				!isBinary &&
 				reviewMode === 'readonly' &&
-				buildAgentFilePreviewHunks(previewDiff).length === 0
+				(await buildAgentFilePreviewHunks(previewDiff)).length === 0
 			) {
 				try {
 					const fullDiffResult = (await shell.invoke('git:diffPreview', {
@@ -3140,7 +3214,7 @@ function AppMainWorkspaceInner() {
 						voidShellDebugLog('agent-file-preview:open:git-retry-full', {
 							relPath: normalizedRel,
 							diffLength: previewDiff.length,
-							hunkCount: buildAgentFilePreviewHunks(previewDiff).length,
+							hunkCount: (await buildAgentFilePreviewHunks(previewDiff)).length,
 							isBinary,
 							additions,
 							deletions,
@@ -3159,7 +3233,7 @@ function AppMainWorkspaceInner() {
 				readError = null;
 			}
 
-			const previewHunks = !isBinary ? buildAgentFilePreviewHunks(previewDiff) : [];
+			const previewHunks = !isBinary ? await buildAgentFilePreviewHunks(previewDiff) : [];
 			if (
 				currentId &&
 				sourceAllowsReviewActions &&
@@ -4198,7 +4272,7 @@ function AppMainWorkspaceInner() {
 			atMention.syncAtFromRich(root, slot);
 			slashCommand.syncSlashFromRich(root, slot);
 		},
-		[atMention, slashCommand]
+		[atMention.syncAtFromRich, slashCommand.closeSlashMenu, slashCommand.syncSlashFromRich]
 	);
 	closeAtMenuLatestRef.current = atMention.closeAtMenu;
 
@@ -4320,57 +4394,21 @@ function AppMainWorkspaceInner() {
 		});
 	}, [displayMessages, composerMode, t, dismissedFiles, gitStatusOk, gitChangedPaths, diffPreviews]);
 
-	/** 从 localStorage 恢复「已保留/已撤销全部」或逐文件忽略，绑定当前线程最后一条助手正文 */
-	useLayoutEffect(() => {
-		if (!currentId) {
-			setFileChangesDismissed(false);
-			setDismissedFiles(new Set());
-			setRevertedFiles(new Set());
-			setRevertedChangeKeys(new Set());
-			return;
-		}
-		if (messagesThreadId !== currentId) {
-			/* 切线程后、loadMessages 完成前：勿用旧线程的 messages 去对本线程的 persist 做哈希比对 */
-			setFileChangesDismissed(false);
-			setDismissedFiles(new Set());
-			setRevertedFiles(new Set());
-			setRevertedChangeKeys(new Set());
-			return;
-		}
-		const last = [...messages].reverse().find((m) => m.role === 'assistant');
-		const content = last?.content ?? '';
-		if (!content.trim()) {
-			setFileChangesDismissed(false);
-			setDismissedFiles(new Set());
-			setRevertedFiles(new Set());
-			setRevertedChangeKeys(new Set());
-			return;
-		}
-		const hash = hashAgentAssistantContent(content);
-		const stored = readPersistedAgentFileChanges(currentId);
-		if (!stored) {
-			setFileChangesDismissed(false);
-			setDismissedFiles(new Set());
-			setRevertedFiles(new Set());
-			setRevertedChangeKeys(new Set());
-			return;
-		}
-		if (stored.contentHash !== hash) {
-			setFileChangesDismissed(false);
-			setDismissedFiles(new Set());
-			setRevertedFiles(new Set());
-			setRevertedChangeKeys(new Set());
-			clearPersistedAgentFileChanges(currentId);
-			return;
-		}
-		setFileChangesDismissed(stored.fileChangesDismissed);
-		setDismissedFiles(new Set(stored.dismissedPaths));
-		setRevertedFiles(new Set(stored.revertedPaths));
-		setRevertedChangeKeys(new Set(stored.revertedChangeKeys));
-	}, [currentId, messages, messagesThreadId]);
+	/**
+	 * 从 localStorage 恢复「已保留/已撤销全部」或逐文件忽略，绑定当前线程最后一条助手正文。
+	 * 降级为 useEffect（不涉及 DOM 测量）：主路径已由 onMessagesLoaded 在 startTransition
+	 * 内同批设置，此处仅作为 streaming 期间和 currentId 变化的兜底。
+	 * hash 相同时 restoreFileChangesState 内部短路，不触发额外 setState。
+	 */
+	useEffect(() => {
+		restoreFileChangesState(currentId, messages, messagesThreadId);
+	}, [currentId, messages, messagesThreadId, restoreFileChangesState]);
 
-	/** Plan：切回线程或 loadMessages 完成后，若最后一条仍是带 QUESTIONS 的助手消息则恢复弹窗 */
-	useLayoutEffect(() => {
+	/**
+	 * Plan：切回线程或 loadMessages 完成后，若最后一条仍是带 QUESTIONS 的助手消息则恢复弹窗。
+	 * 降级为 useEffect（不涉及 DOM 测量/同步布局），消除 messages 变化引起的额外同步 render 轮次。
+	 */
+	useEffect(() => {
 		if (!currentId || messagesThreadId !== currentId) {
 			setPlanQuestion(null);
 			setPlanQuestionRequestId(null);
@@ -4743,7 +4781,10 @@ function AppMainWorkspaceInner() {
 
 	useEffect(() => {
 		const onResize = () => {
-			setRailWidths((prev) => clampSidebarLayout(prev.left, prev.right));
+			setRailWidths((prev) => {
+				const next = clampSidebarLayout(prev.left, prev.right);
+				return next.left === prev.left && next.right === prev.right ? prev : next;
+			});
 			setEditorTerminalHeightPx((h) => clampEditorTerminalHeight(h));
 		};
 		window.addEventListener('resize', onResize);
@@ -5374,7 +5415,6 @@ function AppMainWorkspaceInner() {
 
 
 	const agentRightSidebarProps = useAgentRightSidebarProps({
-		t,
 		open: agentRightSidebarOpen,
 		view: agentRightSidebarView,
 		hasAgentPlanSidebarContent,
@@ -5388,7 +5428,6 @@ function AppMainWorkspaceInner() {
 		planFilePath,
 		agentPlanBuildModelId,
 		setAgentPlanBuildModelId,
-		modelPickerItems,
 		awaitingReply,
 		agentPlanEffectivePlan,
 		onPlanBuild,
@@ -5408,23 +5447,10 @@ function AppMainWorkspaceInner() {
 		onAcceptAgentFilePreviewHunk,
 		onRevertAgentFilePreviewHunk,
 		agentFilePreviewBusyPatch,
-		workspace,
-		changeCount,
-		gitUnavailableReason,
-		gitLines,
-		refreshGit,
-		loadGitDiffPreviews,
-		gitBranch,
-		diffTotals,
-		gitChangedPaths,
-		diffPreviews,
-		gitPathStatus,
-		diffLoading,
 		commitMsg,
 		setCommitMsg,
 		onCommitOnly,
 		onCommitAndPush,
-		gitActionError,
 	});
 
 	const editorMainPanelProps = useEditorMainPanelProps({
@@ -5975,13 +6001,8 @@ function AppMainWorkspaceInner() {
 					normalizedEditorSidebarSearchQuery={normalizedEditorSidebarSearchQuery}
 					editorSidebarSearchResults={editorSidebarSearchResults}
 					editorSidebarSearchInputRef={editorSidebarSearchInputRef}
-					gitUnavailableReason={gitUnavailableReason}
-					gitLines={gitLines}
-					gitChangedPaths={gitChangedPaths}
 					fileMenuNewFile={() => void fileMenuNewFile()}
 					revealWorkspaceInOs={(p) => void revealWorkspaceInOs(p)}
-					refreshGit={refreshGit}
-					loadGitDiffPreviews={loadGitDiffPreviews}
 					onExplorerOpenFile={(rel) => void onExplorerOpenFile(rel)}
 					setWorkspacePickerOpen={setWorkspacePickerOpen}
 					openSettingsPage={openSettingsPage}

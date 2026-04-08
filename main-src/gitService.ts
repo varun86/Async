@@ -437,11 +437,12 @@ export async function buildDiffPreviewsMap(
 	changedPaths: string[],
 	fullDiffRaw: string,
 	workspaceRootAbs: string,
-	gitTopLevel: string
+	gitTopLevel: string,
+	options?: { maxChars?: number }
 ): Promise<Record<string, DiffPreview>> {
 	const split = splitUnifiedDiff(fullDiffRaw);
 	const root = path.resolve(workspaceRootAbs);
-	const maxChars = 14_000;
+	const maxChars = options?.maxChars ?? 14_000;
 	const out: Record<string, DiffPreview> = {};
 	const fallbacks: string[] = [];
 

@@ -190,6 +190,8 @@ export type AgentLoopOptions = {
 	workspaceRoot?: string | null;
 	/** 与 workspaceRoot 同窗的 TS LSP 会话 */
 	toolLspSession?: TsLspSession | null;
+	/** 当前会话线程 ID，用于 TodoWrite 等按线程隔离状态的工具 */
+	threadId?: string | null;
 };
 
 /**
@@ -528,6 +530,7 @@ async function runOpenAILoop(
 			delegateExecutionDepth: options.delegateExecutionDepth ?? 0,
 			workspaceRoot: options.workspaceRoot ?? null,
 			toolLspSession: options.toolLspSession ?? null,
+			threadId: options.threadId ?? null,
 		});
 		console.log(`[AgentLoop] tool=${tc.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
 		if (mistakeLimitEnabled) {
@@ -903,6 +906,7 @@ async function runAnthropicLoop(
 			delegateExecutionDepth: options.delegateExecutionDepth ?? 0,
 			workspaceRoot: options.workspaceRoot ?? null,
 			toolLspSession: options.toolLspSession ?? null,
+			threadId: options.threadId ?? null,
 		});
 		console.log(`[AgentLoop/A] tool=${tu.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
 		if (mistakeLimitEnabled) {

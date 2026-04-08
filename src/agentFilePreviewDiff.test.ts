@@ -4,7 +4,7 @@ import { buildFileEditPreviewDiff } from './agentChatSegments';
 import { buildAgentFilePreviewHunks, buildAgentFilePreviewRows } from './agentFilePreviewDiff';
 
 describe('buildAgentFilePreviewRows', () => {
-	it('renders inline add and delete rows around modified content', () => {
+	it('renders inline add and delete rows around modified content', async () => {
 		const content = ['alpha', 'beta updated', 'gamma', 'delta'].join('\n');
 		const diff = [
 			'diff --git a/demo.ts b/demo.ts',
@@ -19,7 +19,7 @@ describe('buildAgentFilePreviewRows', () => {
 			' delta',
 		].join('\n');
 
-		const rows = buildAgentFilePreviewRows(content, diff);
+		const rows = await buildAgentFilePreviewRows(content, diff);
 
 		expect(rows.map((row) => row.kind)).toEqual(['context', 'del', 'add', 'context', 'context']);
 		expect(rows[1]).toMatchObject({ kind: 'del', oldLineNo: 2, newLineNo: null, text: 'beta old' });
@@ -27,14 +27,14 @@ describe('buildAgentFilePreviewRows', () => {
 		expect(rows[2]?.tokens.some((token) => token.kind === 'add')).toBe(true);
 	});
 
-	it('falls back to plain source rows when no diff is present', () => {
-		const rows = buildAgentFilePreviewRows('one\ntwo', '');
+	it('falls back to plain source rows when no diff is present', async () => {
+		const rows = await buildAgentFilePreviewRows('one\ntwo', '');
 		expect(rows).toHaveLength(2);
 		expect(rows[0]).toMatchObject({ kind: 'context', oldLineNo: 1, newLineNo: 1, text: 'one' });
 		expect(rows[1]).toMatchObject({ kind: 'context', oldLineNo: 2, newLineNo: 2, text: 'two' });
 	});
 
-	it('builds per-hunk patch payloads for inline actions', () => {
+	it('builds per-hunk patch payloads for inline actions', async () => {
 		const diff = [
 			'diff --git a/demo.ts b/demo.ts',
 			'index 1111111..2222222 100644',
@@ -46,7 +46,7 @@ describe('buildAgentFilePreviewRows', () => {
 			' keep',
 		].join('\n');
 
-		const hunks = buildAgentFilePreviewHunks(diff);
+		const hunks = await buildAgentFilePreviewHunks(diff);
 
 		expect(hunks).toHaveLength(1);
 		expect(hunks[0]).toMatchObject({ id: 'hunk-0', oldStart: 1, newStart: 1 });
@@ -54,17 +54,17 @@ describe('buildAgentFilePreviewRows', () => {
 		expect(hunks[0]?.patch).toContain('+++ b/demo.ts');
 	});
 
-	it('renders add rows for a createTwoFilesPatch new-file diff', () => {
+	it('renders add rows for a createTwoFilesPatch new-file diff', async () => {
 		const content = ['first line', 'second line'].join('\n');
 		const diff = createTwoFilesPatch('/dev/null', 'b/new-file.ts', '', content, '', '', { context: 3 });
 
-		const rows = buildAgentFilePreviewRows(content, diff);
+		const rows = await buildAgentFilePreviewRows(content, diff);
 
 		expect(rows.some((row) => row.kind === 'add')).toBe(true);
 		expect(rows.filter((row) => row.kind === 'add')).toHaveLength(2);
 	});
 
-	it('renders inline rows from a synthetic file-edit diff', () => {
+	it('renders inline rows from a synthetic file-edit diff', async () => {
 		const content = ['alpha', 'beta updated', 'gamma'].join('\n');
 		const diff = buildFileEditPreviewDiff({
 			path: 'app/components/home.tsx',
@@ -73,9 +73,9 @@ describe('buildAgentFilePreviewRows', () => {
 			newStr: 'beta updated',
 		});
 
-		const rows = buildAgentFilePreviewRows(content, diff);
+		const rows = await buildAgentFilePreviewRows(content, diff);
 
-		expect(buildAgentFilePreviewHunks(diff)).toHaveLength(1);
+		expect(await buildAgentFilePreviewHunks(diff)).toHaveLength(1);
 		expect(rows.map((row) => row.kind)).toContain('del');
 		expect(rows.map((row) => row.kind)).toContain('add');
 	});

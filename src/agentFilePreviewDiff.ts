@@ -1,4 +1,5 @@
-import { diffWordsWithSpace, formatPatch, parsePatch } from 'diff';
+/** `diff` 按需动态加载，避免进入主 bundle / 首屏解析。 */
+type DiffLib = typeof import('diff');
 
 export type AgentFilePreviewToken = {
 	text: string;
@@ -48,10 +49,11 @@ function buildSingleKindTokens(text: string, kind: 'same' | 'add' | 'del'): Agen
 }
 
 function buildPairedTokens(
+	d: DiffLib,
 	deletedText: string,
 	addedText: string
 ): { deleted: AgentFilePreviewToken[]; added: AgentFilePreviewToken[] } {
-	const parts = diffWordsWithSpace(deletedText, addedText);
+	const parts = d.diffWordsWithSpace(deletedText, addedText);
 	const deleted: AgentFilePreviewToken[] = [];
 	const added: AgentFilePreviewToken[] = [];
 	for (const part of parts) {
@@ -82,7 +84,13 @@ function plainRowsFromContent(content: string): AgentFilePreviewRow[] {
 	});
 }
 
+/** 无 diff 时的行列表（不加载 `diff` 包）。 */
+export function buildPlainAgentFilePreviewRows(content: string): AgentFilePreviewRow[] {
+	return plainRowsFromContent(content);
+}
+
 function pushChangeGroup(
+	d: DiffLib,
 	rows: AgentFilePreviewRow[],
 	deleted: ChangeLine[],
 	added: ChangeLine[]
@@ -94,7 +102,7 @@ function pushChangeGroup(
 		const deletedLine = deleted[i] ?? null;
 		const addedLine = added[i] ?? null;
 		if (deletedLine && addedLine) {
-			const tokens = buildPairedTokens(deletedLine.text, addedLine.text);
+			const tokens = buildPairedTokens(d, deletedLine.text, addedLine.text);
 			deletedRows.push({
 				kind: 'del',
 				text: deletedLine.text,
@@ -145,33 +153,35 @@ function pushChangeGroup(
 	rows.push(...deletedRows, ...addedRows);
 }
 
-function parsePreviewPatch(diff: string | null | undefined) {
+function parsePreviewPatch(d: DiffLib, diff: string | null | undefined) {
 	const rawDiff = String(diff ?? '').trim();
 	if (!rawDiff) {
 		return null;
 	}
 	try {
-		const patches = parsePatch(rawDiff);
+		const patches = d.parsePatch(rawDiff);
 		return patches.find((item) => item.hunks.length > 0) ?? null;
 	} catch {
 		return null;
 	}
 }
 
-export function buildAgentFilePreviewHunks(diff: string | null | undefined): AgentFilePreviewHunk[] {
-	const patch = parsePreviewPatch(diff);
+function buildAgentFilePreviewHunksWithDiff(d: DiffLib, diff: string | null | undefined): AgentFilePreviewHunk[] {
+	const patch = parsePreviewPatch(d, diff);
 	if (!patch) {
 		return [];
 	}
 	return patch.hunks.map((hunk, index) => ({
 		id: `hunk-${index}`,
-		patch: formatPatch({
-			oldFileName: patch.oldFileName,
-			oldHeader: patch.oldHeader,
-			newFileName: patch.newFileName,
-			newHeader: patch.newHeader,
-			hunks: [hunk],
-		}).trim(),
+		patch: d
+			.formatPatch({
+				oldFileName: patch.oldFileName,
+				oldHeader: patch.oldHeader,
+				newFileName: patch.newFileName,
+				newHeader: patch.newHeader,
+				hunks: [hunk],
+			})
+			.trim(),
 		oldStart: hunk.oldStart,
 		oldEnd: Math.max(hunk.oldStart, hunk.oldStart + Math.max(hunk.oldLines, 1) - 1),
 		newStart: hunk.newStart,
@@ -180,8 +190,12 @@ export function buildAgentFilePreviewHunks(diff: string | null | undefined): Age
 	}));
 }
 
-export function buildAgentFilePreviewRows(content: string, diff: string | null | undefined): AgentFilePreviewRow[] {
-	const patch = parsePreviewPatch(diff);
+function buildAgentFilePreviewRowsWithDiff(
+	d: DiffLib,
+	content: string,
+	diff: string | null | undefined
+): AgentFilePreviewRow[] {
+	const patch = parsePreviewPatch(d, diff);
 	if (!patch) {
 		return plainRowsFromContent(content);
 	}
@@ -219,7 +233,7 @@ export function buildAgentFilePreviewRows(content: string, diff: string | null |
 			if (deleted.length === 0 && added.length === 0) {
 				return;
 			}
-			pushChangeGroup(rows, deleted, added);
+			pushChangeGroup(d, rows, deleted, added);
 			deleted = [];
 			added = [];
 		};
@@ -302,4 +316,25 @@ export function buildAgentFilePreviewRows(content: string, diff: string | null |
 	}
 
 	return rows.length > 0 ? rows : plainRowsFromContent(content);
+}
+
+export async function buildAgentFilePreviewHunks(diff: string | null | undefined): Promise<AgentFilePreviewHunk[]> {
+	const raw = String(diff ?? '').trim();
+	if (!raw) {
+		return [];
+	}
+	const d = await import('diff');
+	return buildAgentFilePreviewHunksWithDiff(d, diff);
+}
+
+export async function buildAgentFilePreviewRows(
+	content: string,
+	diff: string | null | undefined
+): Promise<AgentFilePreviewRow[]> {
+	const raw = String(diff ?? '').trim();
+	if (!raw) {
+		return plainRowsFromContent(content);
+	}
+	const d = await import('diff');
+	return buildAgentFilePreviewRowsWithDiff(d, content, diff);
 }

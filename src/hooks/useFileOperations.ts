@@ -1,5 +1,4 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import { createTwoFilesPatch } from 'diff';
 import { tabIdFromPath, type EditorTab } from '../EditorTabBar';
 import { initialMarkdownViewForTab } from '../editorMarkdownView';
 import { deriveOriginalContentFromUnifiedDiff } from '../editorInlineDiff';
@@ -141,7 +140,7 @@ export function useFileOperations(p: UseFileOperationsParams) {
 			const isGitChanged = gitChangedPaths.some((path) => workspaceRelPathsEqual(path, normalizedRel));
 
 			let previewDiff = sourceDiff;
-			let originalContent = previewDiff ? deriveOriginalContentFromUnifiedDiff(content, previewDiff) : null;
+			let originalContent = previewDiff ? await deriveOriginalContentFromUnifiedDiff(content, previewDiff) : null;
 			let reviewMode: EditorInlineDiffState['reviewMode'] = 'readonly';
 
 			if (currentId && sourceAllowsReviewActions) {
@@ -152,6 +151,7 @@ export function useFileOperations(p: UseFileOperationsParams) {
 						| { ok?: false };
 					if (snapshotResult?.ok && snapshotResult.hasSnapshot) {
 						originalContent = snapshotResult.previousContent ?? '';
+						const { createTwoFilesPatch } = await import('diff');
 						previewDiff = createTwoFilesPatch(
 							`a/${normalizedRel}`,
 							`b/${normalizedRel}`,
@@ -179,7 +179,7 @@ export function useFileOperations(p: UseFileOperationsParams) {
 					if (fullDiffResult.ok && fullDiffResult.preview && !fullDiffResult.preview.isBinary) {
 						const gitPreviewDiff = String(fullDiffResult.preview.diff ?? '').trim();
 						if (gitPreviewDiff) {
-							const gitOriginal = deriveOriginalContentFromUnifiedDiff(content, gitPreviewDiff);
+							const gitOriginal = await deriveOriginalContentFromUnifiedDiff(content, gitPreviewDiff);
 							if (gitOriginal !== null) {
 								previewDiff = gitPreviewDiff;
 								originalContent = gitOriginal;

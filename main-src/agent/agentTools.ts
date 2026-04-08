@@ -232,6 +232,40 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 		},
 	},
 	{
+		name: 'TodoWrite',
+		description:
+			'Update the todo list for the current session. Use proactively to track progress on complex multi-step tasks. Always provide the COMPLETE updated todo list (not just changes). Maintain exactly one task as in_progress at all times. Provide both content (imperative form) and activeForm (present continuous form) for each task.',
+		parameters: {
+			type: 'object',
+			properties: {
+				todos: {
+					type: 'array',
+					description: 'The complete updated todo list. Each call replaces the entire list.',
+					items: {
+						type: 'object',
+						properties: {
+							content: {
+								type: 'string',
+								description: 'Task description in imperative form (e.g. "Add unit tests for auth module")',
+							},
+							status: {
+								type: 'string',
+								enum: ['pending', 'in_progress', 'completed'],
+								description: 'Current task status. Exactly one task should be in_progress at a time.',
+							},
+							activeForm: {
+								type: 'string',
+								description: 'Present continuous form shown during execution (e.g. "Adding unit tests")',
+							},
+						},
+						required: ['content', 'status', 'activeForm'],
+					},
+				},
+			},
+			required: ['todos'],
+		},
+	},
+	{
 		name: 'ask_plan_question',
 		description:
 			'Plan mode only: ask the user ONE multiple-choice clarification. Keep the old Plan UX shape: provide exactly 4 options total, where the first 3 are concrete recommendations and the 4th is an Other/custom option for free text. The app shows a picker and custom input; your next turn receives the user answer as this tool\'s result text. Call at most one per assistant turn; wait for the result before asking another or drafting `# Plan:`. Do not duplicate the same question in markdown.',

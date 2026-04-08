@@ -407,6 +407,36 @@ export function getActiveStreamingToolPreviewFromBlocks(blocks: LiveAgentBlock[]
 	return null;
 }
 
+/**
+ * Extract the latest TodoWrite todos from live agent blocks.
+ * Scans all tool blocks, returns todos from the last TodoWrite call.
+ */
+export function extractTodosFromLiveBlocks(
+	blocks: LiveAgentBlock[]
+): Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string }> | null {
+	let lastTodos: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string }> | null = null;
+	for (const b of blocks) {
+		if (b.type === 'tool' && b.name === 'TodoWrite') {
+			let parsedArgs: Record<string, unknown> = {};
+			try {
+				parsedArgs = JSON.parse(b.argsJson || b.partialJson || '{}');
+			} catch { /* ignore */ }
+			const todosRaw = Array.isArray(parsedArgs.todos) ? parsedArgs.todos : [];
+			if (todosRaw.length > 0) {
+				lastTodos = todosRaw.map((item: Record<string, unknown>, idx: number) => ({
+					id: `live-todo-${idx}`,
+					content: String(item.content ?? ''),
+					status: (['pending', 'in_progress', 'completed'].includes(String(item.status))
+						? String(item.status)
+						: 'pending') as 'pending' | 'in_progress' | 'completed',
+					activeForm: typeof item.activeForm === 'string' ? item.activeForm : undefined,
+				}));
+			}
+		}
+	}
+	return lastTodos;
+}
+
 /** 块列表 → 与 ChatMarkdown 一致的 AssistantSegment[]（不经由整段 content 解析） */
 export function liveBlocksToAssistantSegments(blocks: LiveAgentBlock[], t: TFunction): AssistantSegment[] {
 	const out: AssistantSegment[] = [];
@@ -451,6 +481,26 @@ export function liveBlocksToAssistantSegments(blocks: LiveAgentBlock[], t: TFunc
 				status: 'info',
 			});
 		} else if (b.type === 'tool') {
+			if (b.name === 'TodoWrite') {
+				// 从工具参数中解析 todos 列表，生成 plan_todo 段而非 activity 段
+				let parsedArgs: Record<string, unknown> = {};
+				try {
+					parsedArgs = JSON.parse(b.argsJson || b.partialJson || '{}');
+				} catch { /* ignore */ }
+				const todosRaw = Array.isArray(parsedArgs.todos) ? parsedArgs.todos : [];
+				const todos = todosRaw.map((item: Record<string, unknown>, idx: number) => ({
+					id: `live-todo-${idx}`,
+					content: String(item.content ?? ''),
+					status: (['pending', 'in_progress', 'completed'].includes(String(item.status))
+						? String(item.status)
+						: 'pending') as 'pending' | 'in_progress' | 'completed',
+					activeForm: typeof item.activeForm === 'string' ? item.activeForm : undefined,
+				}));
+				if (todos.length > 0) {
+					out.push({ type: 'plan_todo', todos });
+				}
+				continue; // 跳过默认的 activity 生成
+			}
 			if (b.phase === 'streaming_args') {
 				out.push(
 					...buildStreamingToolSegments(

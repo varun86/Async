@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileTypeIcon } from './fileTypeIcons';
 import {
 	buildAgentFilePreviewHunks,
 	buildAgentFilePreviewRows,
+	buildPlainAgentFilePreviewRows,
 	type AgentFilePreviewHunk,
 	type AgentFilePreviewRow,
 } from './agentFilePreviewDiff';
@@ -99,8 +100,32 @@ export function AgentFilePreviewPanel({
 }: Props) {
 	const { t } = useI18n();
 	const scrollRef = useRef<HTMLDivElement>(null);
-	const rows = useMemo(() => buildAgentFilePreviewRows(content, diff), [content, diff]);
-	const hunks = useMemo(() => buildAgentFilePreviewHunks(diff), [diff]);
+	const [rows, setRows] = useState<AgentFilePreviewRow[]>(() =>
+		String(diff ?? '').trim() ? [] : buildPlainAgentFilePreviewRows(content)
+	);
+	const [hunks, setHunks] = useState<AgentFilePreviewHunk[]>([]);
+	useEffect(() => {
+		let cancelled = false;
+		const raw = String(diff ?? '').trim();
+		if (!raw) {
+			setRows(buildPlainAgentFilePreviewRows(content));
+			setHunks([]);
+			return;
+		}
+		void (async () => {
+			const [nextRows, nextHunks] = await Promise.all([
+				buildAgentFilePreviewRows(content, diff),
+				buildAgentFilePreviewHunks(diff),
+			]);
+			if (!cancelled) {
+				setRows(nextRows);
+				setHunks(nextHunks);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [content, diff]);
 	const hunkMap = useMemo(() => new Map(hunks.map((hunk) => [hunk.id, hunk])), [hunks]);
 	const blocks = useMemo(() => buildPreviewBlocks(rows, hunks), [rows, hunks]);
 	const name = basename(filePath);

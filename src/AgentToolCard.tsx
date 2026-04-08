@@ -12,6 +12,7 @@ const TOOL_ICONS: Record<string, string> = {
 	Agent: '🤖',
 	delegate_task: '🤖',
 	Task: '🤖',
+	TodoWrite: '📋',
 };
 
 function summarizeArgs(name: string, args: Record<string, unknown>): string {
@@ -32,6 +33,14 @@ function summarizeArgs(name: string, args: Record<string, unknown>): string {
 		case 'delegate_task':
 		case 'Task':
 			return String(args.prompt ?? args.task ?? '').slice(0, 100);
+		case 'TodoWrite': {
+			const todos = args.todos;
+			if (Array.isArray(todos)) {
+				const done = todos.filter((t: any) => t.status === 'completed').length;
+				return `${done}/${todos.length} tasks`;
+			}
+			return '';
+		}
 		default:
 			return JSON.stringify(args).slice(0, 80);
 	}

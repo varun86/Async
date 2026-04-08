@@ -91,6 +91,10 @@ const INVOKE_CHANNELS = new Set([
 	'app:quit',
 	'fs:pickOpenFile',
 	'fs:pickSaveFile',
+	'auto-update:check',
+	'auto-update:download',
+	'auto-update:install',
+	'auto-update:get-status',
 ]);
 
 const chatHandlers = new Map();
@@ -145,6 +149,19 @@ ipcRenderer.on('async-shell:workspaceFsTouched', () => {
 	}
 });
 
+const autoUpdateStatusHandlers = new Map();
+let autoUpdateStatusSeq = 0;
+
+ipcRenderer.on('auto-update:status', (_event, payload) => {
+	for (const fn of autoUpdateStatusHandlers.values()) {
+		try {
+			fn(payload);
+		} catch (e) {
+			console.error(e);
+		}
+	}
+});
+
 contextBridge.exposeInMainWorld('asyncShell', {
 	invoke(channel, ...args) {
 		if (!INVOKE_CHANNELS.has(channel)) {
@@ -185,5 +202,10 @@ contextBridge.exposeInMainWorld('asyncShell', {
 		const id = ++workspaceFsTouchedSeq;
 		workspaceFsTouchedHandlers.set(id, callback);
 		return () => workspaceFsTouchedHandlers.delete(id);
+	},
+	subscribeAutoUpdateStatus(callback) {
+		const id = ++autoUpdateStatusSeq;
+		autoUpdateStatusHandlers.set(id, callback);
+		return () => autoUpdateStatusHandlers.delete(id);
 	},
 });

@@ -26,6 +26,7 @@ import { windowsCmdUtf8Prefix, windowsPowerShellUtf8Command } from '../winUtf8.j
 import { ensureAgentMemoryDirExists, loadAgentMemoryPrompt } from './agentMemory.js';
 import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.js';
 import { extractMemoriesToDir } from '../services/extractMemories/extractMemories.js';
+import { setTodos, type TodoItem } from './todoStore.js';
 
 /** @deprecated 每窗 LSP 经 ToolExecutionContext.toolLspSession 传入 */
 export function setToolLspSession(_session: TsLspSession): void {
@@ -245,6 +246,7 @@ export type ToolExecutionContext = {
 	delegateExecutionDepth?: number;
 	workspaceRoot?: string | null;
 	toolLspSession?: TsLspSession | null;
+	threadId?: string | null;
 };
 
 export async function executeTool(
@@ -276,6 +278,8 @@ export async function executeTool(
 			return await executeListMcpResources(call);
 		case 'ReadMcpResourceTool':
 			return await executeReadMcpResource(call);
+		case 'TodoWrite':
+			return executeTodoWrite(call, execCtx);
 		case 'ask_plan_question':
 			return await executeAskPlanQuestionTool(call);
 		default:
@@ -862,6 +866,37 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 		return { toolCallId: call.id, name: call.name, content: `Sub-agent error: ${errorMsg}`, isError: true };
 	}
 	return { toolCallId: call.id, name: call.name, content: output || '(sub-agent completed with no output)', isError: false };
+}
+
+function executeTodoWrite(call: ToolCall, execCtx: ToolExecutionContext): ToolResult {
+	const rawTodos = call.arguments.todos;
+	if (!Array.isArray(rawTodos)) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: 'Error: todos must be an array',
+			isError: true,
+		};
+	}
+	const todos: TodoItem[] = rawTodos.map((t: Record<string, unknown>) => ({
+		content: String(t.content ?? ''),
+		status: (['pending', 'in_progress', 'completed'].includes(String(t.status)) ? String(t.status) : 'pending') as TodoItem['status'],
+		activeForm: String(t.activeForm ?? t.content ?? ''),
+	}));
+
+	const key = execCtx.threadId ?? execCtx.workspaceRoot ?? '_default';
+	const { oldTodos, newTodos } = setTodos(key, todos);
+
+	const completed = newTodos.filter((t) => t.status === 'completed').length;
+	const inProgress = newTodos.filter((t) => t.status === 'in_progress').length;
+	const pending = newTodos.filter((t) => t.status === 'pending').length;
+
+	return {
+		toolCallId: call.id,
+		name: call.name,
+		content: `Todo list updated: ${newTodos.length} tasks (${completed} done, ${inProgress} in progress, ${pending} pending)`,
+		isError: false,
+	};
 }
 
 async function executeGetDiagnostics(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {

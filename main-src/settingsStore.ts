@@ -148,6 +148,15 @@ export type ShellSettings = {
 		/** 绝对路径，用户选择的数据目录 */
 		dataDir?: string | null;
 	};
+	/**
+	 * 自动更新：默认开启；从 GitHub Release 拉取更新，支持差异化更新。
+	 */
+	autoUpdate?: {
+		/** 是否启用自动更新 */
+		enabled?: boolean;
+		/** 是否允许下载差异化更新包（否则全量更新） */
+		allowDifferential?: boolean;
+	};
 };
 
 const defaultSettings: ShellSettings = {
@@ -461,7 +470,7 @@ export function resolveUsageStatsDataDir(settings: ShellSettings): string | null
 }
 
 export function patchSettings(partial: Partial<ShellSettings>): ShellSettings {
-	const { ui: partialUi, indexing: partialIndexing, usageStats: partialUsageStats, ...partialRest } = partial;
+	const { ui: partialUi, indexing: partialIndexing, usageStats: partialUsageStats, autoUpdate: partialAutoUpdate, ...partialRest } = partial;
 
 	const mergedIndexing =
 		partialIndexing !== undefined
@@ -527,6 +536,11 @@ export function patchSettings(partial: Partial<ShellSettings>): ShellSettings {
 			? { ...(cached.usageStats ?? {}), ...partialUsageStats }
 			: cached.usageStats;
 
+	const mergedAutoUpdate =
+		partialAutoUpdate !== undefined
+			? { ...(cached.autoUpdate ?? {}), ...partialAutoUpdate }
+			: cached.autoUpdate;
+
 	cached = {
 		...cached,
 		...partialRest,
@@ -540,6 +554,7 @@ export function patchSettings(partial: Partial<ShellSettings>): ShellSettings {
 		indexing: partialIndexing !== undefined ? mergedIndexing : cached.indexing,
 		mcpServers: mergedMcp,
 		usageStats: mergedUsageStats,
+		autoUpdate: mergedAutoUpdate,
 	};
 	cached = migrateDefaultModelRemoveAuto(cached).next;
 	cached = migrateProviderModelLayout(cached).next;

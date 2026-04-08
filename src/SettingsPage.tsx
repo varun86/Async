@@ -25,6 +25,7 @@ const SettingsIndexingPanel = lazy(() => import('./SettingsIndexingPanel').then(
 const SettingsMcpPanel = lazy(() => import('./SettingsMcpPanel').then((m) => ({ default: m.SettingsMcpPanel })));
 const SettingsAppearancePanel = lazy(() => import('./SettingsAppearancePanel').then((m) => ({ default: m.SettingsAppearancePanel })));
 const SettingsUsageStatsPanel = lazy(() => import('./SettingsUsageStatsPanel').then((m) => ({ default: m.SettingsUsageStatsPanel })));
+const SettingsAutoUpdatePanel = lazy(() => import('./SettingsAutoUpdatePanel').then((m) => ({ default: m.SettingsAutoUpdatePanel })));
 
 export type SettingsNavId =
 	| 'general'
@@ -40,6 +41,7 @@ export type SettingsNavId =
 	| 'tools'
 	| 'hooks'
 	| 'indexing'
+	| 'autoUpdate'
 	| 'network'
 	| 'beta'
 	| 'dev';
@@ -57,6 +59,7 @@ function navItemsForT(t: (key: string) => string): NavItem[] {
 		{ id: 'agents', label: t('settings.nav.agents') },
 		{ id: 'rules', label: t('settings.nav.rules') },
 		{ id: 'indexing', label: t('settings.nav.indexing') },
+		{ id: 'autoUpdate', label: t('settings.nav.autoUpdate') },
 		{ id: 'tools', label: t('settings.nav.tools') },
 		{ id: 'plan', label: t('settings.nav.plan') },
 		{ id: 'tab', label: t('settings.nav.tab'), soon: true },
@@ -272,6 +275,12 @@ function navIcon(id: SettingsNavId) {
 			return <IconPlug />;
 		case 'indexing':
 			return <IconDatabase />;
+		case 'autoUpdate':
+			return (
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+					<path d="M21 12a9 9 0 1 1-6.2-8.6M21 3v5h-5" strokeLinecap="round" strokeLinejoin="round" />
+				</svg>
+			);
 		case 'cloud':
 			return <IconCloudNav />;
 		case 'plugins':
@@ -616,6 +625,7 @@ export function SettingsPage({
 								{nav === 'editor' ? t('settings.title.editor') : null}
 								{nav === 'tools' ? t('settings.title.tools') : null}
 								{nav === 'indexing' ? t('settings.title.indexing') : null}
+								{nav === 'autoUpdate' ? t('settings.title.autoUpdate') : null}
 								{nav === 'plan' ? t('settings.title.usage') : null}
 								{nav !== 'general' &&
 								nav !== 'appearance' &&
@@ -625,6 +635,7 @@ export function SettingsPage({
 								nav !== 'editor' &&
 								nav !== 'tools' &&
 								nav !== 'indexing' &&
+								nav !== 'autoUpdate' &&
 								nav !== 'plan'
 									? t('settings.title.comingSoon')
 									: null}
@@ -904,6 +915,14 @@ export function SettingsPage({
 							</Suspense>
 						) : null}
 
+						{nav === 'autoUpdate' ? (
+							<Suspense fallback={<SettingsPanelSkeleton />}>
+								<SettingsAutoUpdatePanel
+									shell={shell}
+								/>
+							</Suspense>
+						) : null}
+
 						{nav === 'plan' ? (
 							<Suspense fallback={<SettingsPanelSkeleton />}>
 								<SettingsUsageStatsPanel shell={shell} modelEntries={modelEntries} modelProviders={modelProviders} />
@@ -931,6 +950,7 @@ export function SettingsPage({
 						nav !== 'editor' &&
 						nav !== 'tools' &&
 						nav !== 'indexing' &&
+						nav !== 'autoUpdate' &&
 						nav !== 'plan' ? (
 							<div className="ref-settings-panel">
 								<p className="ref-settings-lead">{t('settings.comingCategory')}</p>

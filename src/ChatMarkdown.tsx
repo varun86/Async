@@ -106,6 +106,7 @@ type Props = {
 	revertedPaths?: ReadonlySet<string>;
 	revertedChangeKeys?: ReadonlySet<string>;
 	allowAgentFileActions?: boolean;
+	skipPlanTodo?: boolean;
 };
 
 export const ChatMarkdown = memo(function ChatMarkdown({
@@ -123,6 +124,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 	revertedPaths,
 	revertedChangeKeys,
 	allowAgentFileActions = false,
+	skipPlanTodo = false,
 }: Props) {
 	const { t } = useI18n();
 
@@ -398,31 +400,39 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 							</p>
 						);
 					case 'plan_todo':
+						if (skipPlanTodo) return null;
 						return (
 							<div key={i} className="ref-plan-review-todos">
 								<div className="ref-plan-review-todos-head">
 									<span>{t('plan.review.todo', { 
-										done: seg.todos.filter(t => t.status === 'completed').length, 
+										done: seg.todos.filter(td => td.status === 'completed').length, 
 										total: seg.todos.length 
 									})}</span>
 								</div>
 								<div className="ref-plan-review-todos-list">
 									{seg.todos.map((todo) => {
 										const done = todo.status === 'completed';
+										const active = todo.status === 'in_progress';
 										return (
-											<div key={todo.id} className={`ref-plan-todo ${done ? 'is-done' : ''}`}>
-												<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-													<rect
-														x="1" y="1" width="14" height="14" rx="3"
-														stroke={done ? '#e8a848' : '#555'}
-														strokeWidth="1.5"
-														fill={done ? '#e8a848' : 'none'}
-													/>
-													{done ? (
-														<path d="M4.5 8l2.5 2.5 4.5-5" stroke="#1a1a1a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-													) : null}
-												</svg>
-												<span className="ref-plan-todo-text">{todo.content}</span>
+											<div key={todo.id} className={`ref-plan-todo ${done ? 'is-done' : ''} ${active ? 'is-active' : ''}`}>
+												{active ? (
+													<span className="ref-plan-todo-spinner" aria-hidden />
+												) : (
+													<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+														<rect
+															x="1" y="1" width="14" height="14" rx="3"
+															stroke={done ? '#e8a848' : '#555'}
+															strokeWidth="1.5"
+															fill={done ? '#e8a848' : 'none'}
+														/>
+														{done ? (
+															<path d="M4.5 8l2.5 2.5 4.5-5" stroke="#1a1a1a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+														) : null}
+													</svg>
+												)}
+												<span className="ref-plan-todo-text">
+													{active && todo.activeForm ? todo.activeForm : todo.content}
+												</span>
 											</div>
 										);
 									})}

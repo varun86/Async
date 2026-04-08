@@ -1,14 +1,13 @@
-import { applyPatch, reversePatch, parsePatch } from 'diff';
-
-export function deriveOriginalContentFromUnifiedDiff(
+export async function deriveOriginalContentFromUnifiedDiff(
 	modifiedContent: string,
 	diff: string | null | undefined
-): string | null {
+): Promise<string | null> {
 	const raw = String(diff ?? '').trim();
 	if (!raw) {
 		return null;
 	}
 	try {
+		const { applyPatch, reversePatch, parsePatch } = await import('diff');
 		const patches = parsePatch(raw);
 		if (patches.length !== 1 || !Array.isArray(patches[0]?.hunks) || patches[0]!.hunks.length === 0) {
 			return null;

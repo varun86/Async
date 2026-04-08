@@ -6,6 +6,7 @@ import { initSettingsStore, getRestorableWorkspace } from './settingsStore.js';
 import { ensureDefaultThread, flushPendingSave, initThreadStore } from './threadStore.js';
 import { registerIpc } from './ipc/register.js';
 import { configureAppWindowIcon, createAppWindow } from './appWindow.js';
+import { initAutoUpdate } from './autoUpdate.js';
 
 function resolveAppIconPath(): string | undefined {
 	const iconsDir = path.join(app.getAppPath(), 'resources', 'icons');
@@ -71,6 +72,13 @@ app.whenReady().then(() => {
 		initialWorkspace: restoredUsable,
 	});
 	lap('window created');
+
+	// 初始化自动更新（获取刚创建的窗口）
+	const [mainWin] = BrowserWindow.getAllWindows();
+	if (mainWin) {
+		initAutoUpdate(mainWin);
+		lap('autoUpdate initialized');
+	}
 
 	app.on('activate', () => {
 		if (BrowserWindow.getAllWindows().length === 0) {

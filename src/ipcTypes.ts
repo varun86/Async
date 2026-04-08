@@ -165,3 +165,13 @@ export type UsageStatsGetResponse =
 	| { ok: true; dataDir: string; agentLineByDay: Record<string, UsageStatsAgentDay>; tokenEvents: UsageStatsTokenEvent[] }
 	| { ok: false; reason: 'disabled' }
 	| { ok: false; reason: 'no-directory' };
+
+/** 自动更新状态（与 main-src/autoUpdate.ts 保持一致） */
+export type AutoUpdateStatus =
+	| { state: 'idle' }
+	| { state: 'checking' }
+	| { state: 'available'; info: { version: string; releaseDate?: string; releaseNotes?: string } }
+	| { state: 'not-available' }
+	| { state: 'downloading'; progress: { percent: number; bytesPerSecond: number; total: number; transferred: number } }
+	| { state: 'downloaded' }
+	| { state: 'error'; message: string };

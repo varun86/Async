@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, startTransition } from 'react';
 import type { GitPathStatusMap } from '../WorkspaceExplorer';
 
 type Shell = NonNullable<Window['asyncShell']>;
@@ -12,6 +12,7 @@ type FullStatusOk = {
 	changedPaths: string[];
 	branches: string[];
 	current: string;
+	previews: Record<string, DiffPreview>;
 };
 
 type FullStatusFail = { ok: false; error?: string };
@@ -41,43 +42,37 @@ export function useGitIntegration(shell: Shell | undefined, workspace: string | 
 			return;
 		}
 		const r = (await shell.invoke('git:fullStatus')) as FullStatusOk | FullStatusFail;
+		// 用 startTransition 标记为非紧急更新：React 可在渲染期间让出主线程给鼠标/键盘事件，
+		// 防止 git 状态批量 setState 触发的重渲染阻塞窗口拖动和其他 UI 交互。
 		if (r.ok) {
-			setGitStatusOk(true);
-			setGitBranch(r.branch || 'master');
-			setGitLines(r.lines);
-			setGitPathStatus(r.pathStatus ?? {});
-			setGitChangedPaths(r.changedPaths ?? []);
-			setGitBranchList(Array.isArray(r.branches) ? r.branches : []);
-			setGitBranchListCurrent(typeof r.current === 'string' ? r.current : '');
-			
-			// 直接获取 diffPreviews
 			const changedPaths = r.changedPaths ?? [];
-			if (changedPaths.length > 0) {
-				setDiffLoading(true);
-				try {
-					const diffR = (await shell.invoke('git:diffPreviews', changedPaths)) as
-						| { ok: true; previews: Record<string, DiffPreview> }
-						| { ok: false };
-					if (diffR.ok) {
-						setDiffPreviews(diffR.previews);
-					}
-				} catch (e) {
-					console.error('[Git] Failed to load diff previews:', e);
-				} finally {
-					setDiffLoading(false);
-				}
-			}
+			const previews = r.previews ?? {};
+			startTransition(() => {
+				setGitStatusOk(true);
+				setGitBranch(r.branch || 'master');
+				setGitLines(r.lines);
+				setGitPathStatus(r.pathStatus ?? {});
+				setGitChangedPaths(changedPaths);
+				setGitBranchList(Array.isArray(r.branches) ? r.branches : []);
+				setGitBranchListCurrent(typeof r.current === 'string' ? r.current : '');
+				setDiffPreviews(previews);
+				setDiffLoading(false);
+				setTreeEpoch((n) => n + 1);
+			});
 		} else {
-			setGitStatusOk(false);
-			setGitBranch('—');
-			setGitLines([r.error ?? 'Failed to load changes']);
-			setGitPathStatus({});
-			setGitChangedPaths([]);
-			setGitBranchList([]);
-			setGitBranchListCurrent('');
-			setDiffPreviews({});
+			startTransition(() => {
+				setGitStatusOk(false);
+				setGitBranch('—');
+				setGitLines([r.error ?? 'Failed to load changes']);
+				setGitPathStatus({});
+				setGitChangedPaths([]);
+				setGitBranchList([]);
+				setGitBranchListCurrent('');
+				setDiffPreviews({});
+				setDiffLoading(false);
+				setTreeEpoch((n) => n + 1);
+			});
 		}
-		setTreeEpoch((n) => n + 1);
 	}, [shell]);
 
 	const onGitBranchListFresh = useCallback((b: string[], c: string) => {
@@ -85,7 +80,7 @@ export function useGitIntegration(shell: Shell | undefined, workspace: string | 
 		setGitBranchListCurrent(c);
 	}, []);
 
-	// workspace 变化时刷新 git：延后到空闲再跑，避免与切工作区首帧、大组件提交抢主线程（有仓库时 fullStatus + 后续 diff 很重）
+	// workspace 变化时刷新 git：延后到空闲再跑，避免与切工作区首帧、大组件提交抢主线程（有仓库时一次 fullStatus 含 diff 预览）
 	useEffect(() => {
 		if (!workspace || !shell) {
 			return;
@@ -112,73 +107,6 @@ export function useGitIntegration(shell: Shell | undefined, workspace: string | 
 		return () => cancel(id);
 	}, [workspace, shell, refreshGit]);
 
-	// 注意：已移除文件系统变化时的自动刷新
-	// Git 状态现在只在以下场景刷新：
-	// 1. workspace 变化时
-	// 2. 用户打开源代码管理视图时（由组件手动调用 refreshGit）
-	// 3. AI 修改代码后（agent review/commit/revert 等操作）
-	// 这样可以避免高频的文件系统事件导致不必要的 Git 命令执行
-
-	// diffPreviews 懒加载：作为备用机制（现在主要在 refreshGit 中直接获取）
-	const diffPreviewsGenRef = useRef(0);
-	const gitPathsKey = useMemo(() => gitChangedPaths.join('\n'), [gitChangedPaths]);
-	useEffect(() => {
-		if (!shell || gitChangedPaths.length === 0) {
-			setDiffPreviews({});
-			setDiffLoading(false);
-			return;
-		}
-		const gen = ++diffPreviewsGenRef.current;
-		setDiffLoading(true);
-		let cancelled = false;
-		let fetchStarted = false;
-		const pathsSnapshot = gitChangedPaths;
-		const idle =
-			typeof window.requestIdleCallback === 'function'
-				? window.requestIdleCallback.bind(window)
-				: (cb: IdleRequestCallback) =>
-						window.setTimeout(
-							() => cb({ didTimeout: true, timeRemaining: () => 0 } as IdleDeadline),
-							1
-						);
-		const cancelIdle =
-			typeof window.cancelIdleCallback === 'function'
-				? window.cancelIdleCallback.bind(window)
-				: (id: number) => window.clearTimeout(id);
-		const idleId = idle(
-			() => {
-				if (cancelled) {
-					return;
-				}
-				fetchStarted = true;
-				void (async () => {
-					try {
-						const r = (await shell.invoke('git:diffPreviews', pathsSnapshot)) as
-							| { ok: true; previews: Record<string, DiffPreview> }
-							| { ok: false };
-						if (!cancelled && gen === diffPreviewsGenRef.current && r.ok) {
-							setDiffPreviews(r.previews);
-						}
-					} finally {
-						if (!cancelled && gen === diffPreviewsGenRef.current) {
-							setDiffLoading(false);
-						}
-					}
-				})();
-			},
-			{ timeout: 2500 }
-		);
-		return () => {
-			cancelled = true;
-			cancelIdle(idleId);
-			if (!fetchStarted && gen === diffPreviewsGenRef.current) {
-				setDiffLoading(false);
-			}
-		};
-	// treeEpoch 确保文件系统变化后也重新拉取
-	// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [shell, treeEpoch, gitPathsKey]);
-
 	const diffTotals = useMemo(() => {
 		let additions = 0,
 			deletions = 0;
@@ -191,6 +119,35 @@ export function useGitIntegration(shell: Shell | undefined, workspace: string | 
 		}
 		return { additions, deletions };
 	}, [gitChangedPaths, diffPreviews]);
+
+	/** 资源管理器 Git 视图等：在已有 changedPaths 上单独刷新 diff 预览（与 fullStatus 内建预览互补） */
+	const loadGitDiffPreviews = useCallback(async () => {
+		if (!shell) {
+			return;
+		}
+		if (gitChangedPaths.length === 0) {
+			startTransition(() => {
+				setDiffPreviews({});
+				setDiffLoading(false);
+			});
+			return;
+		}
+		startTransition(() => setDiffLoading(true));
+		try {
+			const diffR = (await shell.invoke('git:diffPreviews', gitChangedPaths)) as
+				| { ok: true; previews: Record<string, DiffPreview> }
+				| { ok: false };
+			startTransition(() => {
+				if (diffR.ok) {
+					setDiffPreviews(diffR.previews);
+				}
+				setDiffLoading(false);
+			});
+		} catch (e) {
+			console.error('[Git] loadGitDiffPreviews:', e);
+			startTransition(() => setDiffLoading(false));
+		}
+	}, [shell, gitChangedPaths]);
 
 	return {
 		gitBranch,
@@ -209,6 +166,7 @@ export function useGitIntegration(shell: Shell | undefined, workspace: string | 
 		setGitBranchPickerOpen,
 		diffTotals,
 		refreshGit,
+		loadGitDiffPreviews,
 		onGitBranchListFresh,
 	};
 }
