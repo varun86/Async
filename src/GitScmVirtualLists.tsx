@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { changeBadgeLabel, changeBadgeVariant } from './gitBadge';
 import { FileTypeIcon } from './fileTypeIcons';
@@ -19,10 +19,21 @@ export const AGENT_GIT_SCM_VIRTUAL_THRESHOLD = 8;
 /** 达到条数后 Editor 侧栏 Git 文件行使用虚拟列表 */
 export const EDITOR_GIT_SCM_VIRTUAL_THRESHOLD = 32;
 
-/** 达到条数后 diff body 默认折叠，点击卡片头部展开 */
-const AGENT_GIT_COLLAPSE_THRESHOLD = 50;
-
 type DiffPreview = { diff: string; isBinary: boolean; additions: number; deletions: number };
+
+/** Agent 侧栏 Git：默认全部折叠，仅展开一项显示 diff；路径列表变化时若当前展开项已不在列表则收起 */
+function useAgentGitAccordion(paths: string[]) {
+	const [expandedRel, setExpandedRel] = useState<string | null>(null);
+	useEffect(() => {
+		if (expandedRel && !paths.includes(expandedRel)) {
+			setExpandedRel(null);
+		}
+	}, [paths, expandedRel]);
+	const toggleRel = useCallback((rel: string) => {
+		setExpandedRel((cur) => (cur === rel ? null : rel));
+	}, []);
+	return { expandedRel, toggleRel };
+}
 
 function trimGitDiffForSidebarCard(raw: string): string {
 	const lines = raw.split('\n');
@@ -136,7 +147,8 @@ const AgentGitChangeCard = memo(function AgentGitChangeCard({
 	t,
 	onOpenGitDiff,
 	onEnsurePreview,
-	defaultCollapsed,
+	diffOpen,
+	onToggleDiffOpen,
 }: {
 	rel: string;
 	pr: DiffPreview | undefined;
@@ -144,32 +156,23 @@ const AgentGitChangeCard = memo(function AgentGitChangeCard({
 	diffLoading: boolean;
 	t: TFunction;
 	onOpenGitDiff: (rel: string, diff: string | null) => void;
-	/** 仅在卡片展开（或默认展开）时请求该路径的 sidebar diff 预览 */
+	/** 仅在卡片展开时请求该路径的 sidebar diff 预览 */
 	onEnsurePreview?: (rel: string) => void;
-	defaultCollapsed?: boolean;
+	diffOpen: boolean;
+	onToggleDiffOpen: () => void;
 }) {
-	const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false);
 	const badge = st ? changeBadgeLabel(st.label, t) : t('app.gitChangedFallback');
 
 	useEffect(() => {
-		if (collapsed || !onEnsurePreview) {
+		if (!diffOpen || !onEnsurePreview) {
 			return;
 		}
 		onEnsurePreview(rel);
-	}, [collapsed, rel, onEnsurePreview]);
+	}, [diffOpen, rel, onEnsurePreview]);
 
 	return (
-		<div className={`ref-git-card ${collapsed ? 'is-collapsed' : ''}`}>
-			<div
-				className="ref-git-card-head"
-				onClick={() => {
-					if (defaultCollapsed === undefined) {
-						return;
-					}
-					setCollapsed((c) => !c);
-				}}
-				style={defaultCollapsed !== undefined ? { cursor: 'pointer' } : undefined}
-			>
+		<div className={`ref-git-card ${!diffOpen ? 'is-collapsed' : ''}`}>
+			<div className="ref-git-card-head" onClick={onToggleDiffOpen} style={{ cursor: 'pointer' }}>
 				<span className="ref-git-card-name" title={rel}>
 					{rel.includes('/') ? rel.slice(rel.lastIndexOf('/') + 1) : rel}
 				</span>
@@ -190,7 +193,7 @@ const AgentGitChangeCard = memo(function AgentGitChangeCard({
 					<IconEye />
 				</button>
 			</div>
-			{!collapsed && (
+			{diffOpen && (
 				<div className="ref-git-card-body">
 					{diffLoading && !pr ? <div className="ref-git-card-skel">{t('app.gitDiffLoading')}</div> : null}
 					{pr?.isBinary ? <div className="ref-git-binary-msg">{pr.diff || t('app.gitBinary')}</div> : null}
@@ -225,14 +228,14 @@ const AgentGitScmVirtualCards = memo(function AgentGitScmVirtualCards({
 	onEnsurePreviews?: (paths: readonly string[]) => void;
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
-	const collapseDiffs = paths.length >= AGENT_GIT_COLLAPSE_THRESHOLD;
+	const { expandedRel, toggleRel } = useAgentGitAccordion(paths);
 	const virtualizer = useVirtualizer({
 		count: paths.length,
 		getScrollElement: () => scrollRef.current,
-		estimateSize: () => (collapseDiffs ? 40 : 188),
+		estimateSize: () => 48,
 		gap: 10,
 		getItemKey: (index) => paths[index]!,
-		overscan: collapseDiffs ? 8 : 4,
+		overscan: 6,
 	});
 	return (
 		<div ref={scrollRef} className="ref-git-changed-scroll">
@@ -268,7 +271,8 @@ const AgentGitScmVirtualCards = memo(function AgentGitScmVirtualCards({
 								t={t}
 								onOpenGitDiff={onOpenGitDiff}
 								onEnsurePreview={onEnsurePreviews ? (r) => onEnsurePreviews([r]) : undefined}
-								defaultCollapsed={collapseDiffs ? true : undefined}
+								diffOpen={expandedRel === rel}
+								onToggleDiffOpen={() => toggleRel(rel)}
 							/>
 						</div>
 					);
@@ -295,7 +299,7 @@ const AgentGitScmStaticCards = memo(function AgentGitScmStaticCards({
 	onOpenGitDiff: (rel: string, diff: string | null) => void;
 	onEnsurePreviews?: (paths: readonly string[]) => void;
 }) {
-	const collapseDiffs = paths.length >= AGENT_GIT_COLLAPSE_THRESHOLD;
+	const { expandedRel, toggleRel } = useAgentGitAccordion(paths);
 	return (
 		<div className="ref-git-changed-scroll">
 			<div className="ref-git-cards">
@@ -309,7 +313,8 @@ const AgentGitScmStaticCards = memo(function AgentGitScmStaticCards({
 						t={t}
 						onOpenGitDiff={onOpenGitDiff}
 						onEnsurePreview={onEnsurePreviews ? (r) => onEnsurePreviews([r]) : undefined}
-						defaultCollapsed={collapseDiffs ? true : undefined}
+						diffOpen={expandedRel === rel}
+						onToggleDiffOpen={() => toggleRel(rel)}
 					/>
 				))}
 			</div>
