@@ -145,8 +145,13 @@ export type AgentChatPanelProps = {
  * 虚拟列表启停阈值做成滞后区间，避免消息数在边界附近时发送一条消息就立刻从平面轨道切到虚拟轨道，
  * 导致 sticky 行为、测量与滚动位置在同一帧内一起变化。
  */
-const MESSAGE_LIST_VIRTUAL_ENABLE_THRESHOLD = 28;
-const MESSAGE_LIST_VIRTUAL_DISABLE_THRESHOLD = 20;
+/**
+ * 主聊天转录区优先保证滚动稳定性。
+ * 长消息、流式块与工作区切换下，虚拟列表容易带来底部距离误差和锚点抖动，
+ * 因此把启用阈值抬高到几乎不会命中，保留实现仅作极端超长会话的兜底。
+ */
+const MESSAGE_LIST_VIRTUAL_ENABLE_THRESHOLD = 9999;
+const MESSAGE_LIST_VIRTUAL_DISABLE_THRESHOLD = 9990;
 const MESSAGE_LIST_VIRTUAL_ESTIMATE_SIZE = 160;
 
 type MessageVirtualHeightCache = Map<number, number>;
