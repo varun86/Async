@@ -4199,6 +4199,8 @@ function AppMainWorkspaceInner() {
 		searchFiles,
 		onFileChipPreview: onAtMentionFileChipPreview,
 		fileIndexReadyTick: atFileIndexReadyTick,
+		layoutMode,
+		editorPreviewFile: editorSidebarSelectedRel,
 	});
 	const slashCommand = useComposerSlashCommand(getComposerSegmentsSetter, composerRichSurface, {
 		t,
