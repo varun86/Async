@@ -34,7 +34,7 @@ export function createToolApprovalBeforeExecute(
 	return async (call) => {
 		const agent = getAgent() ?? {};
 
-		if (call.name === 'Bash' || call.name === 'execute_command') {
+		if (call.name === 'Bash') {
 			const confirmShell = agent.confirmShellCommands !== false;
 			if (!confirmShell) {
 				return { proceed: true };
@@ -74,7 +74,7 @@ export function createToolApprovalBeforeExecute(
 			});
 		}
 
-		if (call.name === 'Write' || call.name === 'Edit' || call.name === 'write_to_file' || call.name === 'str_replace') {
+		if (call.name === 'Write' || call.name === 'Edit') {
 			if (agent.confirmWritesBeforeExecute !== true) {
 				return { proceed: true };
 			}

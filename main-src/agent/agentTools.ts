@@ -37,7 +37,6 @@ export const READ_ONLY_AGENT_TOOL_NAMES = [
 ] as const;
 
 export function isReadOnlyAgentTool(name: string): boolean {
-	if (name === 'get_diagnostics') return true;
 	return (READ_ONLY_AGENT_TOOL_NAMES as readonly string[]).includes(name);
 }
 
@@ -228,7 +227,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 	{
 		name: 'LSP',
 		description:
-			'Language-server intelligence for the workspace, routed by **file extension** to LSP servers loaded like **Claude Code**: plugin dirs under `<asyncData>/plugins/<name>/` or `<workspace>/.async/plugins/<name>/` with **`.lsp.json`** or **`plugin.json` → `lspServers`** (each server: **command**, optional **args**, required **extensionToLanguage** map). Legacy **`lsp.servers`** in settings.json is still merged. TS/JS may use the app-bundled **typescript-language-server** when installed.\n\nOperations: goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls, getDiagnostics. Use **filePath** plus 1-based **line**/**character** except **getDiagnostics**/**workspaceSymbol** (optional line/char).\n\nIf nothing matches the file extension, add a plugin or legacy server entry. If an LSP method fails, fall back to **Read** / **Grep** / **Bash**.',
+			'Language-server intelligence for the workspace, routed by **file extension** to LSP servers loaded like **Claude Code**: plugin dirs under `<asyncData>/plugins/<name>/` or `<workspace>/.async/plugins/<name>/` with **`.lsp.json`** or **`plugin.json` → `lspServers`** (each server: **command**, optional **args**, required **extensionToLanguage** map). Legacy **`lsp.servers`** in settings.json is still merged. TS/JS additionally works if **typescript-language-server** is discoverable under the app or workspace `node_modules` (optional).\n\nOperations: goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls, getDiagnostics. Use **filePath** plus 1-based **line**/**character** except **getDiagnostics**/**workspaceSymbol** (optional line/char).\n\nIf nothing matches the file extension, add a plugin or legacy server entry. If an LSP method fails, fall back to **Read** / **Grep** / **Bash**.',
 		parameters: {
 			type: 'object',
 			properties: {
@@ -274,7 +273,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 			properties: {
 				prompt: {
 					type: 'string',
-					description: 'Clear instructions for the sub-agent (same as Claude Code `prompt`)',
+					description: 'Instructions for the sub-agent (Claude Code `Agent` tool: `prompt`)',
 				},
 				subagent_type: {
 					type: 'string',
@@ -285,17 +284,13 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 					type: 'string',
 					description: 'Optional paths, constraints, or background for the sub-agent',
 				},
-				task: {
-					type: 'string',
-					description: 'Legacy alias for `prompt` (either prompt or task is required)',
-				},
 				run_in_background: {
 					type: 'boolean',
 					description:
 						'If true, sub-agent runs in the background: tool returns immediately with a short notice; streamed nested activity still appears; user gets a completion toast. Same spirit as Claude Code async Agent when fork is enabled.',
 				},
 			},
-			required: [],
+			required: ['prompt'],
 		},
 	},
 	{

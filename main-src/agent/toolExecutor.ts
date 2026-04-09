@@ -12,7 +12,7 @@ import { formatSymbolSearchResults, searchWorkspaceSymbols, ensureSymbolIndexLoa
 import type { ToolCall, ToolResult } from './agentTools.js';
 import type { WorkspaceLspManager } from '../lsp/workspaceLspManager.js';
 import type { AgentLoopOptions, AgentLoopHandlers } from './agentLoop.js';
-import { getSettings, type ShellSettings } from '../settingsStore.js';
+import type { ShellSettings } from '../settingsStore.js';
 import { getMcpManager } from '../mcp/index.js';
 import type { McpToolResult } from '../mcp/mcpTypes.js';
 import type { NestedAgentStreamEmit } from '../ipc/nestedAgentStream.js';
@@ -40,7 +40,7 @@ export type SubAgentBackgroundDonePayload = {
 	success: boolean;
 };
 
-/** Agent / delegate_task 嵌套子循环上下文（由 register.ts 注入）。 */
+/** Agent / Task 嵌套子循环上下文（由 register.ts 注入）。 */
 let _delegateContext: {
 	settings: ShellSettings;
 	options: Omit<AgentLoopOptions, 'signal'>;
@@ -72,7 +72,8 @@ export function clearDelegateContext(): void {
 	_delegateContext = null;
 }
 
-const DELEGATE_TOOL_ALIASES = new Set(['Agent', 'Task', 'delegate_task']);
+/** 与 Claude `AgentTool` 一致：主名 `Agent`，兼容旧会话/权限里的 `Task`。 */
+const SUBAGENT_TOOL_NAMES = new Set(['Agent', 'Task']);
 
 function coerceAgentDelegateArgs(call: ToolCall): {
 	task: string;
@@ -81,7 +82,7 @@ function coerceAgentDelegateArgs(call: ToolCall): {
 	runInBackground: boolean;
 } {
 	const a = call.arguments;
-	const task = String(a.task ?? a.prompt ?? a.description ?? '').trim();
+	const task = String(a.prompt ?? a.task ?? a.description ?? '').trim();
 	const context = String(a.context ?? '').trim();
 	const subagentType = typeof a.subagent_type === 'string' && a.subagent_type.trim() ? a.subagent_type.trim() : undefined;
 	const runInBackground = a.run_in_background === true || a.run_in_background === 'true';
@@ -102,8 +103,6 @@ const GLOB_MAX_RESULTS = 100;
 const GLOB_IGNORE_DIR_NAMES = new Set(['.git', 'node_modules', '.hg', '.svn', '.jj']);
 const MAX_SYMBOL_SEARCH_RESULTS = 80;
 const DEFAULT_GREP_HEAD_LIMIT = 250;
-const LEGACY_SEARCH_FILES_LINE_CAP = 80;
-
 const VCS_GREP_EXCLUDES = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'] as const;
 
 export type ToolWriteSnapshot = {
@@ -274,31 +273,23 @@ export async function executeTool(
 		try {
 		switch (call.name) {
 			case 'Read':
-			case 'read_file':
 				return executeReadFile(call, execCtx);
 			case 'Write':
-			case 'write_to_file':
 				return executeWriteToFile(call, hooks, execCtx);
 			case 'Edit':
-			case 'str_replace':
 				return executeStrReplace(call, hooks, execCtx);
 			case 'Glob':
 				return executeGlob(call, execCtx);
 			case 'list_dir':
 				return executeListDir(call, execCtx);
 			case 'Grep':
-			case 'search_files':
 				return await executeGrepTool(call, execCtx);
 		case 'Bash':
-		case 'execute_command':
 			return await executeCommand(call, execCtx);
 		case 'LSP':
 			return await executeLspTool(call, execCtx);
-		case 'get_diagnostics':
-			return await executeGetDiagnostics(call, execCtx);
 		case 'Agent':
 		case 'Task':
-		case 'delegate_task':
 			return await executeAgentDelegate(call, execCtx);
 		case 'ListMcpResourcesTool':
 			return await executeListMcpResources(call);
@@ -796,37 +787,6 @@ function sortGrepFilePathsByMtime(relPaths: string[], baseDir: string): string[]
 	return withT.map((x) => x.f);
 }
 
-async function executeLegacySearchFilesRipgrep(
-	call: ToolCall,
-	searchDirAbs: string,
-	pattern: string
-): Promise<ToolResult> {
-	const rgArgs: string[] = ['--hidden'];
-	for (const d of VCS_GREP_EXCLUDES) {
-		rgArgs.push('--glob', `!${d}`);
-	}
-	rgArgs.push('--max-columns', '500', '--line-number', '--no-heading', '--color=never', '--max-filesize', '1M', '--max-count', '5');
-	if (pattern.startsWith('-')) rgArgs.push('-e', pattern);
-	else rgArgs.push(pattern);
-	rgArgs.push('.');
-	const { stdout, stderr, code } = await runRipgrep(rgArgs, searchDirAbs);
-	if (code !== 0 && code !== 1) {
-		return { toolCallId: call.id, name: call.name, content: `Search failed: ${stderr || `exit ${code}`}`, isError: true };
-	}
-	const lines = stdout.split('\n').filter(Boolean);
-	if (lines.length > LEGACY_SEARCH_FILES_LINE_CAP) {
-		const truncated = lines.slice(0, LEGACY_SEARCH_FILES_LINE_CAP);
-		truncated.push(`... and ${lines.length - LEGACY_SEARCH_FILES_LINE_CAP} more matches`);
-		return { toolCallId: call.id, name: call.name, content: truncated.join('\n'), isError: false };
-	}
-	return {
-		toolCallId: call.id,
-		name: call.name,
-		content: lines.join('\n') || 'No matches found.',
-		isError: false,
-	};
-}
-
 async function executeGrepTool(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
 	const root = requireWorkspace(execCtx);
 	const pattern = String(call.arguments.pattern ?? '');
@@ -859,10 +819,6 @@ async function executeGrepTool(call: ToolCall, execCtx: ToolExecutionContext): P
 			content: `Error: ${e instanceof Error ? e.message : String(e)}`,
 			isError: true,
 		};
-	}
-
-	if (call.name === 'search_files') {
-		return executeLegacySearchFilesRipgrep(call, searchDirAbs, pattern);
 	}
 
 	const outputModeRaw = call.arguments.output_mode;
@@ -1070,7 +1026,7 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 		return {
 			toolCallId: call.id,
 			name: call.name,
-			content: 'Error: prompt/task is required (use `prompt` or `task`).',
+			content: 'Error: `prompt` is required (Claude Code `Agent` tool).',
 			isError: true,
 		};
 	}
@@ -1114,7 +1070,7 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 	let baseToolDefs = assembleAgentToolPool(subComposerMode, {
 		mcpToolDenyPrefixes: prevCtx.settings.mcpToolDenyPrefixes,
 	});
-	baseToolDefs = baseToolDefs.filter((d) => !DELEGATE_TOOL_ALIASES.has(d.name));
+	baseToolDefs = baseToolDefs.filter((d) => !SUBAGENT_TOOL_NAMES.has(d.name));
 
 	const childDepth = depth + 1;
 	const useBackgroundFork = shouldRunAgentInBackground({
@@ -1578,7 +1534,7 @@ async function executeLspTool(call: ToolCall, execCtx: ToolExecutionContext): Pr
 		return {
 			toolCallId: call.id,
 			name: call.name,
-			content: `No LSP server handles extension "${ext}". Add a Claude-style plugin under <asyncData>/plugins/<name>/ or <workspace>/.async/plugins/<name>/ with .lsp.json (command + extensionToLanguage), or use legacy settings.json "lsp.servers". TS/JS may work automatically if typescript-language-server is bundled.`,
+			content: `No LSP server handles extension "${ext}". Add a Claude-style plugin under <asyncData>/plugins/<name>/ or <workspace>/.async/plugins/<name>/ with .lsp.json (command + extensionToLanguage), or use legacy settings.json "lsp.servers". For TS/JS, install typescript-language-server in the project or register it explicitly.`,
 			isError: false,
 		};
 	}
@@ -1655,25 +1611,4 @@ async function executeLspTool(call: ToolCall, execCtx: ToolExecutionContext): Pr
 			isError: true,
 		};
 	}
-}
-
-/** Legacy name: only `path`; forwards to LSP `getDiagnostics`. */
-async function executeGetDiagnostics(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
-	const relPath = String(call.arguments.path ?? call.arguments.file_path ?? '').trim();
-	if (!relPath) {
-		return { toolCallId: call.id, name: call.name, content: 'Error: path is required', isError: true };
-	}
-	return executeLspTool(
-		{
-			id: call.id,
-			name: call.name,
-			arguments: {
-				operation: 'getDiagnostics',
-				filePath: relPath,
-				line: 1,
-				character: 1,
-			},
-		},
-		execCtx
-	);
 }

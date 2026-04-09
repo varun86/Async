@@ -75,18 +75,14 @@ const DEFAULT_MAX_CONSECUTIVE_MISTAKES = 5;
 /** 只读类工具：不向 UI 发送 tool_input_delta，避免参数 JSON 流式刷新；完成后由活动行渐入展示 */
 const READ_TOOLS_SKIP_INPUT_DELTA = new Set([
 	'Read',
-	'read_file',
 	'Glob',
 	'Grep',
-	'search_files',
 	'list_dir',
 	'LSP',
-	'get_diagnostics',
 	'ListMcpResourcesTool',
 	'ReadMcpResourceTool',
 	'ask_plan_question',
 	'Agent',
-	'delegate_task',
 	'Task',
 ]);
 
@@ -95,7 +91,7 @@ function shouldEmitToolInputDelta(toolName: string): boolean {
 }
 
 /** 写入类工具：每发一帧参数增量后让出 Node 事件循环，便于 Electron 先把 IPC 交给渲染进程绘制 */
-const WRITE_TOOLS_STREAM_YIELD = new Set(['Edit', 'str_replace', 'Write', 'write_to_file']);
+const WRITE_TOOLS_STREAM_YIELD = new Set(['Edit', 'Write']);
 
 function yieldForToolInputStreamUi(toolName: string): Promise<void> {
 	if (!WRITE_TOOLS_STREAM_YIELD.has(toolName)) {
@@ -200,7 +196,7 @@ export type AgentLoopOptions = {
 	delegateExecutionDepth?: number;
 	/** 发起 Agent 的窗口当前工作区根 */
 	workspaceRoot?: string | null;
-	/** 与 workspaceRoot 同窗的多语言 LSP 路由（插件 `.lsp.json` + 可选 settings.lsp 迁移 + 内置 TSLS） */
+	/** 与 workspaceRoot 同窗的多语言 LSP 路由（插件 `.lsp.json` + 可选 settings.lsp 迁移 + 若存在则探测 typescript-language-server） */
 	workspaceLspManager?: WorkspaceLspManager | null;
 	/** 当前会话线程 ID，用于 TodoWrite 等按线程隔离状态的工具 */
 	threadId?: string | null;
@@ -239,7 +235,7 @@ function unwrapAssistantContentEnvelope(text: string): string {
  * 许多 OpenAI 兼容网关会先流式下发 `function.arguments`，`function.name` 晚几帧才到。
  * 若仅在 `name` 已有时才触发 `onToolInputDelta`，则整段参数流式阶段 UI 完全收不到增量，代码卡片会像「一次性出现」。
  * 根据已出现的 JSON 键名猜测工具（与 agentTools 名称一致）；正式 `name` 到达后下一轮 chunk 会纠正。
- * `Read` / `Glob` / `Grep`（及旧名 `read_file`、`list_dir`、`search_files`）不发 `onToolInputDelta`（见 READ_TOOLS_SKIP_INPUT_DELTA）。**Bash** 与历史名 `execute_command` 会发增量（命令参数流式展示）。
+ * `Read` / `Glob` / `Grep` / `list_dir` 等只读工具不发 `onToolInputDelta`（见 READ_TOOLS_SKIP_INPUT_DELTA）。**Bash** 会发增量（命令参数流式展示）。
  */
 function inferOpenAIToolNameFromPartialArguments(partial: string): string {
 	const c = partial.replace(/\s+/g, '');

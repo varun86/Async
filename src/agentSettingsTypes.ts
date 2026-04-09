@@ -58,7 +58,7 @@ export type AgentCustomization = {
 	skills?: AgentSkill[];
 	subagents?: AgentSubagent[];
 	commands?: AgentCommand[];
-	/** Bash（兼容 execute_command）执行前确认，默认 true */
+	/** Bash 执行前确认，默认 true */
 	confirmShellCommands?: boolean;
 	/** 写入文件前确认，默认 false */
 	confirmWritesBeforeExecute?: boolean;

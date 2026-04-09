@@ -71,7 +71,7 @@ export function buildRuleCreatorSystemAppend(
 	const firstTurnZh = `**首轮回复（Cursor 风格，除非用户消息已同时写清：目的 + 作用方式 + 需要的 globs）：**  
 请用下面结构开场（可适当加一句友好说明），让用户按条回复；语气与排版尽量接近 Cursor 的 /create-rule：
 
-要用 /create-rule 帮你写好一条可用的规则（将写入工作区 **`.async/rules/`**），需要先确定几件事（你按条回复即可）。
+要用 /create-rule 帮你写好一条可用的规则（将写入工作区 **\`.async/rules/\`**），需要先确定几件事（你按条回复即可）。
 
 1. **这条规则要解决什么？**  
 请用一两句话说明：希望 AI 在写代码/改项目时固定遵守什么（例如：错误处理、命名、React 写法、IPC 约定、i18n 习惯等）。越具体越好。
@@ -89,7 +89,7 @@ export function buildRuleCreatorSystemAppend(
 
 Open with a short intro, then numbered questions in this spirit:
 
-To write a solid Async workspace rule (`.mdc` under `.async/rules/`) via /create-rule, a few quick answers help (reply point-by-point):
+To write a solid Async workspace rule (\`.mdc\` under \`.async/rules/\`) via /create-rule, a few quick answers help (reply point-by-point):
 
 1. **What problem should this rule solve?**  
 In one or two sentences: what should the AI always follow when coding (error handling, naming, React patterns, IPC, i18n, etc.). Be specific.

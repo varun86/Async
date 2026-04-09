@@ -868,7 +868,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 					onAllow={() => void respondToolApproval(true)}
 					onDeny={() => void respondToolApproval(false)}
 					title={
-						toolApprovalRequest.toolName === 'Bash' || toolApprovalRequest.toolName === 'execute_command'
+						toolApprovalRequest.toolName === 'Bash'
 							? t('agent.toolApproval.titleShell')
 							: t('agent.toolApproval.titleWrite')
 					}

@@ -99,7 +99,6 @@ export class WorkspaceLspManager {
 
 		let g = this.genericById.get(scopedId);
 		if (!g) {
-			const root = path.resolve(workspaceRoot);
 			g = new GenericLspSession(genericOptsFromScoped(scopedId, cfg));
 			this.genericById.set(scopedId, g);
 		}

@@ -142,7 +142,7 @@ function validateServerConfig(raw: unknown, context: string): LspServerConfig | 
 		command,
 		args,
 		extensionToLanguage,
-		transport: transport === 'socket' ? 'socket' : 'stdio',
+		transport: 'stdio' as const,
 		env,
 		workspaceFolder,
 		cwdRelative,

@@ -3,8 +3,8 @@ import * as path from 'node:path';
 import type { ScopedLspServerConfig } from './pluginLspTypes.js';
 
 /**
- * 解析随应用打包的 typescript-language-server CLI（dependencies 中的包）。
- * 主进程打 bundle 为 `electron/main.bundle.cjs` 时，与 appWindow 一样依赖运行时的 `__dirname`（即 `electron/`）。
+ * 在常见路径下查找 typescript-language-server 的 `cli.mjs`（例如工作区或应用旁的 `node_modules`，或本仓库开发时根目录安装）。
+ * 应用不再将该包列为 dependencies；未找到时返回 null。
  */
 export function resolveBundledTypescriptLanguageServerCli(appPath: string): string | null {
 	const candidates = [
