@@ -18,7 +18,6 @@ import {
 import {
 	ensureWorkspaceFileIndex,
 	searchWorkspaceFiles,
-	prewarmWorkspaceFileIndex,
 	setWorkspaceFileIndexReadyBroadcaster,
 	acquireWorkspaceFileIndexRef,
 	releaseWorkspaceFileIndexRef,
@@ -1061,14 +1060,6 @@ export function registerIpc(): void {
 			}
 		}
 	);
-
-	ipcMain.handle('workspace:prewarmFileIndex', (event) => {
-		const root = senderWorkspaceRoot(event);
-		if (root) {
-			prewarmWorkspaceFileIndex(root);
-		}
-		return { ok: true as const };
-	});
 
 	const COMPOSER_ATTACH_MAX_BYTES = 8 * 1024 * 1024;
 
