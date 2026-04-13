@@ -10,7 +10,6 @@ import {
 	removeWorkspaceSymbolsUnderPrefix,
 	clearWorkspaceSymbolIndexForRoot,
 } from './workspaceSymbolIndex.js';
-import { clearWorkspaceSemanticIndexForRoot } from './workspaceSemanticIndex.js';
 import { getWorkspaceFilesIndexPath } from './workspaceIndexPaths.js';
 
 const execFileAsync = promisify(execFile);
@@ -104,7 +103,6 @@ export function releaseWorkspaceFileIndexRef(rootAbs: string): void {
 	destroyBucket(b);
 	buckets.delete(rootNorm);
 	clearWorkspaceSymbolIndexForRoot(rootNorm);
-	clearWorkspaceSemanticIndexForRoot(rootNorm);
 }
 
 function destroyBucket(b: FileIndexBucket): void {

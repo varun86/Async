@@ -8,10 +8,10 @@ import type { AgentToolDef } from './agentTools.js';
 import { resolveTeamExpertProfiles, type TeamExpertRuntimeProfile } from './teamExpertProfiles.js';
 import { resolveModelRequest, type ResolvedModelRequest } from '../llm/modelResolve.js';
 
-type TeamPhase = 'planning' | 'executing' | 'reviewing' | 'delivering' | 'waiting_user';
+type TeamPhase = 'planning' | 'executing' | 'reviewing' | 'delivering';
 type TeamTaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'revision';
 
-type TeamTask = {
+export type TeamTask = {
 	id: string;
 	expertId: string;
 	expertAssignmentKey?: string;
@@ -180,7 +180,6 @@ export type TeamOrchestratorInput = {
 	thinkingLevel?: 'off' | 'low' | 'medium' | 'high' | 'max';
 	workspaceRoot?: string | null;
 	workspaceLspManager?: WorkspaceLspManager | null;
-	requestUserInput?: (question: string, options?: string[]) => Promise<string>;
 	emit: (evt: TeamEmit) => void;
 	onDone: (fullText: string, usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) => void;
 	onError: (message: string) => void;
@@ -240,6 +239,111 @@ function matchExpert(
 		specialists.find((s) => s.roleType.includes(key) || key.includes(s.roleType)) ??
 		specialists.find((s) => s.assignmentKey.includes(key) || key.includes(s.assignmentKey))
 	);
+}
+
+const TEAM_PACKET_TEXT_LIMIT = 4000;
+const TEAM_HANDOFF_TEXT_LIMIT = 2200;
+
+function clampTeamPacketText(text: string | undefined, maxChars = TEAM_PACKET_TEXT_LIMIT): string {
+	const normalized = String(text ?? '').trim();
+	if (!normalized) {
+		return '(none)';
+	}
+	if (normalized.length <= maxChars) {
+		return normalized;
+	}
+	return `${normalized.slice(0, Math.max(0, maxChars - 32)).trimEnd()}\n\n[truncated for team context]`;
+}
+
+function formatAcceptanceCriteria(criteria: string[]): string {
+	if (criteria.length === 0) {
+		return '- (none provided)';
+	}
+	return criteria.map((item) => `- ${item}`).join('\n');
+}
+
+function buildDependencyHandoffSection(
+	task: TeamTask,
+	completedTasksById: Map<string, TeamTask>
+): string {
+	const items = task.dependencies
+		.map((depId) => completedTasksById.get(depId))
+		.filter((depTask): depTask is TeamTask => Boolean(depTask))
+		.map((depTask) => [
+			`### ${depTask.expertName} (${depTask.roleType})`,
+			`Status: ${depTask.status}`,
+			`Task: ${depTask.description}`,
+			'Output:',
+			clampTeamPacketText(depTask.result, TEAM_HANDOFF_TEXT_LIMIT),
+		].join('\n'));
+	return items.length > 0 ? items.join('\n\n') : 'None.';
+}
+
+export function buildSpecialistTaskPacket(params: {
+	task: TeamTask;
+	expert: TeamExpertRuntimeProfile;
+	userRequest: string;
+	planSummary: string;
+	completedTasksById: Map<string, TeamTask>;
+}): string {
+	const { task, expert, userRequest, planSummary, completedTasksById } = params;
+	return [
+		'You are a specialist working under a Team Lead.',
+		'You are receiving a focused assignment packet instead of the full chat transcript.',
+		'Use the dependency handoffs below as the authoritative outputs from your teammates.',
+		'Stay within your assigned scope and produce a concrete deliverable.',
+		'',
+		'## Original User Request',
+		clampTeamPacketText(userRequest),
+		'',
+		'## Team Lead Plan Summary',
+		clampTeamPacketText(planSummary),
+		'',
+		'## Your Role',
+		`${expert.name} (${expert.roleType})`,
+		'',
+		'## Assigned Task',
+		task.description,
+		'',
+		'## Acceptance Criteria',
+		formatAcceptanceCriteria(task.acceptanceCriteria),
+		'',
+		'## Dependency Handoffs',
+		buildDependencyHandoffSection(task, completedTasksById),
+	].join('\n');
+}
+
+export function buildReviewerTaskPacket(params: {
+	reviewer: TeamExpertRuntimeProfile;
+	userRequest: string;
+	planSummary: string;
+	completedTasks: TeamTask[];
+}): string {
+	const { reviewer, userRequest, planSummary, completedTasks } = params;
+	const taskSummary = completedTasks.map((task) => [
+		`### ${task.expertName} (${task.roleType}) - ${task.status}`,
+		`Task: ${task.description}`,
+		`Acceptance Criteria:\n${formatAcceptanceCriteria(task.acceptanceCriteria)}`,
+		'Output:',
+		clampTeamPacketText(task.result, TEAM_HANDOFF_TEXT_LIMIT),
+	].join('\n')).join('\n\n');
+	return [
+		`You are ${reviewer.name}, the reviewer for this team workflow.`,
+		'Review the specialists outputs for correctness, regressions, and quality.',
+		'Base your review on the task packets and completed outputs below.',
+		'',
+		'## Original User Request',
+		clampTeamPacketText(userRequest),
+		'',
+		'## Team Lead Plan Summary',
+		clampTeamPacketText(planSummary),
+		'',
+		'## Specialist Outputs',
+		taskSummary || '(no specialist output)',
+		'',
+		'Respond with your review following your review checklist.',
+		'Your verdict line MUST start with exactly "### Verdict: APPROVED" or "### Verdict: NEEDS_REVISION".',
+	].join('\n');
 }
 
 async function llmPlanTasks(params: {
@@ -381,7 +485,8 @@ async function runReviewerAgent(params: {
 	threadId: string;
 	reviewer: TeamExpertRuntimeProfile;
 	completedTasks: TeamTask[];
-	messages: ChatMessage[];
+	userRequest: string;
+	planSummary: string;
 	modelSelection: string;
 	resolvedModel: TeamOrchestratorInput['resolvedModel'];
 	signal: AbortSignal;
@@ -392,29 +497,14 @@ async function runReviewerAgent(params: {
 	emit: (evt: TeamEmit) => void;
 }): Promise<{ verdict: 'approved' | 'revision_needed'; summary: string }> {
 	const {
-		settings, threadId, reviewer, completedTasks, messages, modelSelection, resolvedModel,
+		settings, threadId, reviewer, completedTasks, userRequest, planSummary, modelSelection, resolvedModel,
 		signal, thinkingLevel, workspaceRoot, workspaceLspManager, baseTools, emit,
 	} = params;
 
-	const taskSummary = completedTasks.map((t) => [
-		`### ${t.expertName} (${t.roleType}) — ${t.status}`,
-		`Task: ${t.description}`,
-		`Output:\n${(t.result ?? '').trim().slice(0, 3000) || '(no output)'}`,
-	].join('\n')).join('\n\n');
-
 	const reviewMessages: ChatMessage[] = [
-		...messages,
 		{
 			role: 'user',
-			content: [
-				'You are the Reviewer. The following specialist tasks have been completed.',
-				'Review the code changes for correctness, regressions, and quality.',
-				'',
-				taskSummary,
-				'',
-				'Respond with your review following your review checklist.',
-				'Your verdict line MUST start with exactly "### Verdict: APPROVED" or "### Verdict: NEEDS_REVISION".',
-			].join('\n'),
+			content: buildReviewerTaskPacket({ reviewer, userRequest, planSummary, completedTasks }),
 		},
 	];
 
@@ -557,7 +647,9 @@ async function runOneSpecialist(params: {
 	settings: ShellSettings;
 	task: TeamTask;
 	expert: TeamExpertRuntimeProfile;
-	messages: ChatMessage[];
+	userRequest: string;
+	planSummary: string;
+	completedTasksById: Map<string, TeamTask>;
 	modelSelection: string;
 	resolvedModel: TeamOrchestratorInput['resolvedModel'];
 	signal: AbortSignal;
@@ -569,16 +661,21 @@ async function runOneSpecialist(params: {
 	emit: (evt: TeamEmit) => void;
 }): Promise<{ success: boolean; text: string }> {
 	const {
-		settings, task, expert, messages, modelSelection, resolvedModel,
+		settings, task, expert, userRequest, planSummary, completedTasksById, modelSelection, resolvedModel,
 		signal, thinkingLevel, workspaceRoot, workspaceLspManager, baseTools,
 		threadId, emit,
 	} = params;
 
 	const subMessages: ChatMessage[] = [
-		...messages,
 		{
 			role: 'user',
-			content: `Specialist task (${expert.name}):\n${task.description}`,
+			content: buildSpecialistTaskPacket({
+				task,
+				expert,
+				userRequest,
+				planSummary,
+				completedTasksById,
+			}),
 		},
 	];
 	const specializedToolPool = buildSpecialistToolPool(baseTools, expert);
@@ -612,13 +709,6 @@ async function runOneSpecialist(params: {
 				type: 'delta',
 				text,
 				teamRoleScope,
-			});
-			emit({
-				threadId,
-				type: 'team_expert_progress',
-				taskId: task.id,
-				expertId: task.expertId,
-				delta: text,
 			});
 		},
 		onToolInputDelta: (payload) => {
@@ -741,24 +831,12 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 	const {
 		settings, threadId, messages, modelSelection, resolvedModel,
 		agentSystemAppend, signal, thinkingLevel, workspaceRoot, workspaceLspManager,
-		requestUserInput, emit, onDone, onError,
+		emit, onDone, onError,
 	} = input;
 
 	try {
 		const latestUser = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
 		let effectiveUserText = latestUser;
-
-		if (latestUser.trim().length < 20 && requestUserInput) {
-			emit({ threadId, type: 'team_phase', phase: 'waiting_user' });
-			const extra = await requestUserInput('Please provide a bit more detail on the expected delivery.', [
-				'Focus on frontend',
-				'Focus on backend',
-				'Focus on end-to-end implementation',
-			]);
-			if (extra.trim()) {
-				effectiveUserText = `${latestUser}\n\nUser clarification: ${extra.trim()}`;
-			}
-		}
 
 		const baseTeamTools = assembleAgentToolPool('team', {
 			mcpToolDenyPrefixes: settings.mcpToolDenyPrefixes,
@@ -774,7 +852,9 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 		}
 
 		const checkAbort = () => {
-			if (signal.aborted) throw new Error('Team session aborted by user.');
+			if (signal.aborted) {
+				throw new Error('Team session aborted by user.');
+			}
 		};
 
 		// ── Phase 1: LLM-based planning ──────────────────────────────
@@ -855,6 +935,7 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 		const pending = [...plannedTasks];
 		const completed: TeamTask[] = [];
 		const completedIds = new Set<string>();
+		const completedTasksById = new Map<string, TeamTask>();
 		const maxConsecutiveFailedBatches = 2;
 		let consecutiveFailedBatches = 0;
 
@@ -877,10 +958,12 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 
 			const results = await Promise.all(
 				batch.map(async (task) => {
+					checkAbort(); // 确保每个子任务开始前检查中止信号
 					const expert = specialists.find((s) => s.id === task.expertId) ?? specialists[0]!;
 					emit({ threadId, type: 'team_expert_started', taskId: task.id, expertId: task.expertId });
 					const result = await runOneSpecialist({
-						settings, task, expert, messages, modelSelection, resolvedModel,
+						settings, task, expert, userRequest: effectiveUserText, planSummary, completedTasksById,
+						modelSelection, resolvedModel,
 						signal, thinkingLevel, workspaceRoot, workspaceLspManager,
 						baseTools: baseTeamTools, threadId, emit,
 					});
@@ -900,6 +983,7 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 					result: item.result.text,
 				};
 				completed.push(finishedTask);
+				completedTasksById.set(finishedTask.id, finishedTask);
 				if (item.result.success) {
 					completedIds.add(item.task.id);
 				}
@@ -930,9 +1014,10 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 		let review: { verdict: 'approved' | 'revision_needed'; summary: string };
 
 		if (reviewerExpert) {
+			checkAbort();
 			review = await runReviewerAgent({
 				settings, threadId, reviewer: reviewerExpert, completedTasks: completed,
-				messages, modelSelection, resolvedModel, signal, thinkingLevel,
+				userRequest: effectiveUserText, planSummary, modelSelection, resolvedModel, signal, thinkingLevel,
 				workspaceRoot, workspaceLspManager, baseTools: baseTeamTools, emit,
 			});
 		} else {
@@ -946,6 +1031,7 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 
 		// ── Phase 4: Delivery ────────────────────────────────────────
 
+		checkAbort();
 		emit({ threadId, type: 'team_phase', phase: 'delivering' });
 
 		const delivery = [
@@ -971,6 +1057,10 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 
 		onDone(delivery);
 	} catch (error) {
-		onError(error instanceof Error ? error.message : String(error));
+		if (signal.aborted) {
+			onError('Team session aborted by user.');
+		} else {
+			onError(error instanceof Error ? error.message : String(error));
+		}
 	}
 }

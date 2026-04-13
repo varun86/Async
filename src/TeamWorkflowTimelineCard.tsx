@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { buildTeamWorkflowItems, type TeamWorkflowListItem } from './teamWorkflowItems';
 import type { TFunction } from './i18n';
 import type { TeamSessionState } from './hooks/useTeamSession';
@@ -12,7 +13,7 @@ function statusLabel(item: TeamWorkflowListItem): string {
 	return item.roleKind === 'reviewer' ? `reviewer · ${item.status}` : item.status;
 }
 
-export function TeamWorkflowTimelineCard({ t, session, onSelectTask }: Props) {
+export const TeamWorkflowTimelineCard = memo(function TeamWorkflowTimelineCard({ t, session, onSelectTask }: Props) {
 	const items = buildTeamWorkflowItems(session);
 	return (
 		<section className="ref-team-timeline-card" aria-label={t('composer.mode.team')}>
@@ -57,4 +58,4 @@ export function TeamWorkflowTimelineCard({ t, session, onSelectTask }: Props) {
 			) : null}
 		</section>
 	);
-}
+});

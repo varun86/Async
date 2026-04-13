@@ -84,12 +84,10 @@ export type ShellUiSettings = {
 	layoutMode?: 'agent' | 'editor';
 };
 
-/** 工作区索引（未设置字段视为开启，与旧 settings.json 兼容） */
+/** 工作区索引设置。 */
 export type ShellIndexingSettings = {
 	/** 导出符号索引：Quick Open @、Grep(symbol) */
 	symbolIndexEnabled?: boolean;
-	/** 本地 TF-IDF 语义块：构建索引并注入 Agent/Plan/Debug 对话上下文 */
-	semanticIndexEnabled?: boolean;
 	/** @deprecated 已废弃；始终视为开启，按需为 Agent 工具启动 LSP */
 	tsLspEnabled?: boolean;
 	/** 在 Agent/Plan/Debug 对话中注入当前 git 分支、状态和最近提交摘要 */
@@ -98,7 +96,6 @@ export type ShellIndexingSettings = {
 
 const INDEXING_DEFAULTS: Required<ShellIndexingSettings> = {
 	symbolIndexEnabled: true,
-	semanticIndexEnabled: true,
 	tsLspEnabled: true,
 	gitContextEnabled: true,
 };
@@ -473,6 +470,23 @@ function migrateIndexingTsLspAlwaysOn(settings: ShellSettings): { next: ShellSet
 	return { next: settings, didMutate: false };
 }
 
+function migrateIndexingDefaults(settings: ShellSettings): { next: ShellSettings; didMutate: boolean } {
+	const prev = settings.indexing;
+	const nextIndexing: ShellIndexingSettings = {
+		...INDEXING_DEFAULTS,
+		...(prev ?? {}),
+		tsLspEnabled: true,
+	};
+	const didMutate =
+		prev == null ||
+		prev.symbolIndexEnabled !== nextIndexing.symbolIndexEnabled ||
+		prev.gitContextEnabled !== nextIndexing.gitContextEnabled ||
+		prev.tsLspEnabled !== true;
+	return didMutate
+		? { next: { ...settings, indexing: nextIndexing }, didMutate: true }
+		: { next: settings, didMutate: false };
+}
+
 function migrateDefaultModelRemoveAuto(settings: ShellSettings): { next: ShellSettings; didMutate: boolean } {
 	const dm = settings.defaultModel;
 	if (typeof dm !== 'string') {
@@ -506,7 +520,15 @@ export function initSettingsStore(userData: string): void {
 	cached = migrated.next;
 	const migratedLsp = migrateIndexingTsLspAlwaysOn(cached);
 	cached = migratedLsp.next;
-	if (migratedDm.didMutate || migratedPm.didMutate || migrated.didMutate || migratedLsp.didMutate) {
+	const migratedIndexing = migrateIndexingDefaults(cached);
+	cached = migratedIndexing.next;
+	if (
+		migratedDm.didMutate ||
+		migratedPm.didMutate ||
+		migrated.didMutate ||
+		migratedLsp.didMutate ||
+		migratedIndexing.didMutate
+	) {
 		save();
 	} else if (!fs.existsSync(settingsPath)) {
 		save();

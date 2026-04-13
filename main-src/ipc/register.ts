@@ -149,12 +149,6 @@ import {
 	getWorkspaceSymbolIndexStatsForRoot,
 	scheduleWorkspaceSymbolFullRebuild,
 } from '../workspaceSymbolIndex.js';
-import {
-	buildSemanticContextBlock,
-	clearWorkspaceSemanticIndex,
-	getWorkspaceSemanticIndexStatsForRoot,
-	scheduleWorkspaceSemanticRebuild,
-} from '../workspaceSemanticIndex.js';
 import { getGitContextBlock, clearGitContextCacheForRoot } from '../gitContext.js';
 import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.js';
 import { ensureMemoryDirExists, loadMemoryPrompt } from '../memdir/memdir.js';
@@ -253,16 +247,6 @@ async function appendMemoryAndRetrievalContext(params: {
 	if (modeExpandsWorkspaceFileContext(params.mode) && params.userText.trim().length > 8) {
 		const recentPaths = Object.keys(getThread(params.threadId)?.fileStates ?? {});
 		const enrichedQuery = buildEnrichedQuery(params.userText, getThread(params.threadId)?.messages ?? []);
-		const sem = await buildSemanticContextBlock(
-			enrichedQuery,
-			6,
-			recentPaths,
-			params.atPaths.length > 0 ? params.atPaths : undefined,
-			params.root
-		);
-		if (sem) {
-			next = appendSystemBlock(next, sem);
-		}
 		if (params.root) {
 			const relevantMemories = await buildRelevantMemoryContextBlock({
 				query: enrichedQuery,
@@ -292,11 +276,6 @@ const agentRevertSnapshotsByThread = new Map<string, Map<string, string | null>>
 const toolApprovalWaiters = new Map<string, (approved: boolean) => void>();
 /** 连续失败后恢复：recoveryId → resolve(decision) */
 const mistakeLimitWaiters = new Map<string, (d: MistakeLimitDecision) => void>();
-const teamUserInputWaiters = new Map<
-	string,
-	{ threadId: string; resolve: (answer: string) => void }
->();
-
 function activeUsageStatsDir(): string | null {
 	return resolveUsageStatsDataDir(getSettings());
 }
@@ -444,46 +423,11 @@ function runChatStream(
 					: {}),
 				thinkingLevel,
 			};
-			const compressStarted = Date.now();
-			const compressResult = await compressForSend(
-				messages,
-				settings,
-				compressOptions,
-				thread?.summary,
-				thread?.summaryCoversMessageCount
-			);
-			logChatPipelineLatency('chat:stream', threadId, streamLatencyT0, 'after compressForSend', {
-				compressMs: Date.now() - compressStarted,
-				triggeredNewSummary: Boolean(compressResult.newSummary),
-				outMsgCount: compressResult.messages.length,
-			});
-			let sendMessages = compressResult.messages;
-			if (compressResult.newSummary && compressResult.newSummaryCoversCount !== undefined) {
-				saveSummary(threadId, compressResult.newSummary, compressResult.newSummaryCoversCount);
-			}
-
 			if (mode === 'team') {
-				const requestUserInput = async (question: string, options?: string[]): Promise<string> => {
-					const requestId = `team-${threadId}-${randomUUID()}`;
-					const normalizedOptions = (options ?? []).map((label, idx) => ({
-						id: `opt-${idx + 1}`,
-						label: String(label ?? '').trim(),
-					})).filter((opt) => opt.label.length > 0);
-					send({
-						threadId,
-						type: 'team_user_input_needed',
-						requestId,
-						question,
-						options: normalizedOptions,
-					});
-					return await new Promise<string>((resolve) => {
-						teamUserInputWaiters.set(requestId, { threadId, resolve });
-					});
-				};
 				await runTeamSession({
 					settings,
 					threadId,
-					messages: sendMessages,
+					messages,
 					modelSelection,
 					resolvedModel: resolved,
 					agentSystemAppend,
@@ -491,7 +435,6 @@ function runChatStream(
 					thinkingLevel,
 					workspaceRoot,
 					workspaceLspManager,
-					requestUserInput,
 					emit: (evt) => send(evt),
 					onDone: (full, usage) => {
 						updateLastAssistant(threadId, full);
@@ -508,6 +451,24 @@ function runChatStream(
 					onError: (message) => emitStreamError(message),
 				});
 				return;
+			}
+
+			const compressStarted = Date.now();
+			const compressResult = await compressForSend(
+				messages,
+				settings,
+				compressOptions,
+				thread?.summary,
+				thread?.summaryCoversMessageCount
+			);
+			logChatPipelineLatency('chat:stream', threadId, streamLatencyT0, 'after compressForSend', {
+				compressMs: Date.now() - compressStarted,
+				triggeredNewSummary: Boolean(compressResult.newSummary),
+				outMsgCount: compressResult.messages.length,
+			});
+			let sendMessages = compressResult.messages;
+			if (compressResult.newSummary && compressResult.newSummaryCoversCount !== undefined) {
+				saveSummary(threadId, compressResult.newSummary, compressResult.newSummaryCoversCount);
 			}
 
 			if ((mode === 'agent' || mode === 'plan') && resolved.paradigm !== 'gemini') {
@@ -1170,9 +1131,6 @@ export function registerIpc(): void {
 		if (idx?.symbolIndexEnabled === false) {
 			clearWorkspaceSymbolIndex();
 		}
-		if (idx?.semanticIndexEnabled === false) {
-			clearWorkspaceSemanticIndex();
-		}
 		const syncedColorMode = next.ui?.colorMode;
 		if (syncedColorMode === 'light' || syncedColorMode === 'dark' || syncedColorMode === 'system') {
 			for (const win of BrowserWindow.getAllWindows()) {
@@ -1286,7 +1244,6 @@ export function registerIpc(): void {
 		const r = senderWorkspaceRoot(event);
 		const w = getWorkspaceFileIndexLiveStatsForRoot(r);
 		const sym = getWorkspaceSymbolIndexStatsForRoot(r);
-		const sem = getWorkspaceSemanticIndexStatsForRoot(r);
 		return {
 			ok: true as const,
 			workspaceRoot: w.root,
@@ -1294,8 +1251,6 @@ export function registerIpc(): void {
 			fileCount: w.fileCount,
 			symbolUniqueNames: sym.uniqueNames,
 			symbolIndexedFiles: sym.filesWithSymbols,
-			semanticChunks: sem.chunks,
-			semanticBusy: sem.busy,
 		};
 	});
 
@@ -1332,18 +1287,15 @@ export function registerIpc(): void {
 		};
 	});
 
-	ipcMain.handle('workspace:indexing:rebuild', async (event, payload: { target?: 'symbols' | 'semantic' | 'all' }) => {
+	ipcMain.handle('workspace:indexing:rebuild', async (event, payload: { target?: 'symbols' }) => {
 		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
 		const files = await ensureWorkspaceFileIndex(root);
-		const t = payload?.target ?? 'all';
-		if (t === 'symbols' || t === 'all') {
+		const t = payload?.target ?? 'symbols';
+		if (t === 'symbols') {
 			scheduleWorkspaceSymbolFullRebuild(root, files);
-		}
-		if (t === 'semantic' || t === 'all') {
-			scheduleWorkspaceSemanticRebuild(root, files);
 		}
 		return { ok: true as const };
 	});
@@ -1918,12 +1870,6 @@ export function registerIpc(): void {
 				fn({ action: 'stop' });
 			}
 		}
-		for (const [id, waiter] of [...teamUserInputWaiters.entries()]) {
-			if (waiter.threadId === threadId) {
-				teamUserInputWaiters.delete(id);
-				waiter.resolve('');
-			}
-		}
 		return { ok: true };
 	});
 
@@ -1950,24 +1896,6 @@ export function registerIpc(): void {
 				answerText: typeof payload?.answerText === 'string' ? payload.answerText : undefined,
 			});
 			return ok ? ({ ok: true as const } as const) : ({ ok: false as const, error: 'unknown request' as const });
-		}
-	);
-
-	ipcMain.handle(
-		'team:userInputRespond',
-		(
-			_e,
-			payload: { requestId?: string; answerText?: string }
-		) => {
-			const requestId = String(payload?.requestId ?? '');
-			if (!requestId) return { ok: false as const, error: 'missing requestId' as const };
-			const waiter = teamUserInputWaiters.get(requestId);
-			if (!waiter) {
-				return { ok: false as const, error: 'unknown request' as const };
-			}
-			teamUserInputWaiters.delete(requestId);
-			waiter.resolve(typeof payload?.answerText === 'string' ? payload.answerText : '');
-			return { ok: true as const };
 		}
 	);
 

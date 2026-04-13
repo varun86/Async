@@ -687,7 +687,7 @@ function AppMainWorkspaceInner() {
 		setStreaming,
 		setAwaitingReply,
 	} = useStreamingChat();
-	const { applyTeamPayload, getTeamSession, setSelectedTask } = useTeamSession();
+	const { applyTeamPayload, getTeamSession, setSelectedTask, abortTeamSession } = useTeamSession();
 	const {
 		agentReviewPendingByThread,
 		setAgentReviewPendingByThread,
@@ -2566,8 +2566,11 @@ function AppMainWorkspaceInner() {
 	onAbortRef.current = abortActiveStream;
 
 	const onAbort = useCallback(async () => {
+		if (currentId) {
+			abortTeamSession(currentId);
+		}
 		return onAbortRef.current();
-	}, []);
+	}, [currentId, abortTeamSession]);
 
 	const onPlanQuestionSubmit = useCallback(
 		(answer: string) => {
@@ -2781,7 +2784,6 @@ function AppMainWorkspaceInner() {
 			editor: editorSettings,
 			indexing: {
 				symbolIndexEnabled: indexingSettings.symbolIndexEnabled,
-				semanticIndexEnabled: indexingSettings.semanticIndexEnabled,
 			},
 			team: teamSettings,
 			mcp: { servers: mcpServers },

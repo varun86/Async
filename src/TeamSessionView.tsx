@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import { ChatMarkdown } from './ChatMarkdown';
 import { TeamExpertCard } from './TeamExpertCard';
 import type { TFunction } from './i18n';
@@ -22,20 +22,7 @@ function phaseIndex(phase: TeamSessionState['phase']): number {
 	return idx >= 0 ? idx : 0;
 }
 
-export function TeamSessionView({ t, session, onSelectExpert, layout }: Props) {
-	const [inputText, setInputText] = useState('');
-
-	const submitUserInput = async () => {
-		if (!session.userInputRequest || !window.asyncShell) return;
-		const answerText = inputText.trim();
-		if (!answerText) return;
-		await window.asyncShell.invoke('team:userInputRespond', {
-			requestId: session.userInputRequest.requestId,
-			answerText,
-		});
-		setInputText('');
-	};
-
+export const TeamSessionView = memo(function TeamSessionView({ t, session, onSelectExpert, layout }: Props) {
 	const done = session.tasks.filter((x) => x.status === 'completed').length;
 	const total = session.tasks.length;
 	const selectedTask =
@@ -98,38 +85,6 @@ export function TeamSessionView({ t, session, onSelectExpert, layout }: Props) {
 
 			{/* Detail panel */}
 			<div className="ref-team-detail">
-				{session.userInputRequest ? (
-					<div className="ref-team-user-input-card">
-						<div className="ref-team-detail-head">
-							<strong>{session.userInputRequest.question}</strong>
-						</div>
-						<div className="ref-team-user-input-options">
-							{session.userInputRequest.options.map((opt) => (
-								<button
-									key={opt.id}
-									type="button"
-									className="ref-team-user-input-option"
-									onClick={() => setInputText(opt.label)}
-								>
-									{opt.label}
-								</button>
-							))}
-						</div>
-						<div className="ref-team-user-input-row">
-							<input
-								className="ref-settings-models-search"
-								value={inputText}
-								placeholder={t('settings.team.inputPlaceholder')}
-								onChange={(e) => setInputText(e.target.value)}
-								onKeyDown={(e) => { if (e.key === 'Enter') void submitUserInput(); }}
-							/>
-							<button type="button" className="ref-settings-add-model" onClick={() => void submitUserInput()}>
-								{t('settings.team.submitInput')}
-							</button>
-						</div>
-					</div>
-				) : null}
-
 				{selectedTask ? (
 					<>
 						<div className="ref-team-detail-head">
@@ -157,4 +112,5 @@ export function TeamSessionView({ t, session, onSelectExpert, layout }: Props) {
 			) : null}
 		</div>
 	);
-}
+});
+

@@ -665,7 +665,6 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 				payload.type === 'team_expert_progress' ||
 				payload.type === 'team_expert_done' ||
 				payload.type === 'team_review' ||
-				payload.type === 'team_user_input_needed' ||
 				payload.type === 'team_plan_summary'
 			) {
 				rt.applyTeamPayload(payload);

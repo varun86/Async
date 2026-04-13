@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { ChatMarkdown } from './ChatMarkdown';
 import type { TFunction } from './i18n';
 import type { TeamSessionState } from './hooks/useTeamSession';
@@ -11,7 +12,7 @@ type Props = {
 	layout: 'agent-sidebar' | 'editor-center';
 };
 
-export function TeamRoleWorkflowPanel({ t, session, selectedTaskId, onSelectTask, layout }: Props) {
+export const TeamRoleWorkflowPanel = memo(function TeamRoleWorkflowPanel({ t, session, selectedTaskId, onSelectTask, layout }: Props) {
 	if (!session) {
 		return (
 			<div className="ref-team-role-panel ref-team-role-panel--empty">
@@ -94,4 +95,5 @@ export function TeamRoleWorkflowPanel({ t, session, selectedTaskId, onSelectTask
 			</div>
 		</section>
 	);
-}
+});
+

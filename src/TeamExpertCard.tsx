@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { TeamTask } from './hooks/useTeamSession';
 
 type Props = {
@@ -6,7 +7,7 @@ type Props = {
 	onSelect: () => void;
 };
 
-export function TeamExpertCard({ task, active, onSelect }: Props) {
+export const TeamExpertCard = memo(function TeamExpertCard({ task, active, onSelect }: Props) {
 	const done = task.status === 'completed';
 	const running = task.status === 'in_progress';
 	const failed = task.status === 'failed';
@@ -38,4 +39,5 @@ export function TeamExpertCard({ task, active, onSelect }: Props) {
 			</span>
 		</button>
 	);
-}
+});
+
