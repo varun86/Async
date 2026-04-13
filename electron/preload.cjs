@@ -78,6 +78,7 @@ const INVOKE_CHANNELS = new Set([
 	'plan:save',
 	'plan:saveStructured',
 	'plan:toolQuestionRespond',
+	'team:userInputRespond',
 	'threads:getPlan',
 	'workspaceAgent:get',
 	'workspaceAgent:set',

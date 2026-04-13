@@ -285,7 +285,7 @@ function appendMcpToolsSystemHint(
 	composerMode: ComposerMode,
 	settings: ShellSettings
 ): string {
-	if (composerMode !== 'agent') {
+	if (composerMode !== 'agent' && composerMode !== 'team') {
 		return systemContent;
 	}
 	const mcpTools = filterMcpToolsByDenyPrefixes(
@@ -310,7 +310,7 @@ function appendMcpToolsSystemHint(
  * 为工具会话准备 MCP 连接：Agent 需要动态工具；Plan 仅需连接以便 ListMcpResourcesTool / ReadMcpResourceTool。
  */
 async function prepareMcpConnectionsForSession(composerMode: ComposerMode): Promise<void> {
-	if (composerMode !== 'agent' && composerMode !== 'plan') {
+	if (composerMode !== 'agent' && composerMode !== 'plan' && composerMode !== 'team') {
 		return;
 	}
 	const mcpT0 = Date.now();

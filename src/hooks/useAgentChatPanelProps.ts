@@ -198,12 +198,24 @@ export function useAgentChatPanelProps({
 				...composerGroup,
 				...actionGroup,
 				...stableGroup,
+				teamSession: rest.teamSession,
+				onSelectTeamExpert: rest.onSelectTeamExpert,
 				onOpenWorkspaceFile,
 				onOpenAgentConversationFile: stableOnOpenAgentConversationFile,
 				onRunCommand,
 			};
 		},
-		[messageGroup, composerGroup, actionGroup, stableGroup, onOpenWorkspaceFile, stableOnOpenAgentConversationFile, onRunCommand]
+		[
+			messageGroup,
+			composerGroup,
+			actionGroup,
+			stableGroup,
+			rest.teamSession,
+			rest.onSelectTeamExpert,
+			onOpenWorkspaceFile,
+			stableOnOpenAgentConversationFile,
+			onRunCommand,
+		]
 	);
 
 	return result;

@@ -43,6 +43,8 @@ import { extractTodosFromLiveBlocks, type LiveAgentBlocksState } from './liveAge
 import { IconArrowDown, IconChevron, IconDoc } from './icons';
 import { type ParsedPlan, type PlanQuestion } from './planParser';
 import { type ChatMessage } from './threadTypes';
+import type { TeamSessionState } from './hooks/useTeamSession';
+import { TeamSessionView } from './TeamSessionView';
 
 type SharedComposerProps = Omit<
 	ComponentProps<typeof ChatComposer>,
@@ -137,6 +139,8 @@ export type AgentChatPanelProps = {
 	showScrollToBottomButton: boolean;
 	scrollMessagesToBottom: (behavior?: ScrollBehavior) => void;
 	agentPlanSummaryCard: ReactNode;
+	teamSession: TeamSessionState | null;
+	onSelectTeamExpert: (expertId: string) => void;
 };
 
 /** 未测量行时用于高度预算的估算高度（与旧虚拟列表 estimate 对齐） */
@@ -266,6 +270,8 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	showScrollToBottomButton,
 	scrollMessagesToBottom,
 	agentPlanSummaryCard,
+	teamSession,
+	onSelectTeamExpert,
 }: AgentChatPanelProps) {
 	if (import.meta.env.DEV) {
 		console.log(`[perf] AgentChatPanel render: thread=${messagesThreadId}, messages=${displayMessages.length}, hasConv=${hasConversation}`);
@@ -749,6 +755,17 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		</div>
 	) : null;
 
+	const isTeamMode = composerMode === 'team';
+	const teamViewEl =
+		isTeamMode && teamSession ? (
+			<TeamSessionView
+				t={t}
+				session={teamSession}
+				onSelectExpert={onSelectTeamExpert}
+				layout={layout}
+			/>
+		) : null;
+
 	const editorRailHeroComposer =
 		isEditorRail && !hasConversation ? (
 			<ChatComposer
@@ -960,7 +977,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 					) : (
 						<>
 							{editorContextStrip}
-							{messagesEl}
+							{isTeamMode ? teamViewEl : messagesEl}
 						</>
 					)}
 				</div>
@@ -972,7 +989,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 
 	return (
 		<>
-			{messagesEl}
+			{isTeamMode ? teamViewEl : messagesEl}
 			{!hasConversation ? <div className="ref-hero-spacer" /> : null}
 			{sharedOverlays}
 			{commandStack}

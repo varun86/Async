@@ -98,7 +98,7 @@ function expandUserTextWithWorkspaceFiles(text: string, workspaceRoot: string | 
 }
 
 export function modeExpandsWorkspaceFileContext(mode: ComposerMode): boolean {
-	return mode === 'agent' || mode === 'plan' || mode === 'debug' || mode === 'ask';
+	return mode === 'agent' || mode === 'plan' || mode === 'team' || mode === 'debug' || mode === 'ask';
 }
 
 const ASSET_EXTS = new Set([

@@ -99,6 +99,7 @@ import {
 import { countLineChangesBetweenTexts, countDiffLinesInChunk } from '../diffLineCount.js';
 import { recordAgentLineDelta, recordTokenUsageEvent, getUsageStatsForDataDir } from '../workspaceUsageStats.js';
 import { runAgentLoop } from '../agent/agentLoop.js';
+import { runTeamSession } from '../agent/teamOrchestrator.js';
 import {
 	createMistakeLimitReachedHandler,
 	resolveMistakeLimitRecovery,
@@ -291,6 +292,10 @@ const agentRevertSnapshotsByThread = new Map<string, Map<string, string | null>>
 const toolApprovalWaiters = new Map<string, (approved: boolean) => void>();
 /** 连续失败后恢复：recoveryId → resolve(decision) */
 const mistakeLimitWaiters = new Map<string, (d: MistakeLimitDecision) => void>();
+const teamUserInputWaiters = new Map<
+	string,
+	{ threadId: string; resolve: (answer: string) => void }
+>();
 
 function activeUsageStatsDir(): string | null {
 	return resolveUsageStatsDataDir(getSettings());
@@ -455,6 +460,54 @@ function runChatStream(
 			let sendMessages = compressResult.messages;
 			if (compressResult.newSummary && compressResult.newSummaryCoversCount !== undefined) {
 				saveSummary(threadId, compressResult.newSummary, compressResult.newSummaryCoversCount);
+			}
+
+			if (mode === 'team') {
+				const requestUserInput = async (question: string, options?: string[]): Promise<string> => {
+					const requestId = `team-${threadId}-${randomUUID()}`;
+					const normalizedOptions = (options ?? []).map((label, idx) => ({
+						id: `opt-${idx + 1}`,
+						label: String(label ?? '').trim(),
+					})).filter((opt) => opt.label.length > 0);
+					send({
+						threadId,
+						type: 'team_user_input_needed',
+						requestId,
+						question,
+						options: normalizedOptions,
+					});
+					return await new Promise<string>((resolve) => {
+						teamUserInputWaiters.set(requestId, { threadId, resolve });
+					});
+				};
+				await runTeamSession({
+					settings,
+					threadId,
+					messages: sendMessages,
+					modelSelection,
+					resolvedModel: resolved,
+					agentSystemAppend,
+					signal: ac.signal,
+					thinkingLevel,
+					workspaceRoot,
+					workspaceLspManager,
+					requestUserInput,
+					emit: (evt) => send(evt),
+					onDone: (full, usage) => {
+						updateLastAssistant(threadId, full);
+						accumulateTokenUsage(threadId, usage?.inputTokens, usage?.outputTokens);
+						recordTurnTokenUsageStats(modelSelection, mode, usage);
+						queueExtractMemories({
+							threadId,
+							workspaceRoot,
+							settings,
+							modelSelection,
+						});
+						send({ threadId, type: 'done', text: full, usage });
+					},
+					onError: (message) => emitStreamError(message),
+				});
+				return;
 			}
 
 			if ((mode === 'agent' || mode === 'plan') && resolved.paradigm !== 'gemini') {
@@ -1733,11 +1786,11 @@ export function registerIpc(): void {
 			);
 
 			let finalSystemAppend = agentSystemAppend;
-			if (root && (mode === 'plan' || mode === 'ask')) {
+			if (root && (mode === 'plan' || mode === 'ask' || mode === 'team')) {
 				const wsLine = `## Current workspace\nWorkspace root (absolute): \`${root.replace(/\\/g, '/')}\`\nUser file references with \`@\` are relative to this root.`;
 				finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${wsLine}` : wsLine;
 			}
-			if ((mode === 'plan' || mode === 'ask') && workspaceFiles.length > 0) {
+			if ((mode === 'plan' || mode === 'ask' || mode === 'team') && workspaceFiles.length > 0) {
 				const tree = buildWorkspaceTreeSummary(workspaceFiles);
 				if (tree) {
 					finalSystemAppend = appendSystemBlock(finalSystemAppend, tree);
@@ -1817,11 +1870,11 @@ export function registerIpc(): void {
 				const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(trimmed, agentForTurn, root, workspaceFiles);
 
 				let finalSystemAppend = agentSystemAppend;
-				if (root && (mode === 'plan' || mode === 'ask')) {
+				if (root && (mode === 'plan' || mode === 'ask' || mode === 'team')) {
 					const wsLine = `## Current workspace\nWorkspace root (absolute): \`${root.replace(/\\/g, '/')}\`\nUser file references with \`@\` are relative to this root.`;
 					finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${wsLine}` : wsLine;
 				}
-				if ((mode === 'plan' || mode === 'ask') && workspaceFiles.length > 0) {
+				if ((mode === 'plan' || mode === 'ask' || mode === 'team') && workspaceFiles.length > 0) {
 					const tree = buildWorkspaceTreeSummary(workspaceFiles);
 					if (tree) {
 						finalSystemAppend = appendSystemBlock(finalSystemAppend, tree);
@@ -1865,6 +1918,12 @@ export function registerIpc(): void {
 				fn({ action: 'stop' });
 			}
 		}
+		for (const [id, waiter] of [...teamUserInputWaiters.entries()]) {
+			if (waiter.threadId === threadId) {
+				teamUserInputWaiters.delete(id);
+				waiter.resolve('');
+			}
+		}
 		return { ok: true };
 	});
 
@@ -1891,6 +1950,24 @@ export function registerIpc(): void {
 				answerText: typeof payload?.answerText === 'string' ? payload.answerText : undefined,
 			});
 			return ok ? ({ ok: true as const } as const) : ({ ok: false as const, error: 'unknown request' as const });
+		}
+	);
+
+	ipcMain.handle(
+		'team:userInputRespond',
+		(
+			_e,
+			payload: { requestId?: string; answerText?: string }
+		) => {
+			const requestId = String(payload?.requestId ?? '');
+			if (!requestId) return { ok: false as const, error: 'missing requestId' as const };
+			const waiter = teamUserInputWaiters.get(requestId);
+			if (!waiter) {
+				return { ok: false as const, error: 'unknown request' as const };
+			}
+			teamUserInputWaiters.delete(requestId);
+			waiter.resolve(typeof payload?.answerText === 'string' ? payload.answerText : '');
+			return { ok: true as const };
 		}
 	);
 

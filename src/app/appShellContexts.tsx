@@ -105,6 +105,8 @@ export type AppShellSettingsValue = Pick<
 	| 'onStopMcpServer'
 	| 'onRestartMcpServer'
 	| 'applyLoadedSettings'
+	| 'teamSettings'
+	| 'setTeamSettings'
 > & { openSettingsPageBase: SettingsHook['openSettingsPage'] };
 
 export type AppShellFoundationMerged = AppShellChromeValue &

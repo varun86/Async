@@ -16012,3 +16012,385 @@ select.ref-settings-native-select:focus {
 	border: 1px solid rgba(248, 113, 113, 0.4);
 	color: #fca5a5;
 }
+
+/* ── Team Session ────────────────────────────────────────────────────── */
+
+.ref-team-session {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 8px 4px;
+}
+
+/* Phase stepper */
+.ref-team-session-head {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.ref-team-phase-stepper {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.ref-team-phase-step {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	flex: 1;
+}
+
+.ref-team-phase-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 999px;
+	background: var(--void-border);
+	flex-shrink: 0;
+	transition: background 0.3s, box-shadow 0.3s;
+}
+
+.ref-team-phase-step.is-completed .ref-team-phase-dot {
+	background: #22c55e;
+}
+
+.ref-team-phase-step.is-active .ref-team-phase-dot {
+	background: var(--void-accent);
+	box-shadow: 0 0 6px color-mix(in srgb, var(--void-accent) 50%, transparent);
+	animation: team-dot-pulse 1.8s ease-in-out infinite;
+}
+
+.ref-team-phase-label {
+	font-size: 11px;
+	color: var(--void-fg-2);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	transition: color 0.3s;
+}
+
+.ref-team-phase-step.is-active .ref-team-phase-label {
+	color: var(--void-fg-0);
+	font-weight: 600;
+}
+
+.ref-team-phase-step.is-completed .ref-team-phase-label {
+	color: #22c55e;
+}
+
+/* Progress bar */
+.ref-team-progress-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.ref-team-progress-bar {
+	flex: 1;
+	height: 4px;
+	border-radius: 999px;
+	background: var(--void-border);
+	overflow: hidden;
+}
+
+.ref-team-progress-fill {
+	height: 100%;
+	border-radius: 999px;
+	background: linear-gradient(90deg, var(--void-accent), #22c55e);
+	transition: width 0.4s ease;
+}
+
+.ref-team-progress-text {
+	font-size: 12px;
+	color: var(--void-fg-1);
+	white-space: nowrap;
+}
+
+/* Planning summary */
+.ref-team-plan-summary {
+	border: 1px solid var(--void-border);
+	border-radius: 10px;
+	padding: 10px;
+	background: var(--void-bg-2);
+	font-size: 13px;
+}
+
+.ref-team-plan-summary > summary {
+	font-weight: 600;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--void-fg-2);
+	cursor: pointer;
+	user-select: none;
+}
+
+/* Expert cards grid */
+.ref-team-expert-grid {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 8px;
+}
+
+.ref-team-expert-card {
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	align-items: center;
+	gap: 10px;
+	padding: 10px;
+	background: var(--void-bg-2);
+	border: 1px solid var(--void-border);
+	border-radius: 10px;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+
+.ref-team-expert-card:hover {
+	border-color: var(--void-fg-2);
+	transform: translateY(-1px);
+	box-shadow: 0 2px 8px color-mix(in srgb, var(--void-fg-0) 8%, transparent);
+}
+
+.ref-team-expert-card.is-active {
+	border-color: var(--void-accent);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--void-accent) 35%, transparent);
+}
+
+.ref-team-expert-card.is-running {
+	border-color: color-mix(in srgb, var(--void-accent) 60%, transparent);
+	animation: team-card-glow 2s ease-in-out infinite;
+}
+
+.ref-team-expert-card.is-done {
+	border-color: #22c55e;
+}
+
+.ref-team-expert-card.is-failed {
+	border-color: #ef4444;
+}
+
+/* Role-specific avatar colors */
+.ref-team-expert-avatar {
+	width: 26px;
+	height: 26px;
+	border-radius: 999px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: #fff;
+	font-size: 12px;
+	font-weight: 700;
+	flex-shrink: 0;
+	transition: transform 0.2s;
+}
+
+.ref-team-expert-card:hover .ref-team-expert-avatar {
+	transform: scale(1.08);
+}
+
+.ref-team-expert-avatar--team_lead { background: #8b5cf6; }
+.ref-team-expert-avatar--frontend  { background: #3b82f6; }
+.ref-team-expert-avatar--backend   { background: #f97316; }
+.ref-team-expert-avatar--qa        { background: #22c55e; }
+.ref-team-expert-avatar--reviewer  { background: #ec4899; }
+.ref-team-expert-avatar--custom    { background: #6b7280; }
+
+.ref-team-avatar-sm {
+	width: 22px;
+	height: 22px;
+	font-size: 11px;
+}
+
+.ref-team-expert-meta {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.ref-team-expert-name {
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.ref-team-expert-task {
+	font-size: 12px;
+	color: var(--void-fg-2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Status badges */
+.ref-team-expert-status {
+	font-size: 11px;
+	text-transform: uppercase;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 6px;
+	border-radius: 999px;
+	font-weight: 600;
+}
+
+.ref-team-expert-status--pending     { color: var(--void-fg-2); background: transparent; }
+.ref-team-expert-status--in_progress { color: var(--void-accent); background: color-mix(in srgb, var(--void-accent) 12%, transparent); }
+.ref-team-expert-status--completed   { color: #22c55e; background: color-mix(in srgb, #22c55e 12%, transparent); }
+.ref-team-expert-status--failed      { color: #ef4444; background: color-mix(in srgb, #ef4444 12%, transparent); }
+.ref-team-expert-status--revision    { color: #f59e0b; background: color-mix(in srgb, #f59e0b 12%, transparent); }
+
+/* Pulse indicator */
+.ref-team-pulse {
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	border-radius: 999px;
+	background: var(--void-accent);
+	animation: team-pulse-ring 1.5s ease-in-out infinite;
+}
+
+/* Detail panel */
+.ref-team-detail {
+	border: 1px solid var(--void-border);
+	border-radius: 10px;
+	padding: 12px;
+	background: var(--void-bg-2);
+	max-height: 400px;
+	overflow-y: auto;
+}
+
+.ref-team-detail-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.ref-team-empty {
+	font-size: 12px;
+	color: var(--void-fg-2);
+}
+
+/* Review summary */
+.ref-team-review-summary {
+	border: 1px solid var(--void-border);
+	border-radius: 10px;
+	padding: 12px;
+	background: var(--void-bg-2);
+}
+
+.ref-team-review--approved {
+	border-color: color-mix(in srgb, #22c55e 40%, var(--void-border));
+}
+
+.ref-team-review--revision_needed {
+	border-color: color-mix(in srgb, #f59e0b 40%, var(--void-border));
+}
+
+/* Right sidebar */
+.ref-team-right-sidebar-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: 100%;
+}
+
+.ref-team-right-sidebar-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	border: 1px solid var(--void-border);
+	background: var(--void-bg-2);
+	color: inherit;
+	border-radius: 8px;
+	padding: 8px;
+	cursor: pointer;
+	transition: border-color 0.2s;
+}
+
+.ref-team-right-sidebar-item:hover {
+	border-color: var(--void-fg-2);
+}
+
+.ref-team-right-sidebar-item.is-active {
+	border-color: var(--void-accent);
+}
+
+/* Settings panel */
+.ref-settings-team-roles {
+	display: grid;
+	gap: 12px;
+}
+
+.ref-settings-team-role-card {
+	border: 1px solid var(--void-border);
+	border-radius: 10px;
+	padding: 10px;
+	background: var(--void-bg-2);
+	display: grid;
+	gap: 10px;
+}
+
+.ref-settings-team-role-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 10px;
+}
+
+/* User input card */
+.ref-team-user-input-card {
+	margin-bottom: 10px;
+	display: grid;
+	gap: 8px;
+	border: 1px solid color-mix(in srgb, var(--void-accent) 30%, var(--void-border));
+	border-radius: 10px;
+	padding: 10px;
+	background: color-mix(in srgb, var(--void-accent) 4%, var(--void-bg-2));
+}
+
+.ref-team-user-input-options {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.ref-team-user-input-option {
+	border: 1px solid var(--void-border);
+	border-radius: 999px;
+	padding: 4px 10px;
+	background: var(--void-bg-3);
+	color: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	transition: border-color 0.2s, background 0.2s;
+}
+
+.ref-team-user-input-option:hover {
+	border-color: var(--void-accent);
+	background: color-mix(in srgb, var(--void-accent) 10%, var(--void-bg-3));
+}
+
+.ref-team-user-input-row {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	gap: 8px;
+}
+
+/* Animations */
+@keyframes team-pulse-ring {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50% { opacity: 0.4; transform: scale(1.6); }
+}
+
+@keyframes team-card-glow {
+	0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--void-accent) 20%, transparent); }
+	50% { box-shadow: 0 0 12px 2px color-mix(in srgb, var(--void-accent) 25%, transparent); }
+}
+
+@keyframes team-dot-pulse {
+	0%, 100% { box-shadow: 0 0 4px color-mix(in srgb, var(--void-accent) 40%, transparent); }
+	50% { box-shadow: 0 0 10px color-mix(in srgb, var(--void-accent) 60%, transparent); }
+}

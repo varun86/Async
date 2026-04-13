@@ -15,6 +15,7 @@ import {
 	defaultAgentCustomization,
 	isWorkspaceDiskImportedSkill,
 	mergeSkillsBySlug,
+	type TeamSettings,
 	type AgentCustomization,
 	type AgentRule,
 	type AgentSkill,
@@ -45,6 +46,7 @@ export type LoadedSettingsSnapshot = {
 	agent?: AgentCustomization;
 	editor?: Partial<EditorSettings>;
 	indexing?: Partial<IndexingSettingsState>;
+	team?: TeamSettings;
 };
 
 export function tagProjectOrigin<T extends { origin?: 'user' | 'project' }>(items: T[] | undefined): T[] {
@@ -75,6 +77,11 @@ export function useSettings(
 	const [editorSettings, setEditorSettings] = useState<EditorSettings>(() => defaultEditorSettings());
 	const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
 	const [mcpStatuses, setMcpStatuses] = useState<McpServerStatus[]>([]);
+	const [teamSettings, setTeamSettings] = useState<TeamSettings>({
+		useDefaults: true,
+		maxParallelExperts: 3,
+		experts: [],
+	});
 
 	// ── Settings page UI ──
 	const [settingsPageOpen, setSettingsPageOpen] = useState(false);
@@ -246,6 +253,11 @@ export function useSettings(
 		if (st?.editor) {
 			setEditorSettings({ ...defaultEditorSettings(), ...st.editor });
 		}
+		setTeamSettings({
+			useDefaults: st?.team?.useDefaults ?? true,
+			maxParallelExperts: st?.team?.maxParallelExperts ?? 3,
+			experts: Array.isArray(st?.team?.experts) ? st!.team!.experts : [],
+		});
 	}, []);
 
 	useEffect(() => {
@@ -328,6 +340,7 @@ export function useSettings(
 		editorSettings, setEditorSettings,
 		mcpServers, setMcpServers,
 		mcpStatuses, setMcpStatuses,
+		teamSettings, setTeamSettings,
 		// Settings page
 		settingsPageOpen, setSettingsPageOpen,
 		settingsInitialNav,

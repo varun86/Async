@@ -110,6 +110,7 @@ import { normWorkspaceRootKey } from './workspaceRootKey';
 import { useAgentFileReview, type AgentFilePreviewState } from './hooks/useAgentFileReview';
 import { useComposer } from './hooks/useComposer';
 import { useEditorTabs, type EditorInlineDiffState, clampEditorTerminalHeight } from './hooks/useEditorTabs';
+import { useTeamSession } from './hooks/useTeamSession';
 import { AppWorkspaceWelcome } from './app/AppWorkspaceWelcome';
 import { AgentAgentCenterColumn } from './app/AgentAgentCenterColumn';
 import type { ComposerAnchorSlot } from './ChatComposer';
@@ -144,7 +145,7 @@ import { formatThreadRowSubtitle, threadRowTitle } from './app/threadRowUi';
 const EditorMainPanel = lazy(() => import('./EditorMainPanel').then((m) => ({ default: m.EditorMainPanel })));
 
 type LayoutMode = ShellLayoutMode;
-type AgentRightSidebarView = 'git' | 'plan' | 'file';
+type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team';
 type EditorLeftSidebarView = 'explorer' | 'search' | 'git';
 import { useI18n, type AppLocale } from './i18n';
 import { hideBootSplash } from './bootSplash';
@@ -318,6 +319,8 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		onStopMcpServer,
 		onRestartMcpServer,
 		applyLoadedSettings,
+		teamSettings,
+		setTeamSettings,
 	} = useSettings(shell, workspace, t);
 
 	const chromeSlice = useMemo(
@@ -420,6 +423,8 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			refreshWorkspaceDiskSkills,
 			mergedAgentCustomization,
 			onChangeMergedAgentCustomization,
+			teamSettings,
+			setTeamSettings,
 			editorSettings,
 			setEditorSettings,
 			mcpServers,
@@ -476,6 +481,8 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			onStopMcpServer,
 			onRestartMcpServer,
 			applyLoadedSettings,
+			teamSettings,
+			setTeamSettings,
 		]
 	);
 
@@ -585,6 +592,8 @@ function AppMainWorkspaceInner() {
 		onStopMcpServer,
 		onRestartMcpServer,
 		applyLoadedSettings,
+		teamSettings,
+		setTeamSettings,
 	} = useAppShellSettings();
 
 	const {
@@ -677,6 +686,7 @@ function AppMainWorkspaceInner() {
 		setStreaming,
 		setAwaitingReply,
 	} = useStreamingChat();
+	const { applyTeamPayload, getTeamSession, setSelectedExpert } = useTeamSession();
 	const {
 		agentReviewPendingByThread,
 		setAgentReviewPendingByThread,
@@ -866,6 +876,7 @@ function AppMainWorkspaceInner() {
 		setPlanFileRelPath,
 		loadMessages,
 		refreshThreads,
+		applyTeamPayload,
 	});
 
 	const [layoutMode, setLayoutMode] = useState<LayoutMode>(() =>
@@ -2764,6 +2775,7 @@ function AppMainWorkspaceInner() {
 				symbolIndexEnabled: indexingSettings.symbolIndexEnabled,
 				semanticIndexEnabled: indexingSettings.semanticIndexEnabled,
 			},
+			team: teamSettings,
 			mcp: { servers: mcpServers },
 			ui: {
 				colorMode,
@@ -2794,6 +2806,7 @@ function AppMainWorkspaceInner() {
 		indexingSettings,
 		locale,
 		mcpServers,
+		teamSettings,
 		colorMode,
 		appearanceSettings,
 		layoutMode,
@@ -4738,6 +4751,8 @@ function AppMainWorkspaceInner() {
 				return t('composer.placeholder.ask');
 			case 'plan':
 				return t('composer.placeholder.plan');
+			case 'team':
+				return t('composer.placeholder.team');
 			case 'debug':
 				return t('composer.placeholder.debug');
 			case 'agent':
@@ -4753,6 +4768,8 @@ function AppMainWorkspaceInner() {
 				return t('composer.followup.ask');
 			case 'plan':
 				return t('composer.followup.plan');
+			case 'team':
+				return t('composer.followup.team');
 			case 'debug':
 				return t('composer.followup.debug');
 			case 'agent':
@@ -4768,6 +4785,33 @@ function AppMainWorkspaceInner() {
 			void onNewThread();
 		}
 	};
+
+	const teamSession = useMemo(() => getTeamSession(currentId), [getTeamSession, currentId]);
+	const onSelectTeamExpert = useCallback(
+		(expertId: string) => {
+			if (!currentId) {
+				return;
+			}
+			setSelectedExpert(currentId, expertId);
+			if (layoutMode === 'editor') {
+				setLayoutMode('agent');
+			}
+			if (layoutMode === 'agent') {
+				setAgentRightSidebarView('team');
+				setAgentRightSidebarOpen(true);
+			}
+		},
+		[currentId, setSelectedExpert, layoutMode]
+	);
+	useEffect(() => {
+		if (composerMode !== 'team') {
+			return;
+		}
+		if (layoutMode === 'agent') {
+			setAgentRightSidebarView('team');
+			setAgentRightSidebarOpen(true);
+		}
+	}, [composerMode, layoutMode]);
 
 	useEffect(() => {
 		const onResize = () => {
@@ -5371,6 +5415,8 @@ function AppMainWorkspaceInner() {
 		showScrollToBottomButton,
 		scrollMessagesToBottom,
 		agentPlanSummaryCard,
+		teamSession,
+		onSelectTeamExpert,
 	});
 
 
@@ -5411,6 +5457,8 @@ function AppMainWorkspaceInner() {
 		setCommitMsg,
 		onCommitOnly,
 		onCommitAndPush,
+		teamSession,
+		onSelectTeamExpert,
 	});
 
 	const editorMainPanelProps = useEditorMainPanelProps({
@@ -5714,6 +5762,8 @@ function AppMainWorkspaceInner() {
 			onPickDefaultModel: (id) => void onPickDefaultModel(id),
 			agentCustomization: mergedAgentCustomization,
 			onChangeAgentCustomization: onChangeMergedAgentCustomization,
+			teamSettings,
+			onChangeTeamSettings: setTeamSettings,
 			editorSettings,
 			onChangeEditorSettings: setEditorSettings,
 			onPersistLanguage: (loc) => void onPersistLanguage(loc),

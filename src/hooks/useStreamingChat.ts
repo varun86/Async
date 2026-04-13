@@ -106,6 +106,7 @@ type StreamingSubscriptionRuntime = {
 	setPlanFileRelPath: Dispatch<SetStateAction<string | null>>;
 	loadMessages: (threadId: string) => Promise<unknown>;
 	refreshThreads: () => Promise<unknown> | void;
+	applyTeamPayload: (payload: ChatStreamPayload) => void;
 };
 
 function escapeSubAgentXmlText(s: string): string {
@@ -455,7 +456,7 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 			};
 
 			const trackLiveBlocks =
-				(rt.composerMode === 'agent' || rt.composerMode === 'plan') && visible;
+				(rt.composerMode === 'agent' || rt.composerMode === 'plan' || rt.composerMode === 'team') && visible;
 			const applyToolInputDeltaUi = (p: { name: string; partialJson: string; index: number }) => {
 				if (!visible) {
 					return;
@@ -637,6 +638,17 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 					? rt.t('agent.subAgentBg.done', { preview })
 					: rt.t('agent.subAgentBg.fail', { preview });
 				rt.showTransientToast(payload.success, text, 6500);
+			} else if (
+				payload.type === 'team_phase' ||
+				payload.type === 'team_task_created' ||
+				payload.type === 'team_expert_started' ||
+				payload.type === 'team_expert_progress' ||
+				payload.type === 'team_expert_done' ||
+				payload.type === 'team_review' ||
+				payload.type === 'team_user_input_needed' ||
+				payload.type === 'team_plan_summary'
+			) {
+				rt.applyTeamPayload(payload);
 			} else if (payload.type === 'done') {
 				rt.recordThoughtSeconds(payload.threadId, 0.5);
 				if (payload.usage) {

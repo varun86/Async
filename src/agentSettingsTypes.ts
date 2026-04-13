@@ -69,6 +69,24 @@ export type AgentMemoryExtractionSettings = {
 	minToolCallsBetween?: number;
 };
 
+export type TeamRoleType = 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
+
+export type TeamExpertConfig = {
+	id: string;
+	name: string;
+	roleType: TeamRoleType;
+	systemPrompt: string;
+	preferredModelId?: string;
+	allowedTools?: string[];
+	enabled?: boolean;
+};
+
+export type TeamSettings = {
+	experts?: TeamExpertConfig[];
+	useDefaults?: boolean;
+	maxParallelExperts?: number;
+};
+
 /** Bash 执行权限三档（与 Composer 下拉、设置页一致） */
 export type ShellPermissionMode = 'always' | 'rules' | 'ask_every_time';
 

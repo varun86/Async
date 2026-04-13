@@ -73,6 +73,8 @@ export function useAgentRightSidebarProps(p: UseAgentRightSidebarPropsParams): A
 			rest.setCommitMsg,
 			rest.onCommitOnly,
 			rest.onCommitAndPush,
+			rest.teamSession,
+			rest.onSelectTeamExpert,
 		]
 	);
 }

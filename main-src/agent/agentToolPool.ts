@@ -23,11 +23,11 @@ export function assembleAgentToolPool(
 	composerMode: ComposerMode,
 	options?: { mcpToolDenyPrefixes?: string[] }
 ): AgentToolDef[] {
-	const modeForBase: 'agent' | 'plan' = composerMode === 'plan' ? 'plan' : 'agent';
+	const modeForBase: 'agent' | 'plan' | 'team' = composerMode === 'plan' ? 'plan' : composerMode === 'team' ? 'team' : 'agent';
 	const base = agentToolsForComposerMode(modeForBase);
 	const baseNames = new Set(base.map((d) => d.name));
 
-	if (composerMode !== 'agent') {
+	if (composerMode !== 'agent' && composerMode !== 'team') {
 		return base;
 	}
 

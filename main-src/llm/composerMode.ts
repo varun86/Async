@@ -1,5 +1,5 @@
 /** Keep in sync with renderer `ComposerPlusMenu.ComposerMode`. */
-export const COMPOSER_MODES = ['agent', 'plan', 'debug', 'ask'] as const;
+export const COMPOSER_MODES = ['agent', 'plan', 'team', 'debug', 'ask'] as const;
 export type ComposerMode = (typeof COMPOSER_MODES)[number];
 
 export function parseComposerMode(raw: unknown): ComposerMode {

@@ -94,6 +94,65 @@ type ChatStreamPayloadCore =
 			parentToolCallId: string;
 			result: string;
 			success: boolean;
+	  }
+	| {
+			threadId: string;
+			type: 'team_phase';
+			phase: 'planning' | 'executing' | 'reviewing' | 'delivering' | 'waiting_user';
+	  }
+	| {
+			threadId: string;
+			type: 'team_task_created';
+			task: {
+				id: string;
+				expertId: string;
+				expertName: string;
+				roleType: 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
+				description: string;
+				status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'revision';
+				dependencies?: string[];
+				acceptanceCriteria?: string[];
+			};
+	  }
+	| {
+			threadId: string;
+			type: 'team_expert_started';
+			taskId: string;
+			expertId: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_expert_progress';
+			taskId: string;
+			expertId: string;
+			message?: string;
+			delta?: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_expert_done';
+			taskId: string;
+			expertId: string;
+			success: boolean;
+			result: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_review';
+			verdict: 'approved' | 'revision_needed';
+			summary: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_user_input_needed';
+			requestId: string;
+			question: string;
+			options: { id: string; label: string }[];
+	  }
+	| {
+			threadId: string;
+			type: 'team_plan_summary';
+			summary: string;
 	  };
 
 export type ChatStreamPayload = ChatStreamPayloadCore & ChatStreamNonce;

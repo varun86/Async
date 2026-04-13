@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom';
 import { computeClampedPopoverLayout, POPOVER_VIEW_MARGIN, type ClampedPopoverLayout } from './anchorPopoverLayout';
 import { useI18n } from './i18n';
 
-export type ComposerMode = 'agent' | 'plan' | 'debug' | 'ask';
+export type ComposerMode = 'agent' | 'plan' | 'team' | 'debug' | 'ask';
 
-const MODE_IDS: ComposerMode[] = ['agent', 'plan', 'debug', 'ask'];
+const MODE_IDS: ComposerMode[] = ['agent', 'plan', 'team', 'debug', 'ask'];
 
 /** 首帧估算高度（hint + 模式行 + 分隔 + 子项） */
 const plusMenuEstHeight = () => MODE_IDS.length * 48 + 180;
@@ -36,6 +36,17 @@ function IconDebug({ className }: { className?: string }) {
 	return (
 		<svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
 			<path d="M12 4v2M8 6l-1 2M16 6l1 2M6 10h12M8 14l-1 4M16 14l1 4M9 20h6" strokeLinecap="round" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+function IconTeam({ className }: { className?: string }) {
+	return (
+		<svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+			<circle cx="7" cy="9" r="2" />
+			<circle cx="12" cy="7" r="2" />
+			<circle cx="17" cy="9" r="2" />
+			<path d="M4 18a3 3 0 0 1 6 0M9 18a3 3 0 0 1 6 0M14 18a3 3 0 0 1 6 0" strokeLinecap="round" />
 		</svg>
 	);
 }
@@ -98,6 +109,8 @@ function modeIcon(id: ComposerMode) {
 			return <IconAgent />;
 		case 'plan':
 			return <IconPlan />;
+		case 'team':
+			return <IconTeam />;
 		case 'debug':
 			return <IconDebug />;
 		case 'ask':

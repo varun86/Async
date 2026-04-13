@@ -10,6 +10,7 @@ import {
 	IconRefresh,
 	IconArrowUp,
 	IconArrowUpRight,
+	IconTeam,
 } from './icons';
 import type { TFunction } from './i18n';
 import type { PlanTodoItem, ParsedPlan } from './planParser';
@@ -21,8 +22,9 @@ import {
 import type { AgentFilePreviewState } from './hooks/useAgentFileReview';
 import { AgentGitScmChangedCards } from './GitScmVirtualLists';
 import { useAppShellChrome, useAppShellGit, useAppShellSettings } from './app/appShellContexts';
+import type { TeamSessionState } from './hooks/useTeamSession';
 
-type AgentRightSidebarView = 'git' | 'plan' | 'file';
+type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team';
 
 export type AgentRightSidebarProps = {
 	open: boolean;
@@ -66,6 +68,8 @@ export type AgentRightSidebarProps = {
 	setCommitMsg: Dispatch<SetStateAction<string>>;
 	onCommitOnly: () => void;
 	onCommitAndPush: () => void;
+	teamSession: TeamSessionState | null;
+	onSelectTeamExpert: (expertId: string) => void;
 };
 
 type CommitAction = 'commit' | 'commit-push' | 'commit-pr';
@@ -249,6 +253,15 @@ function RightSidebarTabs({
 }) {
 	return (
 		<div className="ref-right-icon-tabs" aria-label={t('app.rightSidebarViews')}>
+			<button
+				type="button"
+				aria-label={t('composer.mode.team')}
+				title={t('composer.mode.team')}
+				className={`ref-right-icon-tab ${activeView === 'team' ? 'is-active' : ''}`}
+				onClick={() => openView('team')}
+			>
+				<IconTeam />
+			</button>
 			{hasPlan ? (
 				<button
 					type="button"
@@ -795,6 +808,8 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 	setCommitMsg,
 	onCommitOnly,
 	onCommitAndPush,
+	teamSession,
+	onSelectTeamExpert,
 }: AgentRightSidebarProps) {
 	const { t } = useAppShellChrome();
 
@@ -841,6 +856,54 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 				onRevertAgentFilePreviewHunk={onRevertAgentFilePreviewHunk}
 				agentFilePreviewBusyPatch={agentFilePreviewBusyPatch}
 			/>
+		);
+	} else if (view === 'team') {
+		content = (
+			<div className="ref-agent-review-shell">
+				<div className="ref-agent-review-head">
+					<div className="ref-agent-review-title-stack">
+						<span className="ref-agent-review-kicker">{t('composer.mode.team')}</span>
+						<span className="ref-agent-review-title">{teamSession?.phase ?? 'planning'}</span>
+					</div>
+					<RightSidebarTabs
+						t={t}
+						hasPlan={hasAgentPlanSidebarContent}
+						activeView="team"
+						openView={openView}
+						closeSidebar={closeSidebar}
+					/>
+				</div>
+				<div className="ref-right-panel-stage">
+					{teamSession?.tasks?.length ? (
+						<div className="ref-team-right-sidebar-list">
+							{teamSession.tasks.map((task) => (
+								<button
+									key={task.id}
+									type="button"
+									className={`ref-team-right-sidebar-item ${
+										teamSession.selectedExpertId === task.expertId ? 'is-active' : ''
+									}`}
+									onClick={() => onSelectTeamExpert(task.expertId)}
+								>
+									<span className={`ref-team-expert-avatar ref-team-expert-avatar--${task.roleType} ref-team-avatar-sm`}>
+										{task.expertName.slice(0, 1).toUpperCase()}
+									</span>
+									<span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.expertName}</span>
+									<span className={`ref-team-expert-status ref-team-expert-status--${task.status}`}>
+										{task.status === 'in_progress' ? <span className="ref-team-pulse" /> : null}
+										{task.status}
+									</span>
+								</button>
+							))}
+						</div>
+					) : (
+						<div className="ref-agent-plan-status-main">
+							<div className="ref-agent-plan-status-title">{t('composer.mode.team')}</div>
+							<p className="ref-agent-plan-status-body">{t('settings.team.empty')}</p>
+						</div>
+					)}
+				</div>
+			</div>
 		);
 	} else {
 		content = (

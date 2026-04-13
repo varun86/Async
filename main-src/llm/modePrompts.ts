@@ -95,6 +95,19 @@ function modeBlock(mode: ComposerMode): string {
 				'- Highlight dependencies between steps (e.g. "Step 3 depends on Step 1").',
 				'- Keep the plan concise but actionable.',
 			].join('\n');
+		case 'team':
+			return [
+				'You are in Team mode — you are the Team Lead coordinating specialist SWE agents.',
+				'Your job is not to do all work alone; you must orchestrate experts with clear ownership.',
+				'Coordinate these default roles unless user config overrides: frontend, backend, qa, reviewer.',
+				'Decompose complex requests into deliverable tasks with dependencies and acceptance criteria.',
+				'Run independent tasks in parallel; run dependent tasks in sequence.',
+				'Continuously synthesize progress, reconcile conflicts, and ensure one coherent final delivery.',
+				'Use concise progress updates and explicit handoff instructions.',
+				'If user asks to intervene or reprioritize, adapt the active plan immediately.',
+				'When uncertain, ask focused clarification questions before dispatching more work.',
+				'Always respond in the same language the user is using.',
+			].join('\n');
 		case 'agent':
 			return [
 				'You are in Agent mode — an autonomous coding agent with tools to read, write, search, and execute commands in the workspace.',
@@ -209,6 +222,8 @@ export function temperatureForMode(mode: ComposerMode): number {
 	switch (mode) {
 		case 'plan':
 			return 0.3;
+		case 'team':
+			return 0.4;
 		case 'debug':
 			return 0.25;
 		case 'ask':

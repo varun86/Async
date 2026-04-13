@@ -122,6 +122,24 @@ export type ShellLspSettings = {
 	servers?: ShellLspUserServer[];
 };
 
+export type TeamRoleType = 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
+
+export type TeamExpertConfig = {
+	id: string;
+	name: string;
+	roleType: TeamRoleType;
+	systemPrompt: string;
+	preferredModelId?: string;
+	allowedTools?: string[];
+	enabled?: boolean;
+};
+
+export type TeamSettings = {
+	experts?: TeamExpertConfig[];
+	useDefaults?: boolean;
+	maxParallelExperts?: number;
+};
+
 export type ShellSettings = {
 	/** 界面语言：zh-CN 简体中文（默认）、en 英文 */
 	language?: 'zh-CN' | 'en';
@@ -192,6 +210,8 @@ export type ShellSettings = {
 		/** 是否允许下载差异化更新包（否则全量更新） */
 		allowDifferential?: boolean;
 	};
+	/** Team 模式角色配置 */
+	team?: TeamSettings;
 };
 
 const defaultSettings: ShellSettings = {
@@ -199,6 +219,11 @@ const defaultSettings: ShellSettings = {
 	thinkingLevel: 'medium',
 	recentWorkspaces: [],
 	lastOpenedWorkspace: null,
+	team: {
+		useDefaults: true,
+		maxParallelExperts: 3,
+		experts: [],
+	},
 };
 
 const MAX_RECENTS = 24;
