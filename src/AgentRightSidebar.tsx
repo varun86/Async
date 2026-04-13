@@ -845,39 +845,34 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 	} else if (view === 'team') {
 		const workflowItems = buildTeamWorkflowItems(teamSession);
 		content = (
-			<div className="ref-agent-review-shell">
-				<div className="ref-agent-review-head">
-					<div className="ref-agent-review-title-stack">
-						<span className="ref-agent-review-kicker">{t('composer.mode.team')}</span>
-						<span className="ref-agent-review-title">
-							{t(`team.phase.${teamSession?.phase ?? 'planning'}`)}
-						</span>
+			<div className="ref-team-sidebar-shell">
+				<button
+					type="button"
+					className="ref-team-sidebar-close"
+					onClick={closeSidebar}
+					aria-label={t('common.close')}
+					title={t('common.close')}
+				>
+					<IconCloseSmall />
+				</button>
+				{workflowItems.length ? (
+					<div className="ref-team-right-sidebar-layout">
+						<TeamRoleWorkflowPanel
+							t={t}
+							session={teamSession}
+							selectedTaskId={teamSession?.selectedTaskId ?? null}
+							onSelectTask={onSelectTeamExpert}
+							layout="agent-sidebar"
+						/>
 					</div>
-					<RightSidebarTabs
-						t={t}
-						hasPlan={hasAgentPlanSidebarContent}
-						openView={openView}
-						closeSidebar={closeSidebar}
-					/>
-				</div>
-				<div className="ref-right-panel-stage">
-					{workflowItems.length ? (
-						<div className="ref-team-right-sidebar-layout">
-							<TeamRoleWorkflowPanel
-								t={t}
-								session={teamSession}
-								selectedTaskId={teamSession?.selectedTaskId ?? null}
-								onSelectTask={onSelectTeamExpert}
-								layout="agent-sidebar"
-							/>
-						</div>
-					) : (
+				) : (
+					<div className="ref-team-sidebar-empty">
 						<div className="ref-agent-plan-status-main">
 							<div className="ref-agent-plan-status-title">{t('composer.mode.team')}</div>
 							<p className="ref-agent-plan-status-body">{t('settings.team.empty')}</p>
 						</div>
-					)}
-				</div>
+					</div>
+				)}
 			</div>
 		);
 	} else {

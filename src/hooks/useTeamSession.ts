@@ -225,7 +225,11 @@ function mutateRoleWorkflowPayload(
 			workflow.lastUpdatedAt = Date.now();
 			return true;
 		case 'done': {
-			const nextMessage: ChatMessage = { role: 'assistant', content: payload.text };
+			const leaderNarrative = isLead ? extractTeamLeadNarrative(payload.text) : '';
+			const nextMessage: ChatMessage = {
+				role: 'assistant',
+				content: isLead ? leaderNarrative || session.leaderMessage || payload.text : payload.text,
+			};
 			const lastMessage = workflow.messages[workflow.messages.length - 1];
 			if (!(lastMessage?.role === nextMessage.role && lastMessage?.content === nextMessage.content)) {
 				workflow.messages = [...workflow.messages, nextMessage];
@@ -237,7 +241,7 @@ function mutateRoleWorkflowPayload(
 			workflow.awaitingReply = false;
 			workflow.lastUpdatedAt = Date.now();
 			if (isLead) {
-				session.leaderMessage = payload.text;
+				session.leaderMessage = nextMessage.content;
 			}
 			return true;
 		}
@@ -377,7 +381,7 @@ export function useTeamSession() {
 			}
 			const session = sessionsRef.current[threadId]!;
 
-			if (payload.teamRoleScope) {
+			if ('teamRoleScope' in payload && payload.teamRoleScope) {
 				const needFlush = mutateRoleWorkflowPayload(session, payload, payload.teamRoleScope);
 				session.updatedAt = Date.now();
 				scheduleFlush(threadId, needFlush);

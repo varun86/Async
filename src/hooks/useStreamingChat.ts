@@ -331,7 +331,7 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 					mode: effectiveMode,
 					modelId: effectiveModelId,
 					streamNonce,
-				})) as { ok?: boolean };
+				})) as { ok?: boolean; error?: string };
 
 				if (!result?.ok) {
 					rt.clearInFlightIpcRouting(targetThreadId);
@@ -460,7 +460,7 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 			}
 
 			const visible = payload.threadId === rt.currentIdRef.current;
-			if (payload.teamRoleScope) {
+			if ('teamRoleScope' in payload && payload.teamRoleScope) {
 				rt.applyTeamPayload(payload);
 				return;
 			}

@@ -45,6 +45,7 @@ import { type ParsedPlan, type PlanQuestion } from './planParser';
 import { type ChatMessage } from './threadTypes';
 import type { TeamSessionState } from './hooks/useTeamSession';
 import { TeamWorkflowTimelineCard } from './TeamWorkflowTimelineCard';
+import { buildTeamWorkflowItems } from './teamWorkflowItems';
 
 type SharedComposerProps = Omit<
 	ComponentProps<typeof ChatComposer>,
@@ -748,8 +749,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			return null;
 		}
 		const workflow = teamSession.leaderWorkflow;
-		const lastLeaderMessage = workflow?.messages[workflow.messages.length - 1]?.content ?? '';
-		const content = lastLeaderMessage || teamSession.leaderMessage || '';
+		const content = teamSession.leaderMessage || '';
 		const isWorking = Boolean(workflow?.awaitingReply);
 		if (!content.trim() && !isWorking && !(workflow?.liveBlocks.blocks.length ?? 0)) {
 			return null;
@@ -762,14 +762,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 						streamingThinking: workflow?.streamingThinking ?? '',
 						tokenUsage: workflow?.lastTurnUsage ?? null,
 					}
-				: workflow?.lastTurnUsage
-					? {
-							phase: 'done' as const,
-							elapsedSeconds: 0,
-							streamingThinking: '',
-							tokenUsage: workflow.lastTurnUsage,
-						}
-					: null;
+				: null;
 
 		return (
 			<div
@@ -803,18 +796,20 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		if (!teamSession || composerMode !== 'team' || !hasConversation) {
 			return nodes;
 		}
+		const workflowItems = buildTeamWorkflowItems(teamSession);
 		const leaderRow = buildTeamLeaderRow();
-		const teamTimelineRow = (
-			<div
-				key={`row-${conversationRenderKey}-team-timeline`}
-				className="ref-msg-row-measure ref-msg-row-measure--team-card"
-				data-msg-index={String(displayMessages.length + 1)}
-			>
-				<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-card">
-					<TeamWorkflowTimelineCard t={t} session={teamSession} onSelectTask={onSelectTeamExpert} />
+		const teamTimelineRow =
+			workflowItems.length > 0 ? (
+				<div
+					key={`row-${conversationRenderKey}-team-timeline`}
+					className="ref-msg-row-measure ref-msg-row-measure--team-card"
+					data-msg-index={String(displayMessages.length + 1)}
+				>
+					<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-card">
+						<TeamWorkflowTimelineCard t={t} session={teamSession} onSelectTask={onSelectTeamExpert} />
+					</div>
 				</div>
-			</div>
-		);
+			) : null;
 		const isTrailingDeliveryMessage =
 			!awaitingReply &&
 			lastAssistantMessageIndex === displayMessages.length - 1 &&
@@ -826,7 +821,9 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			if (leaderRow) {
 				nodes.push(leaderRow);
 			}
-			nodes.push(teamTimelineRow);
+			if (teamTimelineRow) {
+				nodes.push(teamTimelineRow);
+			}
 			if (trailingAssistant) {
 				nodes.push(trailingAssistant);
 			}
@@ -836,7 +833,9 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		if (leaderRow) {
 			nodes.push(leaderRow);
 		}
-		nodes.push(teamTimelineRow);
+		if (teamTimelineRow) {
+			nodes.push(teamTimelineRow);
+		}
 		return nodes;
 	};
 

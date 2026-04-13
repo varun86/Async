@@ -231,7 +231,7 @@ export function userMessageToSegments(content: string, _knownPaths?: readonly st
 }
 
 /** 检查字符是否为文件引用的边界字符（路径后应该跟这些字符之一才算有效引用） */
-function isFileRefBoundary(char: string | undefined): boolean {
+export function isFileRefBoundary(char: string | undefined): boolean {
 	if (!char) return true; // 字符串结尾是有效边界
 	const code = char.charCodeAt(0);
 	// 空白类

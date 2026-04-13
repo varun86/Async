@@ -245,6 +245,61 @@ function matchExpert(
 const TEAM_PACKET_TEXT_LIMIT = 4000;
 const TEAM_HANDOFF_TEXT_LIMIT = 2200;
 
+function stripFencedBlocks(text: string): string {
+	return text.replace(/```[\s\S]*?```/g, '').trim();
+}
+
+function stripTrailingRawJson(text: string): string {
+	const normalized = text.trim();
+	if (!normalized) {
+		return '';
+	}
+	const lines = normalized.split('\n');
+	const rawJsonStart = lines.findIndex((line, index) => index > 0 && /^[\s]*[\[{]/.test(line));
+	if (rawJsonStart <= 0) {
+		return normalized;
+	}
+	return lines.slice(0, rawJsonStart).join('\n').trim();
+}
+
+function extractTeamLeadNarrative(text: string): string {
+	const normalized = String(text ?? '').trim();
+	if (!normalized) {
+		return '';
+	}
+	const withoutFence = stripFencedBlocks(normalized);
+	const withoutJson = stripTrailingRawJson(withoutFence || normalized);
+	return (withoutJson || withoutFence || normalized).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function buildFallbackTeamLeadNarrative(hasCjk: boolean): string {
+	return hasCjk
+		? '我已开始逐个分派合适的成员处理任务，接下来会汇总他们的反馈再向你汇报。'
+		: 'I have started assigning the right specialists one by one, and I will report back after collecting their findings.';
+}
+
+async function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+	if (ms <= 0) {
+		return;
+	}
+	if (signal.aborted) {
+		throw new Error('Team session aborted by user.');
+	}
+	await new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			cleanup();
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			cleanup();
+			reject(new Error('Team session aborted by user.'));
+		};
+		const cleanup = () => signal.removeEventListener('abort', onAbort);
+		signal.addEventListener('abort', onAbort, { once: true });
+	});
+}
+
 function clampTeamPacketText(text: string | undefined, maxChars = TEAM_PACKET_TEXT_LIMIT): string {
 	const normalized = String(text ?? '').trim();
 	if (!normalized) {
@@ -363,8 +418,9 @@ async function llmPlanTasks(params: {
 }): Promise<{ tasks: LLMPlannedTask[]; planSummary: string }> {
 	const {
 		settings, threadId, teamLead, specialists, messages, modelSelection, resolvedModel,
-		signal, thinkingLevel, workspaceRoot, workspaceLspManager, emit,
+		signal, thinkingLevel, emit,
 	} = params;
+	const hasCjk = messages.some((message) => /[\u3400-\u9fff]/.test(String(message.content ?? '')));
 
 	const availableRoles = specialists.map((s) => `- ${s.assignmentKey}: ${s.name}`).join('\n');
 	const planMessages: ChatMessage[] = [
@@ -372,13 +428,17 @@ async function llmPlanTasks(params: {
 		{
 			role: 'user',
 			content: [
-				'You are the Team Lead. Analyze the user\'s request above and decompose it into specialist tasks.',
+				'You are the Team Lead coordinator.',
+				'Do not inspect the repository yourself.',
+				'Do not search the codebase yourself.',
+				'Do not propose that you will personally investigate files.',
+				'Your only job in this phase is to break the request into delegated specialist tasks.',
 				'',
 				'Available specialists:',
 				availableRoles,
 				'',
 				'Respond with:',
-				'1. A brief analysis of the request (2-3 sentences).',
+				'1. A brief kickoff message to the user (1-2 sentences) explaining that you are assigning specialists.',
 				'2. A JSON array in a ```json fenced block with the task assignments.',
 				'Each task object must have: "expert" (assignment key), "task" (clear instruction), optionally "dependencies" and "acceptanceCriteria".',
 			].join('\n'),
@@ -386,6 +446,7 @@ async function llmPlanTasks(params: {
 	];
 
 	let planText = '';
+	let visiblePlanText = '';
 	const teamLeadScope = createTeamRoleScope(
 		{
 			id: 'team-lead',
@@ -412,9 +473,9 @@ async function llmPlanTasks(params: {
 		composerMode: 'agent',
 		toolPoolOverride: [],
 		agentSystemAppend: teamLead.systemPrompt,
-		thinkingLevel,
-		workspaceRoot,
-		workspaceLspManager,
+		thinkingLevel: thinkingLevel === 'off' ? 'off' : 'low',
+		workspaceRoot: null,
+		workspaceLspManager: null,
 		threadId: null,
 	};
 
@@ -434,7 +495,17 @@ async function llmPlanTasks(params: {
 	const handlers: AgentLoopHandlers = {
 		onTextDelta: (text) => {
 			planText += text;
-			emit({ threadId, type: 'delta', text, teamRoleScope: teamLeadScope });
+			const nextVisible = extractTeamLeadNarrative(planText);
+			if (!nextVisible || nextVisible === visiblePlanText) {
+				return;
+			}
+			const deltaText = nextVisible.startsWith(visiblePlanText)
+				? nextVisible.slice(visiblePlanText.length)
+				: nextVisible;
+			visiblePlanText = nextVisible;
+			if (deltaText) {
+				emit({ threadId, type: 'delta', text: deltaText, teamRoleScope: teamLeadScope });
+			}
 		},
 		onToolInputDelta: ({ name, partialJson, index }) => {
 			emit({ threadId, type: 'tool_input_delta', name, partialJson, index, teamRoleScope: teamLeadScope });
@@ -468,14 +539,22 @@ async function llmPlanTasks(params: {
 		},
 		onDone: (text, usage) => {
 			planText = text;
-			emit({ threadId, type: 'done', text, usage, teamRoleScope: teamLeadScope });
+			const finalVisible =
+				extractTeamLeadNarrative(text) ||
+				visiblePlanText ||
+				buildFallbackTeamLeadNarrative(hasCjk);
+			visiblePlanText = finalVisible;
+			emit({ threadId, type: 'done', text: finalVisible, usage, teamRoleScope: teamLeadScope });
 		},
 		onError: () => {},
 	};
 
 	await runAgentLoop(settings, planMessages, options, handlers);
 	const tasks = parsePlannedTasks(planText);
-	return { tasks, planSummary: planText };
+	return {
+		tasks,
+		planSummary: extractTeamLeadNarrative(planText) || buildFallbackTeamLeadNarrative(hasCjk),
+	};
 }
 
 // ── Regex fallback when LLM planning fails ───────────────────────────────
@@ -906,7 +985,9 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 
 		if (plannedTasks.length === 0) {
 			plannedTasks = selectSpecialistTasksFallback(effectiveUserText, specialists);
-			planSummary = 'Task planning used keyword-based fallback.';
+			planSummary = /[\u3400-\u9fff]/.test(effectiveUserText)
+				? '我已按任务特征完成角色分派，接下来会等待各成员反馈并统一汇报。'
+				: 'I assigned the specialists using fallback routing and will report back after their findings come in.';
 		}
 
 		if (plannedTasks.length === 0) {
@@ -916,7 +997,7 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 
 		emit({ threadId, type: 'team_plan_summary', summary: planSummary });
 
-		for (const task of plannedTasks) {
+		for (const [index, task] of plannedTasks.entries()) {
 			emit({
 				threadId,
 				type: 'team_task_created',
@@ -932,6 +1013,9 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 					acceptanceCriteria: task.acceptanceCriteria,
 				},
 			});
+			if (index < plannedTasks.length - 1) {
+				await sleepWithAbort(120, signal);
+			}
 		}
 
 		// ── Phase 2: Dependency-aware parallel execution ─────────────
