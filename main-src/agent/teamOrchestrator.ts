@@ -34,6 +34,11 @@ import {
 	type TeamPeerRequest,
 	setTeamPeerRequestRuntime,
 } from './teamPeerRequestTool.js';
+import {
+	teamReplyToPeerTool,
+	type TeamPeerReply,
+	setTeamPeerReplyRuntime,
+} from './teamReplyToPeerTool.js';
 
 type TeamPhase =
 	| 'researching'
@@ -50,6 +55,18 @@ type SpecialistRunResult = {
 	success: boolean;
 	text: string;
 	escalation?: TeamEscalation;
+};
+
+type PeerMailboxRequest = {
+	requestId: string;
+	fromTaskId: string;
+	fromExpertId: string;
+	fromExpertName: string;
+	fromRoleType: TeamRoleType;
+	question: string;
+	resolve: (answer: string) => void;
+	deliveredCount: number;
+	timer: ReturnType<typeof setTimeout> | null;
 };
 
 export type TeamTask = {
@@ -496,6 +513,33 @@ function buildPeerResponse(
 		'Peer output:',
 		clampTeamPacketText(completedTask.result, TEAM_HANDOFF_TEXT_LIMIT),
 	].join('\n');
+}
+
+function buildPeerMailboxMessages(
+	requests: PeerMailboxRequest[],
+	task: TeamTask
+): ChatMessage[] {
+	if (requests.length === 0) {
+		return [];
+	}
+	const body = requests.map((request) => [
+		`### Request ${request.requestId}`,
+		`From: ${request.fromExpertName} (${request.fromRoleType})`,
+		`Question: ${request.question}`,
+	].join('\n')).join('\n\n');
+	return [
+		{
+			role: 'user',
+			content: [
+				'[TEAM PEER REQUESTS]',
+				`While you continue ${task.description}, teammates need short answers from you.`,
+				'Before continuing, call `team_reply_to_peer` for each requestId below with a concise answer based on your current findings.',
+				'If you do not know yet, say what is missing or what assumption the teammate should use.',
+				'',
+				body,
+			].join('\n'),
+		},
+	];
 }
 
 function appendTeamClarificationMessage(messages: ChatMessage[], answer: string): ChatMessage[] {
@@ -1527,7 +1571,7 @@ function buildSpecialistToolPool(base: AgentToolDef[], expert: TeamExpertRuntime
 		!allow
 			? [...base]
 			: base.filter((tool) => allow.has(tool.name));
-	for (const tool of [teamEscalateToLeadTool, teamRequestFromPeerTool]) {
+	for (const tool of [teamEscalateToLeadTool, teamRequestFromPeerTool, teamReplyToPeerTool]) {
 		if (!filtered.some((item) => item.name === tool.name)) {
 			filtered.push(tool);
 		}
@@ -1552,13 +1596,16 @@ async function runOneSpecialist(params: {
 	toolHooks?: ToolExecutionHooks;
 	baseTools: AgentToolDef[];
 	threadId: string;
+	pullPeerMailboxMessages?: () => Promise<ChatMessage[]>;
+	handlePeerRequest?: (request: TeamPeerRequest) => Promise<string>;
+	handlePeerReply?: (reply: TeamPeerReply) => void;
 	emit: (evt: TeamEmit) => void;
 }): Promise<SpecialistRunResult> {
 	const {
 		settings, task, expert, userRequest, planSummary, completedTasksById, allTasks,
 		modelSelection, resolvedModel,
 		signal, thinkingLevel, workspaceRoot, workspaceLspManager, toolHooks, baseTools,
-		threadId, emit,
+		threadId, pullPeerMailboxMessages, handlePeerRequest, handlePeerReply, emit,
 	} = params;
 
 	const subMessages: ChatMessage[] = [
@@ -1598,6 +1645,7 @@ async function runOneSpecialist(params: {
 		threadId,
 		toolHooks,
 		teamToolRoleScope: teamRoleScope,
+		beforeRoundMessages: pullPeerMailboxMessages,
 	};
 
 	const handlers: AgentLoopHandlers = {
@@ -1679,13 +1727,22 @@ async function runOneSpecialist(params: {
 			},
 		});
 		setTeamPeerRequestRuntime(teamRoleScope.teamTaskId, {
-			onRequest: async (request) => buildPeerResponse(request, completedTasksById, allTasks),
+			onRequest: async (request) =>
+				handlePeerRequest
+					? handlePeerRequest(request)
+					: buildPeerResponse(request, completedTasksById, allTasks),
+		});
+		setTeamPeerReplyRuntime(teamRoleScope.teamTaskId, {
+			onReply: (reply) => {
+				handlePeerReply?.(reply);
+			},
 		});
 		try {
 			await runAgentLoop(settings, subMessages, options, handlers);
 		} finally {
 			setTeamEscalationRuntime(teamRoleScope.teamTaskId, null);
 			setTeamPeerRequestRuntime(teamRoleScope.teamTaskId, null);
+			setTeamPeerReplyRuntime(teamRoleScope.teamTaskId, null);
 		}
 	} catch (error) {
 		success = false;
@@ -2158,9 +2215,102 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 		const completed: TeamTask[] = [];
 		const completedIds = new Set<string>();
 		const completedTasksById = new Map<string, TeamTask>();
+		const activeTaskIds = new Set<string>();
+		const peerMailbox = new Map<string, Map<string, PeerMailboxRequest>>();
 		const maxConsecutiveFailedBatches = 2;
 		let consecutiveFailedBatches = 0;
 		let replanBudget = 2;
+		const peerResponseTimeoutMs = 15000;
+
+		const clearPeerRequest = (targetTaskId: string, requestId: string): PeerMailboxRequest | null => {
+			const requests = peerMailbox.get(targetTaskId);
+			const request = requests?.get(requestId) ?? null;
+			if (!request) {
+				return null;
+			}
+			if (request.timer) {
+				clearTimeout(request.timer);
+				request.timer = null;
+			}
+			requests?.delete(requestId);
+			if (requests && requests.size === 0) {
+				peerMailbox.delete(targetTaskId);
+			}
+			return request;
+		};
+
+		const resolveOutstandingPeerRequestsForTask = (task: TeamTask, fallbackText: string) => {
+			const requests = peerMailbox.get(task.id);
+			if (!requests || requests.size === 0) {
+				return;
+			}
+			for (const request of [...requests.values()]) {
+				clearPeerRequest(task.id, request.requestId);
+				request.resolve(
+					[
+						`${task.expertName} finished without a direct peer reply.`,
+						'Latest output:',
+						clampTeamPacketText(fallbackText || task.result, TEAM_HANDOFF_TEXT_LIMIT),
+					].join('\n')
+				);
+			}
+		};
+
+		const pullPeerMailboxMessages = async (task: TeamTask): Promise<ChatMessage[]> => {
+			const requests = [...(peerMailbox.get(task.id)?.values() ?? [])];
+			if (requests.length === 0) {
+				return [];
+			}
+			for (const request of requests) {
+				request.deliveredCount += 1;
+			}
+			emit({
+				threadId,
+				type: 'team_expert_progress',
+				taskId: task.id,
+				expertId: task.expertId,
+				message: `Received ${requests.length} peer request(s) while still running.`,
+			});
+			return buildPeerMailboxMessages(requests, task);
+		};
+
+		const waitForRunningPeerReply = async (requestingTask: TeamTask, request: TeamPeerRequest): Promise<string> => {
+			const targetTask = findPeerTask(plannedTasks, request.targetExpertId);
+			if (!targetTask) {
+				return `No peer specialist matched "${request.targetExpertId}".`;
+			}
+			if (targetTask.id === requestingTask.id) {
+				return 'You cannot request information from yourself.';
+			}
+			const completedTask = completedTasksById.get(targetTask.id);
+			if (completedTask) {
+				return buildPeerResponse(request, completedTasksById, plannedTasks);
+			}
+			if (!activeTaskIds.has(targetTask.id)) {
+				return `${targetTask.expertName} is not currently running. Only running or completed peers are available.`;
+			}
+			return await new Promise<string>((resolve) => {
+				const requestId = `peer-request-${randomUUID()}`;
+				const targetRequests = peerMailbox.get(targetTask.id) ?? new Map<string, PeerMailboxRequest>();
+				const mailboxRequest: PeerMailboxRequest = {
+					requestId,
+					fromTaskId: requestingTask.id,
+					fromExpertId: requestingTask.expertId,
+					fromExpertName: requestingTask.expertName,
+					fromRoleType: requestingTask.roleType,
+					question: request.question,
+					resolve,
+					deliveredCount: 0,
+					timer: null,
+				};
+				mailboxRequest.timer = setTimeout(() => {
+					clearPeerRequest(targetTask.id, requestId);
+					resolve(`${targetTask.expertName} did not respond in time.`);
+				}, peerResponseTimeoutMs);
+				targetRequests.set(requestId, mailboxRequest);
+				peerMailbox.set(targetTask.id, targetRequests);
+			});
+		};
 
 		while (pending.length > 0) {
 			checkAbort();
@@ -2196,14 +2346,24 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 					batch.map(async (task) => {
 						if (signal.aborted) throw new Error('Team session aborted by user.');
 						const expert = specialists.find((s) => s.id === task.expertId) ?? specialists[0]!;
+						activeTaskIds.add(task.id);
 						emit({ threadId, type: 'team_expert_started', taskId: task.id, expertId: task.expertId });
 						const result = await runOneSpecialist({
 							settings, task, expert, userRequest: effectiveUserText, planSummary, completedTasksById,
 							allTasks: plannedTasks,
 							modelSelection, resolvedModel,
 							signal, thinkingLevel, workspaceRoot, workspaceLspManager, toolHooks,
-							baseTools: baseTeamTools, threadId, emit,
+							baseTools: baseTeamTools,
+							threadId,
+							pullPeerMailboxMessages: () => pullPeerMailboxMessages(task),
+							handlePeerRequest: (request) => waitForRunningPeerReply(task, request),
+							handlePeerReply: (reply) => {
+								const resolved = clearPeerRequest(task.id, reply.requestId);
+								resolved?.resolve(reply.answer);
+							},
+							emit,
 						});
+						activeTaskIds.delete(task.id);
 						return { task, result };
 					})
 				),
@@ -2222,6 +2382,7 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 					success: item.result.success,
 					result: item.result.text,
 				});
+				resolveOutstandingPeerRequestsForTask(item.task, item.result.text);
 				const finishedTask = {
 					...item.task,
 					status: (item.result.success ? 'completed' : 'failed') as TeamTaskStatus,
@@ -2318,6 +2479,7 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 						replanBudget <= 0
 							? `${item.result.text}\n\nReplan budget exhausted; reviewer should inspect this escalation.`
 							: item.result.text;
+					resolveOutstandingPeerRequestsForTask(item.task, resultText);
 					emit({
 						threadId,
 						type: 'team_expert_done',

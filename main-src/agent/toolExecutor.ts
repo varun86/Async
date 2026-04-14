@@ -22,6 +22,7 @@ import { executeAskPlanQuestionTool, type TeamPlanQuestionRoleScope } from './pl
 import { executeTeamPlanDecideTool } from './teamPlanDecideTool.js';
 import { executeTeamEscalateToLeadTool } from './teamEscalateTool.js';
 import { executeTeamPeerRequestTool } from './teamPeerRequestTool.js';
+import { executeTeamReplyToPeerTool } from './teamReplyToPeerTool.js';
 import type { ComposerMode } from '../llm/composerMode.js';
 import { buildSubagentSystemAppend, findConfiguredSubagent, resolveSubagentProfile } from './subagentProfile.js';
 import { shouldRunAgentInBackground } from './agentForkPolicy.js';
@@ -331,6 +332,8 @@ export async function executeTool(
 			return await executeTeamEscalateToLeadTool(call, execCtx.teamToolRoleScope?.teamTaskId);
 		case 'team_request_from_peer':
 			return await executeTeamPeerRequestTool(call, execCtx.teamToolRoleScope?.teamTaskId);
+		case 'team_reply_to_peer':
+			return await executeTeamReplyToPeerTool(call, execCtx.teamToolRoleScope?.teamTaskId);
 		default:
 			if (getMcpManager().isMcpTool(call.name)) {
 				return await executeMcpAgentTool(call, execCtx);

@@ -19,6 +19,8 @@ import { executeAskPlanQuestionTool, resolvePlanQuestionTool } from './planQuest
 import { setPlanQuestionRuntime } from './planQuestionRuntime.js';
 import { executeTeamPlanDecideTool, type TeamPlanDecision } from './teamPlanDecideTool.js';
 import { executeTeamEscalateToLeadTool } from './teamEscalateTool.js';
+import { executeTeamPeerRequestTool } from './teamPeerRequestTool.js';
+import { executeTeamReplyToPeerTool } from './teamReplyToPeerTool.js';
 
 function makeExpert(
 	id: string,
@@ -621,5 +623,97 @@ describe('runTeamSession clarification gates', () => {
 		);
 		expect(doneCalls).toHaveLength(1);
 		expect(doneCalls[0]?.text).toContain('已完成修订后的前端链路审查。');
+	});
+
+	it('lets a running specialist reply to peer requests before finishing', async () => {
+		let releaseFrontendRound: (() => void) | null = null;
+		const frontendReady = new Promise<void>((resolve) => {
+			releaseFrontendRound = resolve;
+		});
+		let backendResultText = '';
+
+		runAgentLoopMock
+			.mockImplementationOnce(async (_settings, _messages, _options, handlers) => {
+				await submitTeamPlanDecision(
+					handlers,
+					{
+						mode: 'PLAN',
+						tasks: [
+							{
+								expert: 'frontend',
+								task: 'Inspect the renderer flow and keep notes available for peers',
+								acceptanceCriteria: ['Understand the renderer ownership boundary'],
+							},
+							{
+								expert: 'backend',
+								task: 'Wire the follow-up fix after confirming the renderer contract',
+								acceptanceCriteria: ['Use the renderer contract without guessing'],
+							},
+						],
+					},
+					'我会并行安排前后端协作。'
+				);
+			})
+			.mockImplementationOnce(async (_settings, _messages, optionsArg, handlers) => {
+				const specialistOptions = optionsArg as {
+					teamToolRoleScope?: { teamTaskId: string };
+					beforeRoundMessages?: () => Promise<Array<{ role: string; content: string }>>;
+				};
+				await frontendReady;
+				const injected = await specialistOptions.beforeRoundMessages?.();
+				const peerMessage = injected?.[0]?.content ?? '';
+				const requestIdMatch = /### Request ([^\n]+)/.exec(peerMessage);
+				expect(peerMessage).toContain('Question: Which renderer state owns this workflow?');
+				expect(requestIdMatch?.[1]).toBeTruthy();
+
+				const reply = await executeTeamReplyToPeerTool(
+					{
+						id: 'peer-reply',
+						name: 'team_reply_to_peer',
+						arguments: {
+							requestId: requestIdMatch?.[1],
+							answer: 'The renderer-side workflow owns it; do not invent a backend-only contract.',
+						},
+					},
+					specialistOptions.teamToolRoleScope?.teamTaskId
+				);
+				handlers.onToolResult('team_reply_to_peer', String(reply.content ?? ''), !reply.isError, 'peer-reply');
+				handlers.onDone('前端已响应 peer，并完成当前调研。');
+			})
+			.mockImplementationOnce(async (_settings, _messages, optionsArg, handlers) => {
+				const specialistOptions = optionsArg as { teamToolRoleScope?: { teamTaskId: string } };
+				const answerPromise = executeTeamPeerRequestTool(
+					{
+						id: 'peer-request',
+						name: 'team_request_from_peer',
+						arguments: {
+							targetExpertId: 'frontend',
+							question: 'Which renderer state owns this workflow?',
+						},
+					},
+					specialistOptions.teamToolRoleScope?.teamTaskId
+				);
+				releaseFrontendRound?.();
+				const answer = await answerPromise;
+				backendResultText = String(answer.content ?? '');
+				handlers.onToolResult('team_request_from_peer', backendResultText, !answer.isError, 'peer-request');
+				handlers.onDone(`后端拿到 peer 回复：${backendResultText}`);
+			});
+
+		const experts = [
+			makeExpertConfig('team_lead', 'Team Lead', 'team_lead'),
+			makeExpertConfig('frontend', 'Frontend', 'frontend'),
+			makeExpertConfig('backend', 'Backend', 'backend'),
+		];
+		const { doneCalls, errorCalls } = await runSession({
+			userRequest: '请让前后端并行协作修复 team 模式的契约分歧',
+			experts,
+			teamOverrides: { maxParallelExperts: 2 },
+		});
+
+		expect(errorCalls).toEqual([]);
+		expect(backendResultText).toContain('renderer-side workflow owns it');
+		expect(doneCalls).toHaveLength(1);
+		expect(doneCalls[0]?.text).toContain('后端拿到 peer 回复');
 	});
 });

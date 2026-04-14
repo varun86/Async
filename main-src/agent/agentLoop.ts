@@ -87,6 +87,7 @@ const READ_TOOLS_SKIP_INPUT_DELTA = new Set([
 	'team_plan_decide',
 	'team_escalate_to_lead',
 	'team_request_from_peer',
+	'team_reply_to_peer',
 	'Agent',
 	'Task',
 ]);
@@ -218,6 +219,10 @@ export type AgentLoopOptions = {
 	 */
 	teamToolRoleScope?: TeamPlanQuestionRoleScope;
 	/**
+	 * Called before each LLM round. Use this to inject additional user/assistant messages into a running loop.
+	 */
+	beforeRoundMessages?: () => Promise<ChatMessage[]>;
+	/**
 	 * Anthropic：与 Claude Code fork 的 `skipCacheWrite` 一致，prompt cache 断点挂在倒数第二条消息，避免无后续读取的尾部写入 KVCC。
 	 */
 	skipAnthropicPromptCacheWrite?: boolean;
@@ -320,6 +325,46 @@ function appendMcpToolsSystemHint(
 		'Use `ListMcpResourcesTool` / `ReadMcpResourceTool` to browse MCP resources when needed.',
 		'Use them when the user needs integrations beyond the built-in workspace tools (e.g. web, APIs, databases). Follow each tool\'s description and parameter schema.',
 	].join('\n');
+}
+
+function appendMessagesToOpenAIConversation(conversation: OAIMsg[], messages: ChatMessage[]): OAIMsg[] {
+	let next = [...conversation];
+	for (const message of messages) {
+		if (message.role === 'system') {
+			continue;
+		}
+		if (message.role === 'assistant') {
+			const payload = parseAgentAssistantPayload(message.content);
+			if (payload) {
+				next.push(...expandStructuredAssistantPayloadToOpenAI(payload));
+			} else {
+				next.push({ role: 'assistant', content: message.content });
+			}
+			continue;
+		}
+		next.push({ role: 'user', content: message.content });
+	}
+	return mergeAdjacentOpenAIUserMessages(next);
+}
+
+function appendMessagesToAnthropicConversation(conversation: MessageParam[], messages: ChatMessage[]): MessageParam[] {
+	let next = [...conversation];
+	for (const message of messages) {
+		if (message.role === 'system') {
+			continue;
+		}
+		if (message.role === 'assistant') {
+			const payload = parseAgentAssistantPayload(message.content);
+			if (payload) {
+				next.push(...expandStructuredAssistantPayloadToAnthropic(payload));
+			} else {
+				next.push({ role: 'assistant', content: message.content });
+			}
+			continue;
+		}
+		next.push({ role: 'user', content: message.content });
+	}
+	return mergeAdjacentAnthropicUserMessages(next);
 }
 
 /**
@@ -651,6 +696,12 @@ async function runOpenAILoop(
 
 		if (await handleMistakeLimitBeforeRound()) {
 			return;
+		}
+		if (options.beforeRoundMessages) {
+			const injected = await options.beforeRoundMessages();
+			if (injected.length > 0) {
+				conversation = appendMessagesToOpenAIConversation(conversation, injected);
+			}
 		}
 
 		console.log(`[AgentLoop] round ${round} — starting LLM call`);
@@ -1070,6 +1121,12 @@ async function runAnthropicLoop(
 
 		if (await handleMistakeLimitBeforeRoundAnthropic()) {
 			return;
+		}
+		if (options.beforeRoundMessages) {
+			const injected = await options.beforeRoundMessages();
+			if (injected.length > 0) {
+				conversation = appendMessagesToAnthropicConversation(conversation, injected);
+			}
 		}
 
 		console.log(`[AgentLoop/A] round ${round} — starting LLM call`);
