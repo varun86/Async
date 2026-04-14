@@ -18,6 +18,7 @@ import { flattenAssistantTextPartsForSearch } from './agentStructuredMessage';
 export type PlanQuestion = {
 	text: string;
 	options: { id: string; label: string }[];
+	freeform?: boolean;
 };
 
 export type PlanTodoItem = {

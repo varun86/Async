@@ -1,5 +1,5 @@
 /**
- * 流式响应超时配置 — 与 Claude Code 的 idle watchdog 思路一致。
+ * 流式响应超时配置。
  *
  * 环境变量优先 → settings.agent 字段 → 默认值。
  * 可通过 ASYNC_AGENT_STREAM_WATCHDOG=0 关闭静默 watchdog。

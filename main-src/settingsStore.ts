@@ -50,7 +50,7 @@ export type UserModelEntry = {
 	 */
 	maxOutputTokens?: number;
 	/**
-	 * 模型输入上下文上限（tokens），用于发送前压缩阈值等与 Claude Code `getContextWindowForModel` 对齐。
+	 * 模型输入上下文上限（tokens），用于发送前压缩阈值等行为。
 	 * 不填则使用 OpenAI 兼容 `/v1/models` 缓存、启发式或默认 200k。
 	 */
 	contextWindowTokens?: number;
@@ -84,24 +84,8 @@ export type ShellUiSettings = {
 	layoutMode?: 'agent' | 'editor';
 };
 
-/** 工作区索引设置。 */
-export type ShellIndexingSettings = {
-	/** 导出符号索引：Quick Open @、Grep(symbol) */
-	symbolIndexEnabled?: boolean;
-	/** @deprecated 已废弃；始终视为开启，按需为 Agent 工具启动 LSP */
-	tsLspEnabled?: boolean;
-	/** 在 Agent/Plan/Debug 对话中注入当前 git 分支、状态和最近提交摘要 */
-	gitContextEnabled?: boolean;
-};
-
-const INDEXING_DEFAULTS: Required<ShellIndexingSettings> = {
-	symbolIndexEnabled: true,
-	tsLspEnabled: true,
-	gitContextEnabled: true,
-};
-
 /**
- * 旧版在 settings.json 中登记 LSP 的方式；**优先推荐**与 Claude Code 一致：
+ * 旧版在 settings.json 中登记 LSP 的方式；**优先推荐**使用插件声明：
  * 在 `<asyncData>/plugins/<name>/` 或 `<workspace>/.async/plugins/<name>/` 下放置 `.lsp.json` 或 `plugin.json#lspServers`。
  * 保留本结构仅为兼容已有配置（会合并为 `plugin:settings:<id>`）。
  */
@@ -142,8 +126,14 @@ export type TeamSettings = {
 	presetExpertSnapshots?: Partial<Record<TeamPresetId, TeamExpertConfig[]>>;
 	/** Lead 出方案后先等用户确认再派发专家；默认 true */
 	requirePlanApproval?: boolean;
-	/** 执行前先让评审专家评估需求/方案；默认 true（需有 reviewer 角色） */
+	/** 执行前先让评审专家评估需求/方案；默认值随 preset 决定（engineering 默认 false） */
 	enablePreflightReview?: boolean;
+	/** 规划前先让调研员调研代码库、澄清需求；默认值随 preset 决定 */
+	enableResearchPhase?: boolean;
+	/** 可选的规划评审专家；为空时复用 reviewer */
+	planReviewer?: TeamExpertConfig | null;
+	/** 可选的交付评审专家；为空时复用 reviewer */
+	deliveryReviewer?: TeamExpertConfig | null;
 };
 
 export type ShellSettings = {
@@ -188,14 +178,12 @@ export type ShellSettings = {
 	agent?: AgentCustomization;
 	/** 窗口布局等纯界面状态 */
 	ui?: ShellUiSettings;
-	/** 索引与 LSP */
-	indexing?: ShellIndexingSettings;
 	/** @deprecated 兼容字段；LSP 主要来自插件目录，此项若存在会一并合并 */
 	lsp?: ShellLspSettings;
 	/** MCP 服务器配置 */
 	mcpServers?: McpServerConfig[];
 	/**
-	 * MCP 工具全名前缀拒绝列表（与 Claude Code 按 `mcp__server` 等规则预过滤类似）。
+	 * MCP 工具全名前缀拒绝列表（按 `mcp__server` 等规则做预过滤）。
 	 * 若某工具名以列表中任一条目开头，则不会进入模型可见工具表（仅影响动态 MCP 工具，不含 ListMcpResourcesTool 等内置项）。
 	 */
 	mcpToolDenyPrefixes?: string[];
@@ -229,6 +217,11 @@ const defaultSettings: ShellSettings = {
 		useDefaults: true,
 		presetId: 'engineering',
 		experts: [],
+		requirePlanApproval: true,
+		enablePreflightReview: false,
+		enableResearchPhase: false,
+		planReviewer: null,
+		deliveryReviewer: null,
 	},
 };
 
@@ -236,6 +229,7 @@ const MAX_RECENTS = 24;
 
 let cached: ShellSettings = { ...defaultSettings };
 let settingsPath = '';
+type LegacyShellSettings = ShellSettings & { indexing?: unknown };
 
 /** 保证每个选择器 id 在 thinkingByModelId 中有条目；无历史 map 时用旧版全局 thinkingLevel 或 medium 填充。 */
 function migrateThinkingByModel(settings: ShellSettings): { next: ShellSettings; didMutate: boolean } {
@@ -462,35 +456,6 @@ function migrateProviderModelLayout(settings: ShellSettings): { next: ShellSetti
 	};
 }
 
-/** 旧版「关闭 TS LSP」开关已移除；读入时统一视为开启 */
-function migrateIndexingTsLspAlwaysOn(settings: ShellSettings): { next: ShellSettings; didMutate: boolean } {
-	const idx = settings.indexing;
-	if (idx?.tsLspEnabled === false) {
-		return {
-			next: { ...settings, indexing: { ...idx, tsLspEnabled: true } },
-			didMutate: true,
-		};
-	}
-	return { next: settings, didMutate: false };
-}
-
-function migrateIndexingDefaults(settings: ShellSettings): { next: ShellSettings; didMutate: boolean } {
-	const prev = settings.indexing;
-	const nextIndexing: ShellIndexingSettings = {
-		...INDEXING_DEFAULTS,
-		...(prev ?? {}),
-		tsLspEnabled: true,
-	};
-	const didMutate =
-		prev == null ||
-		prev.symbolIndexEnabled !== nextIndexing.symbolIndexEnabled ||
-		prev.gitContextEnabled !== nextIndexing.gitContextEnabled ||
-		prev.tsLspEnabled !== true;
-	return didMutate
-		? { next: { ...settings, indexing: nextIndexing }, didMutate: true }
-		: { next: settings, didMutate: false };
-}
-
 function migrateDefaultModelRemoveAuto(settings: ShellSettings): { next: ShellSettings; didMutate: boolean } {
 	const dm = settings.defaultModel;
 	if (typeof dm !== 'string') {
@@ -509,7 +474,9 @@ export function initSettingsStore(userData: string): void {
 	if (fs.existsSync(settingsPath)) {
 		try {
 			const raw = fs.readFileSync(settingsPath, 'utf8');
-			cached = { ...defaultSettings, ...JSON.parse(raw) };
+			const parsed = JSON.parse(raw) as LegacyShellSettings;
+			const { indexing: _legacyIndexing, ...rest } = parsed;
+			cached = { ...defaultSettings, ...rest };
 		} catch {
 			cached = { ...defaultSettings };
 		}
@@ -522,16 +489,10 @@ export function initSettingsStore(userData: string): void {
 	cached = migratedPm.next;
 	const migrated = migrateThinkingByModel(cached);
 	cached = migrated.next;
-	const migratedLsp = migrateIndexingTsLspAlwaysOn(cached);
-	cached = migratedLsp.next;
-	const migratedIndexing = migrateIndexingDefaults(cached);
-	cached = migratedIndexing.next;
 	if (
 		migratedDm.didMutate ||
 		migratedPm.didMutate ||
-		migrated.didMutate ||
-		migratedLsp.didMutate ||
-		migratedIndexing.didMutate
+		migrated.didMutate
 	) {
 		save();
 	} else if (!fs.existsSync(settingsPath)) {
@@ -561,12 +522,7 @@ export function resolveUsageStatsDataDir(settings: ShellSettings): string | null
 }
 
 export function patchSettings(partial: Partial<ShellSettings>): ShellSettings {
-	const { ui: partialUi, indexing: partialIndexing, usageStats: partialUsageStats, autoUpdate: partialAutoUpdate, ...partialRest } = partial;
-
-	const mergedIndexing =
-		partialIndexing !== undefined
-			? { ...INDEXING_DEFAULTS, ...(cached.indexing ?? {}), ...partialIndexing, tsLspEnabled: true }
-			: cached.indexing;
+	const { ui: partialUi, usageStats: partialUsageStats, autoUpdate: partialAutoUpdate, ...partialRest } = partial;
 
 	const nextModels =
 		partial.models !== undefined
@@ -648,8 +604,10 @@ export function patchSettings(partial: Partial<ShellSettings>): ShellSettings {
 			? { ...(cached.autoUpdate ?? {}), ...partialAutoUpdate }
 			: cached.autoUpdate;
 
+	const { indexing: _legacyIndexing, ...cachedWithoutLegacyIndexing } = cached as LegacyShellSettings;
+
 	cached = {
-		...cached,
+		...cachedWithoutLegacyIndexing,
 		...partialRest,
 		llm: partial.llm ? { ...(cached.llm ?? {}), ...partial.llm } : cached.llm,
 		openAI: partial.openAI ? { ...cached.openAI, ...partial.openAI } : cached.openAI,
@@ -658,7 +616,6 @@ export function patchSettings(partial: Partial<ShellSettings>): ShellSettings {
 		models: nextModels,
 		agent: nextAgent,
 		ui: mergedUi,
-		indexing: partialIndexing !== undefined ? mergedIndexing : cached.indexing,
 		mcpServers: mergedMcp,
 		usageStats: mergedUsageStats,
 		autoUpdate: mergedAutoUpdate,

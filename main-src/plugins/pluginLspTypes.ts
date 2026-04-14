@@ -1,5 +1,5 @@
 /**
- * 与 Claude Code 插件 LSP 声明同构的配置形态（见 claude-code `LspServerConfig` / `ScopedLspServerConfig`）。
+ * 插件 LSP 声明的配置形态。
  */
 
 export type LspServerConfig = {

@@ -2,6 +2,7 @@ import { memo, useCallback, useMemo, useState, type KeyboardEvent } from 'react'
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AgentActivityGroup } from './AgentActivityGroup';
+import { AnimatedHeightReveal } from './AnimatedHeightReveal';
 import { AgentCommandCard } from './AgentCommandCard';
 import { AgentDiffCard } from './AgentDiffCard';
 import { AgentStreamingFenceCard } from './AgentStreamingFenceCard';
@@ -146,15 +147,15 @@ function ActivityLine({
 			? 'Open in editor and highlight this range'
 			: openHintRaw;
 	const hasResultCard = Boolean(seg.resultLines && seg.resultLines.length > 0 && seg.resultKind);
-	const isPlainCommandResult = seg.resultKind === 'plain' && hasResultCard;
-	const [expandedResult, setExpandedResult] = useState(false);
-	const onToggleResult = useCallback(() => setExpandedResult((v) => !v), []);
+	const hasExpandableBody = Boolean(seg.detail || hasResultCard);
+	const [expandedBody, setExpandedBody] = useState(false);
+	const onToggleBody = useCallback(() => setExpandedBody((v) => !v), []);
 	const onToggleKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
-			onToggleResult();
+			onToggleBody();
 		}
-	}, [onToggleResult]);
+	}, [onToggleBody]);
 
 	return (
 		<div
@@ -166,17 +167,17 @@ function ActivityLine({
 			}
 		>
 			<div
-				className={`ref-agent-activity-main${isPlainCommandResult ? ' ref-agent-activity-main--cmd-toggle' : ''}`}
-				role={isPlainCommandResult ? 'button' : undefined}
-				tabIndex={isPlainCommandResult ? 0 : undefined}
-				aria-expanded={isPlainCommandResult ? expandedResult : undefined}
-				aria-label={isPlainCommandResult ? (expandedResult ? '收起命令结果' : '展开命令结果') : undefined}
-				onClick={isPlainCommandResult ? onToggleResult : undefined}
-				onKeyDown={isPlainCommandResult ? onToggleKeyDown : undefined}
+				className={`ref-agent-activity-main${hasExpandableBody ? ' ref-agent-activity-main--toggle' : ''}`}
+				role={hasExpandableBody ? 'button' : undefined}
+				tabIndex={hasExpandableBody ? 0 : undefined}
+				aria-expanded={hasExpandableBody ? expandedBody : undefined}
+				aria-label={hasExpandableBody ? (expandedBody ? '收起详情' : '展开详情') : undefined}
+				onClick={hasExpandableBody ? onToggleBody : undefined}
+				onKeyDown={hasExpandableBody ? onToggleKeyDown : undefined}
 			>
 				<span className="ref-agent-activity-dot" aria-hidden />
-				{isPlainCommandResult ? (
-					<span className="ref-agent-activity-cmd-inline">
+				{hasExpandableBody ? (
+					<span className="ref-agent-activity-inline">
 						{readLink && onOpenAgentFile ? (
 							<button
 								type="button"
@@ -195,12 +196,12 @@ function ActivityLine({
 							</button>
 						) : (
 							<span className="ref-agent-activity-text">{seg.text}</span>
-						)}
+							)}
 						<span
-							className={`ref-activity-inline-chevron${expandedResult ? ' is-open' : ''}`}
+							className={`ref-activity-inline-chevron${expandedBody ? ' is-open' : ''}`}
 							aria-hidden
 						>
-							<InlineChevron open={expandedResult} />
+							<InlineChevron open={expandedBody} />
 						</span>
 						{seg.summary ? (
 							<span className="ref-agent-activity-summary">{seg.summary}</span>
@@ -214,13 +215,14 @@ function ActivityLine({
 									type="button"
 									className="ref-agent-activity-ref-link"
 									title={openHint}
-									onClick={() =>
+									onClick={(e) => {
+										e.stopPropagation();
 										onOpenAgentFile(
 											readLink.path,
 											readLink.startLine,
 											readLink.endLine
-										)
-									}
+										);
+									}}
 								>
 									{seg.text}
 								</button>
@@ -234,19 +236,23 @@ function ActivityLine({
 					</>
 				)}
 			</div>
-			{seg.detail ? (
-				<pre className="ref-agent-activity-detail">{seg.detail}</pre>
-			) : null}
-			{hasResultCard && (!isPlainCommandResult || expandedResult) ? (
-				<AgentResultCard
-					lines={seg.resultLines!}
-					kind={seg.resultKind!}
-					readSourcePath={seg.agentReadLink?.path}
-					onOpenFile={onOpenAgentFile}
-					animateLineReveal={showAgentWorking}
-					forceExpanded={isPlainCommandResult ? true : undefined}
-					hideToggleChrome={isPlainCommandResult}
-				/>
+			{hasExpandableBody ? (
+				<AnimatedHeightReveal open={expandedBody}>
+					{seg.detail ? (
+						<pre className="ref-agent-activity-detail">{seg.detail}</pre>
+					) : null}
+					{hasResultCard ? (
+						<AgentResultCard
+							lines={seg.resultLines!}
+							kind={seg.resultKind!}
+							readSourcePath={seg.agentReadLink?.path}
+							onOpenFile={onOpenAgentFile}
+							animateLineReveal={showAgentWorking}
+							forceExpanded
+							hideToggleChrome
+						/>
+					) : null}
+				</AnimatedHeightReveal>
 			) : null}
 		</div>
 	);

@@ -3,9 +3,11 @@ import type { UserModelEntry } from './modelCatalog';
 import { mergeBuiltinExpertsWithSaved } from './teamPresetCatalog';
 
 function activeTeamExperts(teamSettings: TeamSettings | undefined): TeamExpertConfig[] {
-	return mergeBuiltinExpertsWithSaved(teamSettings?.presetId, teamSettings?.useDefaults, teamSettings?.experts).filter(
-		(role) => role.enabled !== false && role.systemPrompt.trim().length > 0
+	const builtins = mergeBuiltinExpertsWithSaved(teamSettings?.presetId, teamSettings?.useDefaults, teamSettings?.experts);
+	const extras = [teamSettings?.planReviewer, teamSettings?.deliveryReviewer].filter(
+		(role): role is TeamExpertConfig => Boolean(role)
 	);
+	return [...builtins, ...extras].filter((role) => role.enabled !== false && role.systemPrompt.trim().length > 0);
 }
 
 export function findTeamRolesMissingModels(

@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { ChatMarkdown } from './ChatMarkdown';
 import { TeamExpertCard } from './TeamExpertCard';
+import { TeamRoleAvatar } from './TeamRoleAvatar';
 import type { TFunction } from './i18n';
 import type { TeamSessionState } from './hooks/useTeamSession';
 
@@ -15,7 +16,7 @@ function phaseLabel(t: TFunction, phase: TeamSessionState['phase']) {
 	return t(`team.phase.${phase}`);
 }
 
-const PHASE_STEPS: TeamSessionState['phase'][] = ['planning', 'executing', 'reviewing', 'delivering'];
+const PHASE_STEPS: TeamSessionState['phase'][] = ['researching', 'planning', 'executing', 'reviewing', 'delivering'];
 
 function phaseIndex(phase: TeamSessionState['phase']): number {
 	const idx = PHASE_STEPS.indexOf(phase);
@@ -88,9 +89,7 @@ export const TeamSessionView = memo(function TeamSessionView({ t, session, onSel
 				{selectedTask ? (
 					<>
 						<div className="ref-team-detail-head">
-							<span className={`ref-team-expert-avatar ref-team-expert-avatar--${selectedTask.roleType} ref-team-avatar-sm`}>
-								{selectedTask.expertName.slice(0, 1).toUpperCase()}
-							</span>
+							<TeamRoleAvatar roleType={selectedTask.roleType} assignmentKey={selectedTask.expertAssignmentKey} small />
 							<strong>{selectedTask.expertName}</strong>
 							<span className={`ref-team-expert-status ref-team-expert-status--${selectedTask.status}`}>
 								{selectedTask.status}

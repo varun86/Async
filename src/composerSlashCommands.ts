@@ -159,7 +159,7 @@ export function filterSlashCommands(commands: BuiltinSlashCommand[], query: stri
 	});
 }
 
-/** 与 Claude Code `findSlashCommandPositions` 类似：用于在纯文本里标出 /command 范围（高亮校验） */
+/** 用于在纯文本里标出 /command 范围（高亮校验） */
 export function findSlashCommandTokenRanges(text: string): Array<{ start: number; end: number }> {
 	const out: Array<{ start: number; end: number }> = [];
 	const re = /(^|[\s\n])(\/[a-zA-Z][a-zA-Z0-9:._-]*)/gu;

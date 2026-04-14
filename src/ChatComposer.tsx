@@ -148,6 +148,7 @@ export function ChatComposer({
 	const showModelPicker = composerMode !== 'team';
 	const inputPlaceholder =
 		isBottomSlot && hasConversation ? followUpComposerPlaceholder : composerPlaceholder;
+	const sendTitle = awaitingReply ? t('app.stopGeneration') : t('app.send');
 
 	const onComposerKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
 		if (slashCommandKeyDown(e)) return;
@@ -258,8 +259,8 @@ export function ChatComposer({
 					<button
 						type="button"
 						className={`ref-send-btn ${awaitingReply ? 'is-stop' : ''}`}
-						title={awaitingReply ? t('app.stopGeneration') : t('app.send')}
-						aria-label={awaitingReply ? t('app.stopGeneration') : t('app.send')}
+						title={sendTitle}
+						aria-label={sendTitle}
 						disabled={!awaitingReply && !canSend}
 						onClick={() => (awaitingReply ? onAbortFn() : onSendFn())}
 					>

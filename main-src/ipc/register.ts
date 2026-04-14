@@ -21,7 +21,6 @@ import {
 	setWorkspaceFileIndexReadyBroadcaster,
 	acquireWorkspaceFileIndexRef,
 	releaseWorkspaceFileIndexRef,
-	getWorkspaceFileIndexLiveStatsForRoot,
 	registerKnownWorkspaceRelPath,
 	setWorkspaceFsTouchNotifier,
 } from '../workspaceFileIndex.js';
@@ -112,6 +111,7 @@ import {
 	abortPlanQuestionWaitersForThread,
 	resolvePlanQuestionTool,
 } from '../agent/planQuestionTool.js';
+import { setPlanDraftRuntime } from '../agent/planDraftTool.js';
 import {
 	abortTeamPlanApprovalForThread,
 	resolveTeamPlanApproval,
@@ -150,9 +150,6 @@ import { setDelegateContext, clearDelegateContext } from '../agent/toolExecutor.
 import {
 	searchWorkspaceSymbols,
 	ensureSymbolIndexLoaded,
-	clearWorkspaceSymbolIndex,
-	getWorkspaceSymbolIndexStatsForRoot,
-	scheduleWorkspaceSymbolFullRebuild,
 } from '../workspaceSymbolIndex.js';
 import { getGitContextBlock, clearGitContextCacheForRoot } from '../gitContext.js';
 import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.js';
@@ -160,7 +157,6 @@ import { ensureMemoryDirExists, loadMemoryPrompt } from '../memdir/memdir.js';
 import { scanMemoryFiles } from '../memdir/memoryScan.js';
 import { getAutoMemEntrypoint } from '../memdir/paths.js';
 import { buildMemoryEntrypoint, queueExtractMemories } from '../services/extractMemories/extractMemories.js';
-import { getWorkspaceIndexDir } from '../workspaceIndexPaths.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -281,7 +277,7 @@ async function appendMemoryAndRetrievalContext(params: {
 		}
 	}
 
-	if (modeExpandsWorkspaceFileContext(params.mode) && params.root && params.settings.indexing?.gitContextEnabled !== false) {
+	if (modeExpandsWorkspaceFileContext(params.mode) && params.root) {
 		const gitBlock = await getGitContextBlock(params.root);
 		if (gitBlock) {
 			next = appendSystemBlock(next, gitBlock);
@@ -340,6 +336,185 @@ function reverseUnifiedPatch(chunk: string): string | null {
 	} catch {
 		return null;
 	}
+}
+
+type ExternalWorkspaceTool = 'vscode' | 'cursor' | 'antigravity' | 'explorer' | 'terminal';
+
+function isExternalWorkspaceTool(value: unknown): value is ExternalWorkspaceTool {
+	return (
+		value === 'vscode' ||
+		value === 'cursor' ||
+		value === 'antigravity' ||
+		value === 'explorer' ||
+		value === 'terminal'
+	);
+}
+
+async function commandOnPath(command: string): Promise<boolean> {
+	try {
+		if (process.platform === 'win32') {
+			await execFileAsync('where.exe', [command], { windowsHide: true });
+		} else {
+			await execFileAsync('which', [command], { windowsHide: true });
+		}
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function windowsEditorExecutableFallbacks(tool: Extract<ExternalWorkspaceTool, 'vscode' | 'cursor' | 'antigravity'>): string[] {
+	if (process.platform !== 'win32') {
+		return [];
+	}
+	const localAppData = process.env.LOCALAPPDATA;
+	const programFiles = process.env.ProgramFiles;
+	const programFilesX86 = process.env['ProgramFiles(x86)'];
+	switch (tool) {
+		case 'vscode':
+			return [
+				localAppData ? path.join(localAppData, 'Programs', 'Microsoft VS Code', 'Code.exe') : null,
+				programFiles ? path.join(programFiles, 'Microsoft VS Code', 'Code.exe') : null,
+				programFilesX86 ? path.join(programFilesX86, 'Microsoft VS Code', 'Code.exe') : null,
+			].filter((candidate): candidate is string => Boolean(candidate));
+		case 'cursor':
+			return [
+				localAppData ? path.join(localAppData, 'Programs', 'Cursor', 'Cursor.exe') : null,
+				programFiles ? path.join(programFiles, 'Cursor', 'Cursor.exe') : null,
+				programFilesX86 ? path.join(programFilesX86, 'Cursor', 'Cursor.exe') : null,
+			].filter((candidate): candidate is string => Boolean(candidate));
+		case 'antigravity':
+			return [
+				localAppData ? path.join(localAppData, 'Programs', 'Antigravity', 'Antigravity.exe') : null,
+				programFiles ? path.join(programFiles, 'Antigravity', 'Antigravity.exe') : null,
+				programFilesX86 ? path.join(programFilesX86, 'Antigravity', 'Antigravity.exe') : null,
+			].filter((candidate): candidate is string => Boolean(candidate));
+		default:
+			return [];
+	}
+}
+
+type LaunchCommand = {
+	command: string;
+	useShell: boolean;
+};
+
+async function resolveLaunchCommand(candidates: string[]): Promise<LaunchCommand | null> {
+	for (const candidate of candidates) {
+		if (!candidate) {
+			continue;
+		}
+		if (path.isAbsolute(candidate)) {
+			if (fs.existsSync(candidate)) {
+				return { command: candidate, useShell: /\.(cmd|bat)$/i.test(candidate) };
+			}
+			continue;
+		}
+		if (await commandOnPath(candidate)) {
+			return { command: candidate, useShell: process.platform === 'win32' };
+		}
+	}
+	return null;
+}
+
+async function spawnDetachedLaunch(
+	command: string,
+	args: string[],
+	opts?: { cwd?: string; useShell?: boolean; windowsHide?: boolean }
+): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		const child = spawn(command, args, {
+			cwd: opts?.cwd,
+			detached: true,
+			stdio: 'ignore',
+			shell: opts?.useShell ?? false,
+			windowsHide: opts?.windowsHide ?? true,
+		});
+		child.once('error', reject);
+		child.once('spawn', () => {
+			child.unref();
+			resolve();
+		});
+	});
+}
+
+async function launchWorkspaceInExternalEditor(
+	tool: Extract<ExternalWorkspaceTool, 'vscode' | 'cursor' | 'antigravity'>,
+	workspaceRoot: string
+): Promise<boolean> {
+	const commandCandidates = {
+		vscode: ['code'],
+		cursor: ['cursor'],
+		antigravity: ['antigravity'],
+	}[tool];
+	const resolved = await resolveLaunchCommand([
+		...commandCandidates,
+		...windowsEditorExecutableFallbacks(tool),
+	]);
+	if (!resolved) {
+		return false;
+	}
+	await spawnDetachedLaunch(resolved.command, ['-n', workspaceRoot], {
+		cwd: workspaceRoot,
+		useShell: resolved.useShell,
+		windowsHide: true,
+	});
+	return true;
+}
+
+function escapePowerShellLiteral(value: string): string {
+	return value.replace(/'/g, "''");
+}
+
+async function launchWorkspaceInExternalTerminal(workspaceRoot: string): Promise<boolean> {
+	if (process.platform === 'win32') {
+		const wt = await resolveLaunchCommand(['wt']);
+		if (wt) {
+			await spawnDetachedLaunch(wt.command, ['-d', workspaceRoot], {
+				cwd: workspaceRoot,
+				useShell: wt.useShell,
+				windowsHide: true,
+			});
+			return true;
+		}
+		await spawnDetachedLaunch(
+			'powershell.exe',
+			['-NoExit', '-Command', `Set-Location -LiteralPath '${escapePowerShellLiteral(workspaceRoot)}'`],
+			{
+				cwd: workspaceRoot,
+				useShell: false,
+				windowsHide: false,
+			}
+		);
+		return true;
+	}
+	if (process.platform === 'darwin') {
+		await spawnDetachedLaunch('open', ['-a', 'Terminal', workspaceRoot], {
+			cwd: workspaceRoot,
+			useShell: false,
+			windowsHide: true,
+		});
+		return true;
+	}
+	const candidates: Array<{ command: string; args: string[] }> = [
+		{ command: 'x-terminal-emulator', args: ['--working-directory', workspaceRoot] },
+		{ command: 'gnome-terminal', args: [`--working-directory=${workspaceRoot}`] },
+		{ command: 'konsole', args: ['--workdir', workspaceRoot] },
+		{ command: 'xfce4-terminal', args: ['--working-directory', workspaceRoot] },
+	];
+	for (const candidate of candidates) {
+		const resolved = await resolveLaunchCommand([candidate.command]);
+		if (!resolved) {
+			continue;
+		}
+		await spawnDetachedLaunch(resolved.command, candidate.args, {
+			cwd: workspaceRoot,
+			useShell: resolved.useShell,
+			windowsHide: true,
+		});
+		return true;
+	}
+	return false;
 }
 
 function recordTurnTokenUsageStats(
@@ -417,7 +592,7 @@ function runChatStream(
 				paradigm: String(resolved.paradigm),
 			});
 
-			// 与 Claude Code `apiPreconnect.ts` 一致：首条对话前预热到当前模型 API 基址的 TCP/TLS（无代理时）
+// 首条对话前预热到当前模型 API 基址的 TCP/TLS（无代理时）
 			preconnectLlmBaseUrlIfEligible({
 				paradigm: resolved.paradigm,
 				baseURL: resolved.baseURL,
@@ -449,36 +624,45 @@ function runChatStream(
 				thinkingLevel,
 			};
 			if (mode === 'team') {
-				phaseRef.current = 'runTeamSession';
-				await runTeamSession({
-					settings,
+				setPlanQuestionRuntime({
 					threadId,
-					messages,
-					modelSelection,
-					resolvedModel: resolved,
-					agentSystemAppend,
 					signal: ac.signal,
-					thinkingLevel,
-					workspaceRoot,
-					workspaceLspManager,
-					emit: (evt) => send(evt),
-					onDone: (full, usage, teamSnapshot) => {
-						updateLastAssistant(threadId, full);
-						accumulateTokenUsage(threadId, usage?.inputTokens, usage?.outputTokens);
-						recordTurnTokenUsageStats(modelSelection, mode, usage);
-						if (teamSnapshot) {
-							saveTeamSession(threadId, teamSnapshot);
-						}
-						queueExtractMemories({
-							threadId,
-							workspaceRoot,
-							settings,
-							modelSelection,
-						});
-						send({ threadId, type: 'done', text: full, usage });
-					},
-					onError: (message) => emitStreamError(message),
+					emit: (evt) => send({ threadId, ...evt }),
 				});
+				phaseRef.current = 'runTeamSession';
+				try {
+					await runTeamSession({
+						settings,
+						threadId,
+						messages,
+						modelSelection,
+						resolvedModel: resolved,
+						agentSystemAppend,
+						signal: ac.signal,
+						thinkingLevel,
+						workspaceRoot,
+						workspaceLspManager,
+						emit: (evt) => send(evt),
+						onDone: (full, usage, teamSnapshot) => {
+							updateLastAssistant(threadId, full);
+							accumulateTokenUsage(threadId, usage?.inputTokens, usage?.outputTokens);
+							recordTurnTokenUsageStats(modelSelection, mode, usage);
+							if (teamSnapshot) {
+								saveTeamSession(threadId, teamSnapshot);
+							}
+							queueExtractMemories({
+								threadId,
+								workspaceRoot,
+								settings,
+								modelSelection,
+							});
+							send({ threadId, type: 'done', text: full, usage });
+						},
+						onError: (message) => emitStreamError(message),
+					});
+				} finally {
+					setPlanQuestionRuntime(null);
+				}
 				return;
 			}
 
@@ -555,6 +739,11 @@ function runChatStream(
 						threadId,
 						signal: ac.signal,
 						emit: (evt) => send({ threadId, ...evt }),
+					});
+					setPlanDraftRuntime(threadId, {
+						onDraft: () => {
+							// Renderer persists the visible draft from tool arguments and keeps the review UI in sync.
+						},
 					});
 				}
 				const expandMode = mode as import('../llm/composerMode.js').ComposerMode;
@@ -649,6 +838,7 @@ function runChatStream(
 				clearDelegateContext();
 				if (mode === 'plan') {
 					setPlanQuestionRuntime(null);
+					setPlanDraftRuntime(threadId, null);
 				}
 			}
 			return;
@@ -845,6 +1035,41 @@ export function registerIpc(): void {
 			return { ok: true as const, path: resolved };
 		} catch (e) {
 			return { ok: false as const, error: String(e) };
+		}
+	});
+
+	ipcMain.handle('workspace:openInExternalTool', async (event, payload: unknown) => {
+		const root = senderWorkspaceRoot(event);
+		if (!root) {
+			return { ok: false as const, code: 'no-workspace' as const };
+		}
+		const tool = (payload as { tool?: unknown } | null | undefined)?.tool;
+		if (!isExternalWorkspaceTool(tool)) {
+			return { ok: false as const, code: 'unsupported-tool' as const, error: 'unsupported tool' };
+		}
+		try {
+			if (tool === 'explorer') {
+				const err = await shell.openPath(root);
+				return err
+					? ({ ok: false as const, code: 'launch-failed' as const, error: err } as const)
+					: ({ ok: true as const } as const);
+			}
+			if (tool === 'terminal') {
+				const ok = await launchWorkspaceInExternalTerminal(root);
+				return ok
+					? ({ ok: true as const } as const)
+					: ({ ok: false as const, code: 'tool-unavailable' as const } as const);
+			}
+			const ok = await launchWorkspaceInExternalEditor(tool, root);
+			return ok
+				? ({ ok: true as const } as const)
+				: ({ ok: false as const, code: 'tool-unavailable' as const } as const);
+		} catch (e) {
+			return {
+				ok: false as const,
+				code: 'launch-failed' as const,
+				error: e instanceof Error ? e.message : String(e),
+			};
 		}
 	});
 
@@ -1162,10 +1387,6 @@ export function registerIpc(): void {
 
 	ipcMain.handle('settings:set', (_e, partial: Record<string, unknown>) => {
 		const next = patchSettings(partial as Parameters<typeof patchSettings>[0]);
-		const idx = next.indexing;
-		if (idx?.symbolIndexEnabled === false) {
-			clearWorkspaceSymbolIndex();
-		}
 		const syncedColorMode = next.ui?.colorMode;
 		if (syncedColorMode === 'light' || syncedColorMode === 'dark' || syncedColorMode === 'system') {
 			for (const win of BrowserWindow.getAllWindows()) {
@@ -1275,20 +1496,6 @@ export function registerIpc(): void {
 		}
 	});
 
-	ipcMain.handle('workspace:indexing:stats', (event) => {
-		const r = senderWorkspaceRoot(event);
-		const w = getWorkspaceFileIndexLiveStatsForRoot(r);
-		const sym = getWorkspaceSymbolIndexStatsForRoot(r);
-		return {
-			ok: true as const,
-			workspaceRoot: w.root,
-			indexDir: w.root ? getWorkspaceIndexDir(w.root) : null,
-			fileCount: w.fileCount,
-			symbolUniqueNames: sym.uniqueNames,
-			symbolIndexedFiles: sym.filesWithSymbols,
-		};
-	});
-
 	ipcMain.handle('workspace:memory:stats', async (event) => {
 		const root = senderWorkspaceRoot(event);
 		if (!root) {
@@ -1320,19 +1527,6 @@ export function registerIpc(): void {
 			topicFiles: headers.length,
 			entryCount,
 		};
-	});
-
-	ipcMain.handle('workspace:indexing:rebuild', async (event, payload: { target?: 'symbols' }) => {
-		const root = senderWorkspaceRoot(event);
-		if (!root) {
-			return { ok: false as const, error: 'no-workspace' as const };
-		}
-		const files = await ensureWorkspaceFileIndex(root);
-		const t = payload?.target ?? 'symbols';
-		if (t === 'symbols') {
-			scheduleWorkspaceSymbolFullRebuild(root, files);
-		}
-		return { ok: true as const };
 	});
 
 	ipcMain.handle('workspace:memory:rebuild', async (event) => {
@@ -1655,13 +1849,7 @@ export function registerIpc(): void {
 				if (scope === 'project' && !root) {
 					return { ok: false as const, error: 'no-workspace' as const };
 				}
-				const prepared = prepareUserTurnForChat(
-					skillIn.userNote,
-					agentForTurn,
-					root,
-					workspaceFiles,
-					settings.language === 'en' ? 'en' : 'zh-CN'
-				);
+				const prepared = prepareUserTurnForChat(skillIn.userNote, agentForTurn, root, workspaceFiles);
 				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
 				const visible = formatSkillCreatorUserBubble(scope, lang, skillIn.userNote);
 				const skillBlock = buildSkillCreatorSystemAppend(scope, lang, root);
@@ -1701,13 +1889,7 @@ export function registerIpc(): void {
 				const creatorAgentMode: ComposerMode = 'agent';
 				const ruleScope: AgentRuleScope =
 					ruleIn.ruleScope === 'glob' || ruleIn.ruleScope === 'manual' ? ruleIn.ruleScope : 'always';
-				const prepared = prepareUserTurnForChat(
-					ruleIn.userNote,
-					agentForTurn,
-					root,
-					workspaceFiles,
-					settings.language === 'en' ? 'en' : 'zh-CN'
-				);
+				const prepared = prepareUserTurnForChat(ruleIn.userNote, agentForTurn, root, workspaceFiles);
 				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
 				const visible = formatRuleCreatorUserBubble(ruleScope, ruleIn.globPattern, lang, ruleIn.userNote);
 				const ruleBlock = buildRuleCreatorSystemAppend(ruleScope, ruleIn.globPattern, lang, root);
@@ -1754,13 +1936,7 @@ export function registerIpc(): void {
 				if (scope === 'project' && !root) {
 					return { ok: false as const, error: 'no-workspace' as const };
 				}
-				const prepared = prepareUserTurnForChat(
-					subIn.userNote,
-					agentForTurn,
-					root,
-					workspaceFiles,
-					settings.language === 'en' ? 'en' : 'zh-CN'
-				);
+				const prepared = prepareUserTurnForChat(subIn.userNote, agentForTurn, root, workspaceFiles);
 				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
 				const visible = formatSubagentCreatorUserBubble(scope, lang, subIn.userNote);
 				const subBlock = buildSubagentCreatorSystemAppend(scope, lang, root);
@@ -1799,8 +1975,7 @@ export function registerIpc(): void {
 				text,
 				agentForTurn,
 				root,
-				workspaceFiles,
-				settings.language === 'en' ? 'en' : 'zh-CN'
+				workspaceFiles
 			);
 
 			let finalSystemAppend = agentSystemAppend;
@@ -1901,13 +2076,7 @@ export function registerIpc(): void {
 				throwIfAbortRequested(preflightAc.signal, threadId, 'editResend ensureWorkspaceFileIndex');
 				const projectAgent = readWorkspaceAgentProjectSlice(root);
 				const agentForTurn = mergeAgentWithProjectSlice(settings.agent, projectAgent);
-				const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(
-					trimmed,
-					agentForTurn,
-					root,
-					workspaceFiles,
-					settings.language === 'en' ? 'en' : 'zh-CN'
-				);
+				const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(trimmed, agentForTurn, root, workspaceFiles);
 
 				let finalSystemAppend = agentSystemAppend;
 				if (root && (mode === 'plan' || mode === 'ask' || mode === 'team')) {

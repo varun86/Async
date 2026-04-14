@@ -12,7 +12,6 @@ import type { AppAppearanceSettings } from './appearanceSettings';
 import type { EditorSettings } from './EditorSettingsPanel';
 import type { AppColorMode, ThemeTransitionOrigin } from './colorMode';
 import type { McpServerConfig, McpServerStatus } from './mcpTypes';
-import type { IndexingSettingsState } from './indexingSettingsTypes';
 import { useI18n, type AppLocale } from './i18n';
 import { VoidSelect } from './VoidSelect';
 
@@ -349,9 +348,6 @@ type Props = {
 	onChangeEditorSettings: (v: EditorSettings) => void;
 	/** 语言切换后立即持久化（与关闭设置页时的全量保存配合） */
 	onPersistLanguage?: (locale: AppLocale) => void;
-	indexingSettings: IndexingSettingsState;
-	onChangeIndexingSettings: (v: IndexingSettingsState) => void;
-	onPersistIndexingPatch: (patch: Partial<IndexingSettingsState>) => void;
 	/** MCP 服务器配置 */
 	mcpServers: McpServerConfig[];
 	onChangeMcpServers: (servers: McpServerConfig[]) => void;
@@ -391,9 +387,6 @@ export function SettingsPage({
 	editorSettings,
 	onChangeEditorSettings,
 	onPersistLanguage,
-	indexingSettings,
-	onChangeIndexingSettings,
-	onPersistIndexingPatch,
 	mcpServers,
 	onChangeMcpServers,
 	mcpStatuses,
@@ -733,7 +726,7 @@ export function SettingsPage({
 										const subModels = modelsVisibleUnderProvider(prov);
 										return (
 											<li key={prov.id} className="ref-settings-provider-shell">
-												<details className="ref-settings-provider-details" open>
+												<details className="ref-settings-provider-details">
 													<summary className="ref-settings-provider-summary">
 														<span className="ref-settings-provider-summary-chev" aria-hidden />
 														<span className="ref-settings-provider-summary-text">
@@ -944,9 +937,6 @@ export function SettingsPage({
 						{nav === 'indexing' ? (
 							<Suspense fallback={<SettingsPanelSkeleton />}>
 								<SettingsIndexingPanel
-									value={indexingSettings}
-									onChange={onChangeIndexingSettings}
-									onPersistPatch={onPersistIndexingPatch}
 									shell={shell}
 									workspaceOpen={workspaceOpen}
 									agentCustomization={agentCustomization}

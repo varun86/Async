@@ -40,7 +40,7 @@ export async function streamOpenAICompatible(
 		}
 	}
 
-	// maxRetries: 0 与 Claude Code `services/api/claude.ts` 流式路径一致，避免 SDK 对超时类失败自动重试拉长等待
+// maxRetries: 0，避免 SDK 对超时类失败自动重试拉长等待
 	const client = new OpenAI({
 		apiKey: key,
 		baseURL,

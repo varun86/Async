@@ -75,6 +75,10 @@ export function useAgentRightSidebarProps(p: UseAgentRightSidebarPropsParams): A
 			rest.onCommitAndPush,
 			rest.teamSession,
 			rest.onSelectTeamExpert,
+			rest.workspaceRoot,
+			rest.onOpenTeamAgentFile,
+			rest.revertedPaths,
+			rest.revertedChangeKeys,
 		]
 	);
 }

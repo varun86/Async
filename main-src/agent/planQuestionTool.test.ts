@@ -39,4 +39,17 @@ describe('normalizePlanQuestionArgs', () => {
 			{ id: 'custom', label: 'Other (please specify)' },
 		]);
 	});
+
+	it('supports freeform-only fallback questions', () => {
+		const out = normalizePlanQuestionArgs({
+			question: '请补充你想优化的具体模块和目标。',
+			freeform: true,
+			options: [{ id: 'custom', label: '请补充说明' }],
+		});
+
+		expect(out.ok).toBe(true);
+		if (!out.ok) return;
+		expect(out.q.freeform).toBe(true);
+		expect(out.q.options).toEqual([{ id: 'custom', label: '请补充说明' }]);
+	});
 });

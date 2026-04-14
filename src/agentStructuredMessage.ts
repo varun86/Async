@@ -1,5 +1,5 @@
 /**
- * Agent 助手消息的结构化持久化格式（对齐 Claude Code 的「块」语义，磁盘存 JSON；发 API 时再展开为原有 XML 协议）。
+ * Agent 助手消息的结构化持久化格式，磁盘存 JSON；发 API 时再展开为原有 XML 协议。
  */
 
 export type AgentAssistantTextPart = { type: 'text'; text: string };
@@ -135,7 +135,7 @@ export function budgetStructuredAssistantToolResults(
 }
 
 /**
- * 将内嵌 XML 协议压成摘要友好的一行式工具描述（对齐 Claude Code 将工具纳入 transcript 的思路，避免把原始 XML 喂给摘要模型）。
+ * 将内嵌 XML 协议压成摘要友好的一行式工具描述，避免把原始 XML 直接喂给摘要模型。
  */
 function formatLegacyAssistantXmlForSummary(content: string, maxChars: number, toolSnip: number): string {
 	let s = content.replace(
@@ -152,7 +152,7 @@ function formatLegacyAssistantXmlForSummary(content: string, maxChars: number, t
 
 /**
  * 供 conversationCompress / 摘要生成使用：结构化助手展开为可读行，XML 协议助手做工具行折叠。
- * 参考 Claude Code 在 compaction / session memory 中保留「说了什么、调了什么工具」而非原始传输格式。
+ * 这里保留“说了什么、调用了哪些工具”，而不是原始传输格式。
  */
 export function formatChatMessageForCompactionSummary(
 	role: string,
@@ -201,7 +201,7 @@ export function formatChatMessageForCompactionSummary(
 }
 
 /**
- * 去除重复的 tool 块（同一 toolUseId 仅保留首次出现），对齐 Claude Code 对跨消息重复 tool_use id 的防御。
+ * 去除重复的 tool 块（同一 toolUseId 仅保留首次出现），避免跨消息重复 tool_use id。
  */
 export function dedupeStructuredAssistantToolUseIds(raw: string): string {
 	const p = parseAgentAssistantPayload(raw);

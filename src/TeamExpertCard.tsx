@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { TeamTask } from './hooks/useTeamSession';
+import { TeamRoleAvatar } from './TeamRoleAvatar';
 
 type Props = {
 	task: TeamTask;
@@ -24,9 +25,7 @@ export const TeamExpertCard = memo(function TeamExpertCard({ task, active, onSel
 			onClick={onSelect}
 			title={`${task.expertName}: ${task.description}`}
 		>
-			<span className={`ref-team-expert-avatar ref-team-expert-avatar--${task.roleType}`}>
-				{task.expertName.slice(0, 1).toUpperCase()}
-			</span>
+			<TeamRoleAvatar roleType={task.roleType} assignmentKey={task.expertAssignmentKey} />
 			<span className="ref-team-expert-meta">
 				<span className="ref-team-expert-name">{task.expertName}</span>
 				<span className="ref-team-expert-task">{task.description}</span>

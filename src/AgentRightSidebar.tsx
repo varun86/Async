@@ -71,6 +71,15 @@ export type AgentRightSidebarProps = {
 	onCommitAndPush: () => void;
 	teamSession: TeamSessionState | null;
 	onSelectTeamExpert: (taskId: string) => void;
+	workspaceRoot: string | null;
+	onOpenTeamAgentFile: (
+		relPath: string,
+		revealLine?: number,
+		revealEndLine?: number,
+		options?: { diff?: string | null; allowReviewActions?: boolean }
+	) => void;
+	revertedPaths: ReadonlySet<string>;
+	revertedChangeKeys: ReadonlySet<string>;
 };
 
 type CommitAction = 'commit' | 'commit-push' | 'commit-pr';
@@ -795,6 +804,10 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 	onCommitAndPush,
 	teamSession,
 	onSelectTeamExpert,
+	workspaceRoot,
+	onOpenTeamAgentFile,
+	revertedPaths,
+	revertedChangeKeys,
 }: AgentRightSidebarProps) {
 	const { t } = useAppShellChrome();
 
@@ -864,6 +877,11 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 							onSelectTask={onSelectTeamExpert}
 							layout="agent-sidebar"
 							isVisible={open && view === 'team'}
+							workspaceRoot={workspaceRoot}
+							onOpenAgentFile={onOpenTeamAgentFile}
+							revertedPaths={revertedPaths}
+							revertedChangeKeys={revertedChangeKeys}
+							allowAgentFileActions
 						/>
 					</div>
 				) : (

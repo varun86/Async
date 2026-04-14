@@ -103,7 +103,8 @@ type ChatStreamPayloadCore =
 			threadId: string;
 			type: 'plan_question_request';
 			requestId: string;
-			question: { text: string; options: { id: string; label: string }[] };
+			question: { text: string; options: { id: string; label: string }[]; freeform?: boolean };
+			teamRoleScope?: TeamRoleScope;
 	  }
 	| {
 			threadId: string;
@@ -122,7 +123,7 @@ type ChatStreamPayloadCore =
 	| {
 			threadId: string;
 			type: 'team_phase';
-			phase: 'planning' | 'preflight' | 'proposing' | 'executing' | 'reviewing' | 'delivering' | 'cancelled';
+			phase: 'researching' | 'planning' | 'preflight' | 'proposing' | 'executing' | 'reviewing' | 'delivering' | 'cancelled';
 	  }
 	| {
 			threadId: string;
@@ -199,6 +200,27 @@ type ChatStreamPayloadCore =
 			type: 'team_plan_decision';
 			proposalId: string;
 			approved: boolean;
+	  }
+	| {
+			threadId: string;
+			type: 'team_plan_revised';
+			revisionId: string;
+			summary: string;
+			reason: string;
+			tasks: Array<{
+				id: string;
+				expertId: string;
+				expert: string;
+				expertAssignmentKey?: string;
+				expertName: string;
+				roleType: 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
+				task: string;
+				dependencies?: string[];
+				acceptanceCriteria?: string[];
+			}>;
+			addedTaskIds: string[];
+			removedTaskIds: string[];
+			keptTaskIds: string[];
 	  };
 
 export type ChatStreamPayload = ChatStreamPayloadCore & ChatStreamNonce;

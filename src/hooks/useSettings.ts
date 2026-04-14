@@ -2,7 +2,6 @@ import { startTransition, useCallback, useEffect, useMemo, useState, useTransiti
 import type { SettingsNavId } from '../SettingsPage';
 import type { EditorSettings } from '../EditorSettingsPanel';
 import { defaultEditorSettings } from '../EditorSettingsPanel';
-import type { IndexingSettingsState } from '../indexingSettingsTypes';
 import type { McpServerConfig, McpServerStatus } from '../mcpTypes';
 import {
 	coerceDefaultModel,
@@ -24,6 +23,7 @@ import {
 import { coerceThinkingByModelId, type ThinkingLevel } from '../ipcTypes';
 import type { ModelPickerItem } from '../ModelPickerDropdown';
 import type { TFunction } from '../i18n';
+import { getTeamPresetDefaults } from '../teamPresetCatalog';
 
 /* ── Project agent slice ── */
 
@@ -45,7 +45,6 @@ export type LoadedSettingsSnapshot = {
 	};
 	agent?: AgentCustomization;
 	editor?: Partial<EditorSettings>;
-	indexing?: Partial<IndexingSettingsState>;
 	team?: TeamSettings;
 };
 
@@ -81,6 +80,7 @@ export function useSettings(
 		useDefaults: true,
 		presetId: 'engineering',
 		experts: [],
+		...getTeamPresetDefaults('engineering'),
 	});
 
 	// ── Settings page UI ──
@@ -180,14 +180,6 @@ export function useSettings(
 		setModelProviders(providers);
 	}, []);
 
-	const onPersistIndexingPatch = useCallback(
-		(patch: Partial<IndexingSettingsState>) => {
-			if (!shell) return;
-			void shell.invoke('settings:set', { indexing: patch });
-		},
-		[shell]
-	);
-
 	const onRefreshMcpStatuses = useCallback(async () => {
 		if (!shell) return;
 		const r = (await shell.invoke('mcp:getStatuses')) as { statuses?: McpServerStatus[] } | undefined;
@@ -253,14 +245,21 @@ export function useSettings(
 		if (st?.editor) {
 			setEditorSettings({ ...defaultEditorSettings(), ...st.editor });
 		}
+		const presetId = st?.team?.presetId ?? 'engineering';
+		const presetDefaults = getTeamPresetDefaults(presetId);
 		setTeamSettings({
 			useDefaults: st?.team?.useDefaults ?? true,
-			presetId: st?.team?.presetId ?? 'engineering',
+			presetId,
 			experts: Array.isArray(st?.team?.experts) ? st!.team!.experts : [],
 			presetExpertSnapshots:
 				st?.team?.presetExpertSnapshots && typeof st.team.presetExpertSnapshots === 'object'
 					? st.team.presetExpertSnapshots
 					: undefined,
+			requirePlanApproval: st?.team?.requirePlanApproval ?? presetDefaults.requirePlanApproval,
+			enablePreflightReview: st?.team?.enablePreflightReview ?? presetDefaults.enablePreflightReview,
+			enableResearchPhase: st?.team?.enableResearchPhase ?? presetDefaults.enableResearchPhase,
+			planReviewer: st?.team?.planReviewer ?? null,
+			deliveryReviewer: st?.team?.deliveryReviewer ?? null,
 		});
 	}, []);
 
@@ -354,7 +353,6 @@ export function useSettings(
 		onPickDefaultModel,
 		onChangeModelEntries,
 		onChangeModelProviders,
-		onPersistIndexingPatch,
 		onRefreshMcpStatuses,
 		onStartMcpServer,
 		onStopMcpServer,

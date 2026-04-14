@@ -18,7 +18,12 @@ import type { McpToolResult } from '../mcp/mcpTypes.js';
 import type { NestedAgentStreamEmit } from '../ipc/nestedAgentStream.js';
 import { appendSubagentTranscript } from '../threadStore.js';
 import { assembleAgentToolPool } from './agentToolPool.js';
-import { executeAskPlanQuestionTool } from './planQuestionTool.js';
+import { executeAskPlanQuestionTool, type TeamPlanQuestionRoleScope } from './planQuestionTool.js';
+import { executePlanSubmitDraftTool } from './planDraftTool.js';
+import { executeTeamPlanDecideTool } from './teamPlanDecideTool.js';
+import { executeTeamEscalateToLeadTool } from './teamEscalateTool.js';
+import { executeTeamPeerRequestTool } from './teamPeerRequestTool.js';
+import { executeTeamReplyToPeerTool } from './teamReplyToPeerTool.js';
 import type { ComposerMode } from '../llm/composerMode.js';
 import { buildSubagentSystemAppend, findConfiguredSubagent, resolveSubagentProfile } from './subagentProfile.js';
 import { shouldRunAgentInBackground } from './agentForkPolicy.js';
@@ -28,6 +33,7 @@ import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.
 import { extractMemoriesToDir } from '../services/extractMemories/extractMemories.js';
 import { setTodos, type TodoItem } from './todoStore.js';
 import { minimatch } from 'minimatch';
+import * as gitService from '../gitService.js';
 
 /** @deprecated 已由 WorkspaceLspManager 取代 */
 export function setToolLspSession(_session: unknown): void {
@@ -90,11 +96,11 @@ function coerceAgentDelegateArgs(call: ToolCall): {
 }
 
 const BACKGROUND_AGENT_TOOL_RESULT =
-	'[Background] Sub-agent started (Claude Code–style fork). Nested activity streams above; you will get a UI notice when it finishes. / 后台子 Agent 已启动，过程见上方嵌套区域，结束后会弹出提示。';
+	'[Background] Sub-agent started. Nested activity streams above; you will get a UI notice when it finishes. / 后台子 Agent 已启动，过程见上方嵌套区域，结束后会弹出提示。';
 
 const execFileAsync = promisify(execFile);
 
-/** Single Read call: max lines returned (aligned with Claude Code Read default cap). */
+/** Single Read call: max lines returned. */
 const MAX_READ_LINES_PER_CALL = 2000;
 /** Refuse to load extremely large text files into memory in one shot. */
 const MAX_READ_FILE_BYTES = 2 * 1024 * 1024;
@@ -272,6 +278,8 @@ export type ToolExecutionContext = {
 	workspaceLspManager?: WorkspaceLspManager | null;
 	threadId?: string | null;
 	signal?: AbortSignal;
+	/** Team 子循环：随 ask_plan_question 一并下发，供聊天区挂到对应角色 */
+	teamToolRoleScope?: TeamPlanQuestionRoleScope;
 };
 
 function throwIfToolAbortRequested(signal: AbortSignal | undefined, toolName: string, phase: string): void {
@@ -299,10 +307,10 @@ export async function executeTool(
 				return executeGlob(call, execCtx);
 			case 'list_dir':
 				return executeListDir(call, execCtx);
-			case 'Grep':
-				return await executeGrepTool(call, execCtx);
+		case 'Grep':
+			return await executeGrepTool(call, execCtx);
 		case 'Bash':
-			return await executeCommand(call, execCtx);
+			return await executeCommand(call, hooks, execCtx);
 		case 'LSP':
 			return await executeLspTool(call, execCtx);
 		case 'Agent':
@@ -315,7 +323,20 @@ export async function executeTool(
 		case 'TodoWrite':
 			return executeTodoWrite(call, execCtx);
 		case 'ask_plan_question':
-			return await executeAskPlanQuestionTool(call);
+			return await executeAskPlanQuestionTool(
+				call,
+				execCtx.teamToolRoleScope ? { teamRoleScope: execCtx.teamToolRoleScope } : undefined
+			);
+		case 'plan_submit_draft':
+			return await executePlanSubmitDraftTool(call, execCtx.threadId);
+		case 'team_plan_decide':
+			return await executeTeamPlanDecideTool(call, execCtx.teamToolRoleScope?.teamTaskId);
+		case 'team_escalate_to_lead':
+			return await executeTeamEscalateToLeadTool(call, execCtx.teamToolRoleScope?.teamTaskId);
+		case 'team_request_from_peer':
+			return await executeTeamPeerRequestTool(call, execCtx.teamToolRoleScope?.teamTaskId);
+		case 'team_reply_to_peer':
+			return await executeTeamReplyToPeerTool(call, execCtx.teamToolRoleScope?.teamTaskId);
 		default:
 			if (getMcpManager().isMcpTool(call.name)) {
 				return await executeMcpAgentTool(call, execCtx);
@@ -989,7 +1010,185 @@ const UNIX_REDIRECT: Record<string, string> = {
 	find: 'Use Glob or Grep instead.',
 };
 
-async function executeCommand(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
+type BashGitDirtyState = {
+	topLevel: string;
+	orderedEntries: Array<{ repoRel: string; wsRel: string }>;
+	dirtyContentByWsPath: Map<string, string | null>;
+};
+
+function decodeGitPorcelainPath(raw: string): string {
+	let value = raw.trim();
+	if (value.startsWith('"') && value.endsWith('"')) {
+		value = value
+			.slice(1, -1)
+			.replace(/\\"/g, '"')
+			.replace(/\\\\/g, '\\');
+	}
+	return value.replace(/\\/g, '/').replace(/^\.\/+/, '');
+}
+
+function parseGitPorcelainEntriesForWorkspace(
+	raw: string,
+	workspaceRoot: string,
+	gitTopLevel: string
+): Array<{ repoRel: string; wsRel: string }> {
+	const line = raw.trimEnd();
+	if (line.length < 4 || line[2] !== ' ') {
+		return [];
+	}
+	const rest = line.slice(3).trimEnd();
+	const repoPaths = rest.includes(' -> ')
+		? (() => {
+				const idx = rest.lastIndexOf(' -> ');
+				return [decodeGitPorcelainPath(rest.slice(0, idx)), decodeGitPorcelainPath(rest.slice(idx + 4))];
+			})()
+		: [decodeGitPorcelainPath(rest)];
+	const out: Array<{ repoRel: string; wsRel: string }> = [];
+	for (const repoRel of repoPaths) {
+		if (!repoRel) {
+			continue;
+		}
+		const wsRel = gitService.workspaceRelativeFromRepoRelative(repoRel, workspaceRoot, gitTopLevel);
+		if (wsRel) {
+			out.push({ repoRel, wsRel });
+		}
+	}
+	return out;
+}
+
+function readUtf8TextFileIfExists(fullPath: string): string | null {
+	try {
+		if (!fs.existsSync(fullPath)) {
+			return null;
+		}
+		const buf = fs.readFileSync(fullPath);
+		if (buf.includes(0)) {
+			return null;
+		}
+		return buf.toString('utf8');
+	} catch {
+		return null;
+	}
+}
+
+async function captureBashGitDirtyState(workspaceRoot: string): Promise<BashGitDirtyState | null> {
+	try {
+		const { stdout: gitRootStdout } = await execFileAsync(
+			'git',
+			['-c', 'core.quotepath=false', 'rev-parse', '--show-toplevel'],
+			{
+				cwd: workspaceRoot,
+				windowsHide: true,
+				maxBuffer: 1024 * 1024,
+				encoding: 'utf8',
+			}
+		);
+		const topLevel = path.resolve(String(gitRootStdout ?? '').trim());
+		if (!topLevel) {
+			return null;
+		}
+		const { stdout } = await execFileAsync(
+			'git',
+			['-c', 'core.quotepath=false', 'status', '--porcelain=v1'],
+			{
+				cwd: workspaceRoot,
+				windowsHide: true,
+				maxBuffer: 10 * 1024 * 1024,
+				encoding: 'utf8',
+			}
+		);
+		const orderedEntries: Array<{ repoRel: string; wsRel: string }> = [];
+		const seen = new Set<string>();
+		for (const line of String(stdout ?? '').split(/\r?\n/)) {
+			for (const entry of parseGitPorcelainEntriesForWorkspace(line, workspaceRoot, topLevel)) {
+				if (seen.has(entry.wsRel)) {
+					continue;
+				}
+				seen.add(entry.wsRel);
+				orderedEntries.push(entry);
+			}
+		}
+		const dirtyContentByWsPath = new Map<string, string | null>();
+		for (const entry of orderedEntries) {
+			const fullPath = resolveWorkspacePath(entry.wsRel, workspaceRoot);
+			dirtyContentByWsPath.set(entry.wsRel, readUtf8TextFileIfExists(fullPath));
+		}
+		return { topLevel, orderedEntries, dirtyContentByWsPath };
+	} catch {
+		return null;
+	}
+}
+
+async function readGitHeadTextOrNull(gitTopLevel: string, repoRel: string): Promise<string | null> {
+	try {
+		const { stdout } = await execFileAsync(
+			'git',
+			['-c', 'core.quotepath=false', 'show', `HEAD:${repoRel}`],
+			{
+				cwd: gitTopLevel,
+				windowsHide: true,
+				maxBuffer: 10 * 1024 * 1024,
+				encoding: 'utf8',
+			}
+		);
+		const content = String(stdout ?? '');
+		return content.includes('\u0000') ? null : content;
+	} catch {
+		return null;
+	}
+}
+
+async function recordBashWorkspaceSnapshots(
+	workspaceRoot: string,
+	hooks: ToolExecutionHooks,
+	beforeState: BashGitDirtyState | null
+): Promise<void> {
+	if (!hooks.beforeWrite && !hooks.afterWrite) {
+		return;
+	}
+	const afterState = await captureBashGitDirtyState(workspaceRoot);
+	const gitTopLevel = afterState?.topLevel ?? beforeState?.topLevel;
+	if (!gitTopLevel) {
+		return;
+	}
+	const orderedEntries: Array<{ repoRel: string; wsRel: string }> = [];
+	const seen = new Set<string>();
+	const pushUnique = (entry: { repoRel: string; wsRel: string }) => {
+		if (seen.has(entry.wsRel)) {
+			return;
+		}
+		seen.add(entry.wsRel);
+		orderedEntries.push(entry);
+	};
+	for (const entry of afterState?.orderedEntries ?? []) {
+		pushUnique(entry);
+	}
+	for (const entry of beforeState?.orderedEntries ?? []) {
+		pushUnique(entry);
+	}
+	for (const entry of orderedEntries) {
+		const previousContent = beforeState?.dirtyContentByWsPath.has(entry.wsRel)
+			? (beforeState.dirtyContentByWsPath.get(entry.wsRel) ?? null)
+			: await readGitHeadTextOrNull(gitTopLevel, entry.repoRel);
+		const fullPath = resolveWorkspacePath(entry.wsRel, workspaceRoot);
+		const nextContent = readUtf8TextFileIfExists(fullPath);
+		if ((previousContent ?? null) === (nextContent ?? null)) {
+			continue;
+		}
+		await hooks.beforeWrite?.({ path: entry.wsRel, previousContent });
+		if (nextContent !== null) {
+			await hooks.afterWrite?.({ path: entry.wsRel, previousContent, nextContent });
+		} else if (previousContent !== null) {
+			await hooks.afterWrite?.({ path: entry.wsRel, previousContent, nextContent: '' });
+		}
+	}
+}
+
+async function executeCommand(
+	call: ToolCall,
+	hooks: ToolExecutionHooks,
+	execCtx: ToolExecutionContext
+): Promise<ToolResult> {
 	throwIfToolAbortRequested(execCtx.signal, call.name, 'command:start');
 	const root = requireWorkspace(execCtx);
 	const command = String(call.arguments.command ?? '').trim();
@@ -1015,6 +1214,7 @@ async function executeCommand(call: ToolCall, execCtx: ToolExecutionContext): Pr
 	const args = isWin
 		? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psCommand]
 		: ['-lc', command];
+	const beforeGitState = await captureBashGitDirtyState(root);
 
 	try {
 		const { stdout, stderr } = await execFileAsync(shell, args, {
@@ -1025,6 +1225,7 @@ async function executeCommand(call: ToolCall, execCtx: ToolExecutionContext): Pr
 			encoding: 'utf8',
 			signal: execCtx.signal,
 		});
+		await recordBashWorkspaceSnapshots(root, hooks, beforeGitState);
 		let output = '';
 		if (stdout) output += stdout;
 		if (stderr) output += (output ? '\n--- stderr ---\n' : '') + stderr;
@@ -1037,6 +1238,7 @@ async function executeCommand(call: ToolCall, execCtx: ToolExecutionContext): Pr
 		if (e instanceof Error && e.name === 'AbortError') {
 			throw e;
 		}
+		await recordBashWorkspaceSnapshots(root, hooks, beforeGitState);
 		const err = e as { stdout?: string; stderr?: string; message?: string; code?: number };
 		let output = '';
 		if (err.stdout) output += err.stdout;
@@ -1058,7 +1260,7 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 		return {
 			toolCallId: call.id,
 			name: call.name,
-			content: 'Error: `prompt` is required (Claude Code `Agent` tool).',
+			content: 'Error: `prompt` is required for the Agent tool.',
 			isError: true,
 		};
 	}
@@ -1575,7 +1777,7 @@ async function executeLspTool(call: ToolCall, execCtx: ToolExecutionContext): Pr
 		return {
 			toolCallId: call.id,
 			name: call.name,
-			content: `No LSP server handles extension "${ext}". Add a Claude-style plugin under <asyncData>/plugins/<name>/ or <workspace>/.async/plugins/<name>/ with .lsp.json (command + extensionToLanguage), or use legacy settings.json "lsp.servers". For TS/JS, install typescript-language-server in the project or register it explicitly.`,
+			content: `No LSP server handles extension "${ext}". Add a plugin under <asyncData>/plugins/<name>/ or <workspace>/.async/plugins/<name>/ with .lsp.json (command + extensionToLanguage), or use legacy settings.json "lsp.servers". For TS/JS, install typescript-language-server in the project or register it explicitly.`,
 			isError: false,
 		};
 	}

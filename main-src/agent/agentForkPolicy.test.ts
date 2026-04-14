@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { shouldRunAgentInBackground } from './agentForkPolicy.js';
 
-describe('shouldRunAgentInBackground (Claude Code FORK_SUBAGENT–style gate)', () => {
+describe('shouldRunAgentInBackground (background fork gate)', () => {
 	it('returns true when run_in_background is true regardless of gate or subagent_type', () => {
 		expect(
 			shouldRunAgentInBackground({

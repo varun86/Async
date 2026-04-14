@@ -5,7 +5,11 @@ import {
 	segmentAssistantContentUnified,
 	type FileChangeSummary,
 } from './agentChatSegments';
-import { mergeAgentFileChangesWithGit, type DiffPreviewStats } from './agentFileChangesFromGit';
+import {
+	mergeAgentFileChangesWithGit,
+	type DiffPreviewStats,
+	workspaceRelPathsEqual,
+} from './agentFileChangesFromGit';
 import type { TFunction } from './i18n';
 import type { ChatMessage } from './threadTypes';
 
@@ -31,30 +35,60 @@ export function computeMergedAgentFileChanges(
 	t: TFunction,
 	dismissedFiles: ReadonlySet<string>,
 	git: GitMergePack,
-	segmentCacheRef: SegmentCache | null
+	segmentCacheRef: SegmentCache | null,
+	snapshotPaths: ReadonlySet<string> = new Set<string>()
 ): FileChangeSummary[] {
-	if (composerMode !== 'agent') {
+	if (composerMode !== 'agent' && composerMode !== 'team') {
 		return [];
 	}
 	const lastAssistant = [...displayMessages].reverse().find((m) => m.role === 'assistant');
-	if (!lastAssistant) {
-		return [];
+	let all: FileChangeSummary[] = [];
+	if (lastAssistant) {
+		let segs: ReturnType<typeof segmentAssistantContentUnified>;
+		if (segmentCacheRef?.current?.content === lastAssistant.content) {
+			segs = segmentCacheRef.current.result;
+		} else {
+			segs = segmentAssistantContentUnified(lastAssistant.content, { t });
+			if (segmentCacheRef) {
+				segmentCacheRef.current = { content: lastAssistant.content, result: segs };
+			}
+		}
+		all = collectFileChanges(segs);
 	}
-	let segs: ReturnType<typeof segmentAssistantContentUnified>;
-	if (segmentCacheRef?.current?.content === lastAssistant.content) {
-		segs = segmentCacheRef.current.result;
-	} else {
-		segs = segmentAssistantContentUnified(lastAssistant.content, { t });
-		if (segmentCacheRef) {
-			segmentCacheRef.current = { content: lastAssistant.content, result: segs };
+	if (snapshotPaths.size > 0) {
+		const seen = new Set(all.map((file) => file.path));
+		for (const relPath of snapshotPaths) {
+			if (!relPath || seen.has(relPath)) {
+				continue;
+			}
+			all.push({ path: relPath, additions: 0, deletions: 0 });
+			seen.add(relPath);
 		}
 	}
-	const all = collectFileChanges(segs);
 	const afterDismiss =
 		dismissedFiles.size > 0 ? all.filter((f) => !dismissedFiles.has(f.path)) : all;
-	return mergeAgentFileChangesWithGit(afterDismiss, {
+	const merged = mergeAgentFileChangesWithGit(afterDismiss, {
 		gitStatusOk: git.gitStatusOk,
 		gitChangedPaths: git.gitChangedPaths,
 		diffPreviews: git.diffPreviews,
 	});
+	if (!git.gitStatusOk || snapshotPaths.size === 0) {
+		return merged;
+	}
+	const out = [...merged];
+	for (const relPath of snapshotPaths) {
+		if (dismissedFiles.has(relPath)) {
+			continue;
+		}
+		if (out.some((file) => workspaceRelPathsEqual(file.path, relPath))) {
+			continue;
+		}
+		const stats = Object.entries(git.diffPreviews).find(([path]) => workspaceRelPathsEqual(path, relPath))?.[1];
+		out.push({
+			path: relPath,
+			additions: stats?.additions ?? 0,
+			deletions: stats?.deletions ?? 0,
+		});
+	}
+	return out;
 }

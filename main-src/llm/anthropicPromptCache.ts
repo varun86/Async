@@ -1,5 +1,5 @@
 /**
- * Anthropic Prompt Caching — 对齐 Claude Code `services/api/claude.ts` 的核心策略：
+ * Anthropic Prompt Caching 核心策略：
  * - system 使用文本块 + `cache_control: { type: 'ephemeral' }`（不做 1h TTL / GrowthBook allowlist，与 CC 默认 5m 一致）
  * - 每轮请求在**恰好一条**对话消息上挂断点（默认最后一条；`skipCacheWrite` 时为倒数第二条，对齐 fork 路径）
  * - 不在内存中的 `conversation` 上持久写入 cache 标记：每轮 API 调用前对克隆应用断点，避免多轮累积多个 marker

@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { buildTeamWorkflowItems, type TeamWorkflowListItem } from './teamWorkflowItems';
+import { TeamRoleAvatar } from './TeamRoleAvatar';
 import type { TFunction } from './i18n';
 import type { TeamSessionState, TeamTaskStatus } from './hooks/useTeamSession';
 
@@ -46,9 +47,7 @@ export const TeamWorkflowTimelineCard = memo(function TeamWorkflowTimelineCard({
 								className={`ref-team-timeline-item ${session.selectedTaskId === item.id ? 'is-active' : ''}`}
 								onClick={() => onSelectTask(item.id)}
 							>
-								<span className={`ref-team-expert-avatar ref-team-expert-avatar--${item.roleType}`}>
-									{item.expertName.slice(0, 1).toUpperCase()}
-								</span>
+								<TeamRoleAvatar roleType={item.roleType} assignmentKey={item.expertAssignmentKey} />
 								<span className="ref-team-timeline-item-copy">
 									<span className="ref-team-timeline-item-meta">{roleKindLabel(t, item)}</span>
 									<span className="ref-team-timeline-item-title">{item.expertName}</span>
@@ -77,9 +76,7 @@ export const TeamWorkflowTimelineCard = memo(function TeamWorkflowTimelineCard({
 								className={`ref-team-timeline-item ${session.selectedTaskId === item.id ? 'is-active' : ''}`}
 								onClick={() => onSelectTask(item.id)}
 							>
-								<span className={`ref-team-expert-avatar ref-team-expert-avatar--${item.roleType}`}>
-									{item.expertName.slice(0, 1).toUpperCase()}
-								</span>
+								<TeamRoleAvatar roleType={item.roleType} assignmentKey={item.expertAssignmentKey} />
 								<span className="ref-team-timeline-item-copy">
 									<span className="ref-team-timeline-item-meta">{roleKindLabel(t, item)}</span>
 									<span className="ref-team-timeline-item-title">{item.expertName}</span>

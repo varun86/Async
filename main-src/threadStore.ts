@@ -36,7 +36,7 @@ export type TeamSessionSnapshotTask = {
 };
 
 export type TeamSessionSnapshot = {
-	phase: 'planning' | 'executing' | 'reviewing' | 'delivering';
+	phase: 'researching' | 'planning' | 'executing' | 'reviewing' | 'delivering';
 	tasks: TeamSessionSnapshotTask[];
 	planSummary: string;
 	leaderMessage: string;
@@ -55,7 +55,7 @@ export type ThreadRecord = {
 	summary?: string;
 	summaryCoversMessageCount?: number;
 	memoryExtractedMessageCount?: number;
-	/** Agent/Plan 对话中已完成的工具调用次数（用于记忆抽取阈值，对齐 CC SessionMemory 的 toolCallsBetweenUpdates） */
+/** Agent/Plan 对话中已完成的工具调用次数（用于记忆抽取阈值） */
 	agentToolCallsCompleted?: number;
 	/** 上次记忆抽取完成时的 `agentToolCallsCompleted`，用于计算间隔内工具调用数 */
 	memoryExtractionToolBaseline?: number;
@@ -78,6 +78,8 @@ export type ThreadPlan = {
 	title: string;
 	steps: PlanStep[];
 	updatedAt: number;
+	sourcePath?: string;
+	sourceRelPath?: string;
 };
 
 type ThreadBucket = {

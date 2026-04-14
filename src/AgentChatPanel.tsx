@@ -26,6 +26,8 @@ import { ToolApprovalInlineCard, type ToolApprovalPayload } from './ToolApproval
 import { AgentMistakeLimitDialog, type MistakeLimitPayload } from './AgentMistakeLimitDialog';
 import { PlanReviewPanel } from './PlanReviewPanel';
 import { TeamPlanReviewPanel } from './TeamPlanReviewPanel';
+import { TeamPlanRevisionCard } from './TeamPlanRevisionCard';
+import { TeamRoleAvatar } from './TeamRoleAvatar';
 import { ComposerThoughtBlock } from './ComposerThoughtBlock';
 import { UserMessageRich } from './UserMessageRich';
 import {
@@ -45,7 +47,7 @@ import { IconArrowDown, IconChevron, IconDoc } from './icons';
 import { type ParsedPlan, type PlanQuestion } from './planParser';
 import { type ChatMessage } from './threadTypes';
 import type { TeamSessionState } from './hooks/useTeamSession';
-import { buildTeamWorkflowItems } from './teamWorkflowItems';
+import { buildTeamConversationTimeline } from './teamChatTimeline';
 
 type SharedComposerProps = Omit<
 	ComponentProps<typeof ChatComposer>,
@@ -131,6 +133,7 @@ export type AgentChatPanelProps = {
 	respondToolApproval: (allow: boolean) => void;
 	/** 逐文件忽略改动条；与 Git 合并后的列表在面板内计算，避免 Git fullStatus 拖垮 useAgentChatPanelProps */
 	dismissedFiles: ReadonlySet<string>;
+	snapshotPaths: ReadonlySet<string>;
 	fileChangesDismissed: boolean;
 	onKeepAllEdits: () => void;
 	onRevertAllEdits: () => void;
@@ -263,6 +266,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	toolApprovalRequest,
 	respondToolApproval,
 	dismissedFiles,
+	snapshotPaths,
 	fileChangesDismissed,
 	onKeepAllEdits,
 	onRevertAllEdits,
@@ -306,9 +310,10 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 				t,
 				dismissedFiles,
 				{ gitStatusOk, gitChangedPaths, diffPreviews },
-				segmentCacheRef
+				segmentCacheRef,
+				snapshotPaths
 			),
-		[displayMessages, composerMode, t, dismissedFiles, gitStatusOk, gitChangedPaths, diffPreviews]
+		[displayMessages, composerMode, t, dismissedFiles, gitStatusOk, gitChangedPaths, diffPreviews, snapshotPaths]
 	);
 
 	const isEditorRail = layout === 'editor-rail';
@@ -748,16 +753,26 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		return nodes;
 	};
 
-	const buildTeamLeaderRow = (): ReactNode | null => {
+	const buildTeamLeaderRow = (contentOverride?: string, rowIndex = displayMessages.length): ReactNode | null => {
 		if (!teamSession || composerMode !== 'team' || !hasConversation) {
 			return null;
 		}
 		const workflow = teamSession.leaderWorkflow;
-		const content = teamSession.leaderMessage || '';
+		const content = contentOverride ?? teamSession.leaderMessage ?? '';
+		const lastAssistantContent =
+			[...displayMessages].reverse().find((message) => message.role === 'assistant')?.content?.trim() || '';
 		const hasLiveBlocks = (workflow?.liveBlocks.blocks.length ?? 0) > 0;
 		const isBootstrapping = awaitingReply && !workflow && !content.trim();
 		const isWorking = Boolean(workflow?.awaitingReply) || isBootstrapping;
+		const hideAsDuplicateTerminalReply =
+			teamSession.phase === 'delivering' &&
+			teamSession.tasks.length === 0 &&
+			lastAssistantContent.length > 0 &&
+			lastAssistantContent === content.trim();
 		if (!content.trim() && !isWorking && !hasLiveBlocks) {
+			return null;
+		}
+		if (hideAsDuplicateTerminalReply) {
 			return null;
 		}
 		const liveThoughtMeta =
@@ -774,7 +789,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			<div
 				key={`row-${conversationRenderKey}-team-leader`}
 				className="ref-msg-row-measure ref-msg-row-measure--team-leader"
-				data-msg-index={String(displayMessages.length)}
+				data-msg-index={String(rowIndex)}
 			>
 				<div className="ref-msg-slot ref-msg-slot--assistant">
 					<div className="ref-msg-assistant-body">
@@ -797,59 +812,125 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		);
 	};
 
+	const buildHistoricalTeamLeaderRow = (
+		content: string,
+		rowKey: string,
+		rowIndex: number
+	): ReactNode => (
+		<div
+			key={`row-${conversationRenderKey}-${rowKey}`}
+			className="ref-msg-row-measure ref-msg-row-measure--team-leader"
+			data-msg-index={String(rowIndex)}
+		>
+			<div className="ref-msg-slot ref-msg-slot--assistant">
+				<div className="ref-msg-assistant-body">
+					<ChatMarkdown
+						content={content}
+						agentUi
+						workspaceRoot={workspace}
+						onOpenAgentFile={onOpenAgentConversationFile}
+						onRunCommand={onRunCommand}
+						revertedPaths={revertedFiles}
+						revertedChangeKeys={revertedChangeKeys}
+						skipPlanTodo
+					/>
+				</div>
+			</div>
+		</div>
+	);
+
+	const buildTeamTaskRow = (
+		item: {
+			id: string;
+			roleType: Parameters<typeof TeamRoleAvatar>[0]['roleType'];
+			expertAssignmentKey?: string;
+			roleKind: 'specialist' | 'reviewer';
+			expertName: string;
+			description: string;
+			acceptanceCriteria?: string[];
+			status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'revision';
+		},
+		rowIndex: number
+	): ReactNode => (
+		<div
+			key={`row-${conversationRenderKey}-team-item-${item.id}`}
+			className="ref-msg-row-measure ref-msg-row-measure--team-item"
+			data-msg-index={String(rowIndex)}
+		>
+			<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-item">
+				<button
+					type="button"
+					className={`ref-team-timeline-item ${teamSession?.selectedTaskId === item.id ? 'is-active' : ''}`}
+					onClick={() => onSelectTeamExpert(item.id)}
+				>
+					<TeamRoleAvatar roleType={item.roleType} assignmentKey={item.expertAssignmentKey} />
+					<span className="ref-team-timeline-item-copy">
+						<span className="ref-team-timeline-item-meta">{t(`team.timeline.role.${item.roleKind}`)}</span>
+						<span className="ref-team-timeline-item-title">{item.expertName}</span>
+						<span className="ref-team-timeline-item-body">{item.description}</span>
+						{item.acceptanceCriteria && item.acceptanceCriteria.length > 0 ? (
+							<ul className="ref-team-timeline-item-criteria">
+								{item.acceptanceCriteria.map((criterion, idx) => (
+									<li key={idx}>{criterion}</li>
+								))}
+							</ul>
+						) : null}
+					</span>
+					<span className={`ref-team-expert-status ref-team-expert-status--${item.status}`}>
+						{item.status === 'in_progress' ? <span className="ref-team-pulse" /> : null}
+						{t(`team.timeline.status.${item.status}`)}
+					</span>
+				</button>
+			</div>
+		</div>
+	);
+
 	const buildTeamTimelineRows = (): ReactNode[] => {
 		const nodes = buildFlatMessageList();
 		if (!teamSession || composerMode !== 'team' || !hasConversation) {
 			return nodes;
 		}
-		const workflowItems = buildTeamWorkflowItems(teamSession);
-		const leaderRow = buildTeamLeaderRow();
-		const planProposal = teamSession.planProposal;
-		const planProposalRow: ReactNode | null = planProposal ? (
-			<div
-				key={`row-${conversationRenderKey}-team-plan-proposal`}
-				className="ref-msg-row-measure ref-msg-row-measure--team-plan"
-				data-msg-index={String(displayMessages.length)}
-			>
-				<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-plan">
-					<TeamPlanReviewPanel
-						proposal={planProposal}
-						onApprove={(fb) => onTeamPlanApprove(planProposal.proposalId, fb)}
-						onReject={(fb) => onTeamPlanReject(planProposal.proposalId, fb)}
-					/>
-				</div>
-			</div>
-		) : null;
-		const timelineItemRows = workflowItems.map((item, idx) => (
-			<div
-				key={`row-${conversationRenderKey}-team-item-${item.id}`}
-				className="ref-msg-row-measure ref-msg-row-measure--team-item"
-				data-msg-index={String(displayMessages.length + 1 + idx)}
-			>
-				<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-item">
-					<button
-						type="button"
-						className={`ref-team-timeline-item ${teamSession.selectedTaskId === item.id ? 'is-active' : ''}`}
-						onClick={() => onSelectTeamExpert(item.id)}
+		const teamTimeline = buildTeamConversationTimeline(teamSession, displayMessages);
+		let syntheticIndex = displayMessages.length;
+		const nextSyntheticIndex = () => syntheticIndex++;
+		const timelineRows = teamTimeline.entries.map((entry) => {
+			if (entry.kind === 'leader_message') {
+				return buildHistoricalTeamLeaderRow(entry.content, entry.id, nextSyntheticIndex());
+			}
+			if (entry.kind === 'plan_proposal') {
+				return (
+					<div
+						key={`row-${conversationRenderKey}-${entry.id}`}
+						className="ref-msg-row-measure ref-msg-row-measure--team-plan"
+						data-msg-index={String(nextSyntheticIndex())}
 					>
-						<span className={`ref-team-expert-avatar ref-team-expert-avatar--${item.roleType}`}>
-							{item.expertName.slice(0, 1).toUpperCase()}
-						</span>
-						<span className="ref-team-timeline-item-copy">
-							<span className="ref-team-timeline-item-meta">
-								{t(`team.timeline.role.${item.roleKind}`)}
-							</span>
-							<span className="ref-team-timeline-item-title">{item.expertName}</span>
-							<span className="ref-team-timeline-item-body">{item.description}</span>
-						</span>
-						<span className={`ref-team-expert-status ref-team-expert-status--${item.status}`}>
-							{item.status === 'in_progress' ? <span className="ref-team-pulse" /> : null}
-							{t(`team.timeline.status.${item.status}`)}
-						</span>
-					</button>
-				</div>
-			</div>
-		));
+						<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-plan">
+							<TeamPlanReviewPanel
+								proposal={entry.proposal}
+								hideSummary={entry.hideSummary}
+								onApprove={(fb) => onTeamPlanApprove(entry.proposal.proposalId, fb)}
+								onReject={(fb) => onTeamPlanReject(entry.proposal.proposalId, fb)}
+							/>
+						</div>
+					</div>
+				);
+			}
+			if (entry.kind === 'plan_revision') {
+				return (
+					<div
+						key={`row-${conversationRenderKey}-${entry.id}`}
+						className="ref-msg-row-measure ref-msg-row-measure--team-plan"
+						data-msg-index={String(nextSyntheticIndex())}
+					>
+						<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-plan">
+							<TeamPlanRevisionCard revision={entry.revision} />
+						</div>
+					</div>
+				);
+			}
+			return buildTeamTaskRow(entry.item, nextSyntheticIndex());
+		});
+		const currentLeaderRow = buildTeamLeaderRow(teamTimeline.currentLeaderMessage, nextSyntheticIndex());
 		const isTrailingDeliveryMessage =
 			!awaitingReply &&
 			lastAssistantMessageIndex === displayMessages.length - 1 &&
@@ -858,26 +939,20 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 
 		if (isTrailingDeliveryMessage) {
 			const trailingAssistant = nodes.pop();
-			if (leaderRow) {
-				nodes.push(leaderRow);
+			nodes.push(...timelineRows);
+			if (currentLeaderRow) {
+				nodes.push(currentLeaderRow);
 			}
-			if (planProposalRow) {
-				nodes.push(planProposalRow);
-			}
-			nodes.push(...timelineItemRows);
 			if (trailingAssistant) {
 				nodes.push(trailingAssistant);
 			}
 			return nodes;
 		}
 
-		if (leaderRow) {
-			nodes.push(leaderRow);
+		nodes.push(...timelineRows);
+		if (currentLeaderRow) {
+			nodes.push(currentLeaderRow);
 		}
-		if (planProposalRow) {
-			nodes.push(planProposalRow);
-		}
-		nodes.push(...timelineItemRows);
 		return nodes;
 	};
 
@@ -943,7 +1018,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 				/>
 			) : null}
 
-			{hasConversation && planQuestion && composerMode === 'plan' ? (
+			{hasConversation && planQuestion && (composerMode === 'plan' || composerMode === 'team') ? (
 				<PlanQuestionDialog
 					question={planQuestion}
 					onSubmit={onPlanQuestionSubmit}
@@ -1049,7 +1124,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 				/>
 			) : null}
 			{hasConversation &&
-			composerMode === 'agent' &&
+			(composerMode === 'agent' || composerMode === 'team') &&
 			agentFileChanges.length > 0 &&
 			!awaitingReply &&
 			!fileChangesDismissed ? (

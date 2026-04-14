@@ -1,3 +1,5 @@
+import { flattenAssistantTextPartsForSearch } from './agentStructuredMessage';
+
 function normalizeNarrativeText(text: string): string {
 	return text.replace(/\n{3,}/g, '\n\n').trim();
 }
@@ -28,7 +30,7 @@ function stripTrailingRawJson(text: string): string {
 }
 
 export function extractTeamLeadNarrative(summary: string): string {
-	const text = String(summary ?? '').trim();
+	const text = flattenAssistantTextPartsForSearch(String(summary ?? '')).trim();
 	if (!text) {
 		return '';
 	}

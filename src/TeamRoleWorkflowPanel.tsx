@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef } from 'react';
 import { ChatMarkdown } from './ChatMarkdown';
+import { TeamRoleAvatar } from './TeamRoleAvatar';
 import type { TFunction } from './i18n';
 import type { ChatMessage } from './threadTypes';
 import type { TeamSessionState } from './hooks/useTeamSession';
@@ -14,6 +15,16 @@ type Props = {
 	onSelectTask: (taskId: string) => void;
 	layout: 'agent-sidebar' | 'editor-center';
 	isVisible?: boolean;
+	workspaceRoot?: string | null;
+	onOpenAgentFile?: (
+		relPath: string,
+		revealLine?: number,
+		revealEndLine?: number,
+		options?: { diff?: string | null; allowReviewActions?: boolean }
+	) => void;
+	revertedPaths?: ReadonlySet<string>;
+	revertedChangeKeys?: ReadonlySet<string>;
+	allowAgentFileActions?: boolean;
 };
 
 function renderAssistantMessage(
@@ -28,6 +39,11 @@ function renderAssistantMessage(
 			streamingThinking: string;
 			tokenUsage?: TurnTokenUsage | null;
 		} | null;
+		workspaceRoot?: string | null;
+		onOpenAgentFile?: Props['onOpenAgentFile'];
+		revertedPaths?: ReadonlySet<string>;
+		revertedChangeKeys?: ReadonlySet<string>;
+		allowAgentFileActions?: boolean;
 	}
 ) {
 	return (
@@ -36,10 +52,14 @@ function renderAssistantMessage(
 				<ChatMarkdown
 					content={content}
 					agentUi
-					workspaceRoot={null}
+					workspaceRoot={options?.workspaceRoot ?? null}
+					onOpenAgentFile={options?.onOpenAgentFile}
 					showAgentWorking={options?.isWorking ?? false}
 					liveAgentBlocksState={options?.liveBlocks ?? null}
 					liveThoughtMeta={options?.liveThoughtMeta ?? null}
+					revertedPaths={options?.revertedPaths}
+					revertedChangeKeys={options?.revertedChangeKeys}
+					allowAgentFileActions={options?.allowAgentFileActions ?? false}
 				/>
 			</div>
 		</div>
@@ -53,6 +73,11 @@ export const TeamRoleWorkflowPanel = memo(function TeamRoleWorkflowPanel({
 	onSelectTask,
 	layout,
 	isVisible = true,
+	workspaceRoot = null,
+	onOpenAgentFile,
+	revertedPaths,
+	revertedChangeKeys,
+	allowAgentFileActions = false,
 }: Props) {
 	if (!session) {
 		return (
@@ -157,13 +182,24 @@ export const TeamRoleWorkflowPanel = memo(function TeamRoleWorkflowPanel({
 			className={`ref-team-role-stream ${layout === 'agent-sidebar' ? 'ref-team-role-stream--agent-sidebar' : 'ref-team-role-stream--editor-center'}`}
 		>
 			{savedMessages.map((message, index) =>
-				renderAssistantMessage(`team-role-msg-${item.id}-${index}`, message.content)
+				renderAssistantMessage(`team-role-msg-${item.id}-${index}`, message.content, {
+					workspaceRoot,
+					onOpenAgentFile,
+					revertedPaths,
+					revertedChangeKeys,
+					allowAgentFileActions,
+				})
 			)}
 			{isWorking
 				? renderAssistantMessage(`team-role-live-${item.id}`, workflow?.streaming ?? '', {
 						isWorking: true,
 						liveBlocks: workflow?.liveBlocks ?? null,
 						liveThoughtMeta,
+						workspaceRoot,
+						onOpenAgentFile,
+						revertedPaths,
+						revertedChangeKeys,
+						allowAgentFileActions: false,
 					})
 				: null}
 			{!savedMessages.length && !isWorking ? (
@@ -181,9 +217,7 @@ export const TeamRoleWorkflowPanel = memo(function TeamRoleWorkflowPanel({
 			<header className="ref-team-role-shell-head">
 				<div className="ref-team-role-shell-main">
 					<div className="ref-team-role-shell-expert">
-						<span className={`ref-team-expert-avatar ref-team-expert-avatar--${item.roleType}`}>
-							{item.expertName.slice(0, 1).toUpperCase()}
-						</span>
+						<TeamRoleAvatar roleType={item.roleType} assignmentKey={item.expertAssignmentKey} />
 						<div className="ref-team-role-shell-title-stack">
 							<div className="ref-team-role-shell-title-row">
 								<span className="ref-team-role-shell-role">

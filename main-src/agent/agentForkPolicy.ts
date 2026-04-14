@@ -1,5 +1,5 @@
 /**
- * Background fork policy aligned with Claude Code's FORK_SUBAGENT + omit `subagent_type` behavior.
+ * Background fork policy for omit-`subagent_type` behavior.
  * Pure logic for unit tests and toolExecutor.
  */
 

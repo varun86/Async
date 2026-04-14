@@ -1,5 +1,5 @@
 /**
- * Agent 工具定义 — 类似 Cursor / Claude Code 的工具集。
+ * Agent 工具定义。
  * 每个工具包含名称、描述和 JSON Schema 参数，供 OpenAI / Anthropic / Gemini 的 tool calling 使用。
  */
 
@@ -26,7 +26,7 @@ export type ToolResult = {
 	isError: boolean;
 };
 
-/** 只读工具：可安全并发执行，不修改文件系统或运行副作用命令（含 Claude Code 风格的 MCP 资源工具） */
+/** 只读工具：可安全并发执行，不修改文件系统或运行副作用命令（含 MCP 资源工具） */
 export const READ_ONLY_AGENT_TOOL_NAMES = [
 	'Read',
 	'Glob',
@@ -45,7 +45,7 @@ export function agentToolsForComposerMode(
 	all: AgentToolDef[] = AGENT_TOOLS
 ): AgentToolDef[] {
 	if (mode === 'plan') {
-		return all.filter((d) => isReadOnlyAgentTool(d.name) || d.name === 'ask_plan_question');
+		return all.filter((d) => isReadOnlyAgentTool(d.name) || d.name === 'ask_plan_question' || d.name === 'plan_submit_draft');
 	}
 	return all.filter((d) => d.name !== 'ask_plan_question');
 }
@@ -230,7 +230,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 	{
 		name: 'LSP',
 		description:
-			'Language-server intelligence for the workspace, routed by **file extension** to LSP servers loaded like **Claude Code**: plugin dirs under `<asyncData>/plugins/<name>/` or `<workspace>/.async/plugins/<name>/` with **`.lsp.json`** or **`plugin.json` → `lspServers`** (each server: **command**, optional **args**, required **extensionToLanguage** map). Legacy **`lsp.servers`** in settings.json is still merged. TS/JS additionally works if **typescript-language-server** is discoverable under the app or workspace `node_modules` (optional).\n\nOperations: goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls, getDiagnostics. Use **filePath** plus 1-based **line**/**character** except **getDiagnostics**/**workspaceSymbol** (optional line/char).\n\nIf nothing matches the file extension, add a plugin or legacy server entry. If an LSP method fails, fall back to **Read** / **Grep** / **Bash**.',
+			'Language-server intelligence for the workspace, routed by **file extension** to LSP servers declared in plugin dirs under `<asyncData>/plugins/<name>/` or `<workspace>/.async/plugins/<name>/` with **`.lsp.json`** or **`plugin.json` → `lspServers`** (each server: **command**, optional **args**, required **extensionToLanguage** map). Legacy **`lsp.servers`** in settings.json is still merged. TS/JS additionally works if **typescript-language-server** is discoverable under the app or workspace `node_modules` (optional).\n\nOperations: goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls, getDiagnostics. Use **filePath** plus 1-based **line**/**character** except **getDiagnostics**/**workspaceSymbol** (optional line/char).\n\nIf nothing matches the file extension, add a plugin or legacy server entry. If an LSP method fails, fall back to **Read** / **Grep** / **Bash**.',
 		parameters: {
 			type: 'object',
 			properties: {
@@ -270,13 +270,13 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 	{
 		name: 'Agent',
 		description:
-			'Spawn a focused sub-agent (Claude Code–style). Use for scoped, autonomous work: deep codebase exploration, refactors isolated to a module, or keeping your main context clean. The sub-agent runs a full tool loop and returns its final text (or runs in background when configured like Claude Code fork). Set subagent_type to "explore" for read-only exploration; use a custom name from user subagent settings for tailored instructions. Omit subagent_type with background-fork enabled in settings (or set run_in_background) to run async: tool returns immediately while work continues. Nested Agent calls are blocked. Maximum nesting depth is 1.',
+			'Spawn a focused sub-agent. Use for scoped, autonomous work: deep codebase exploration, refactors isolated to a module, or keeping your main context clean. The sub-agent runs a full tool loop and returns its final text. With background fork enabled, omitting subagent_type (or setting run_in_background) lets work continue asynchronously while the tool returns immediately. Set subagent_type to "explore" for read-only exploration; use a custom name from user subagent settings for tailored instructions. Nested Agent calls are blocked. Maximum nesting depth is 1.',
 		parameters: {
 			type: 'object',
 			properties: {
 				prompt: {
 					type: 'string',
-					description: 'Instructions for the sub-agent (Claude Code `Agent` tool: `prompt`)',
+					description: 'Instructions for the sub-agent (`prompt`)',
 				},
 				subagent_type: {
 					type: 'string',
@@ -290,7 +290,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 				run_in_background: {
 					type: 'boolean',
 					description:
-						'If true, sub-agent runs in the background: tool returns immediately with a short notice; streamed nested activity still appears; user gets a completion toast. Same spirit as Claude Code async Agent when fork is enabled.',
+						'If true, the sub-agent runs in the background: the tool returns immediately with a short notice, nested activity still streams, and the user gets a completion toast when it finishes.',
 				},
 			},
 			required: ['prompt'],
@@ -365,7 +365,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 	{
 		name: 'ask_plan_question',
 		description:
-			'Plan mode only: ask the user ONE multiple-choice clarification. Keep the old Plan UX shape: provide exactly 4 options total, where the first 3 are concrete recommendations and the 4th is an Other/custom option for free text. The app shows a picker and custom input; your next turn receives the user answer as this tool\'s result text. Call at most one per assistant turn; wait for the result before asking another or drafting `# Plan:`. Do not duplicate the same question in markdown.',
+			'Planning clarification tool: ask the user ONE multiple-choice clarification. Keep the old Plan UX shape: provide exactly 4 options total, where the first 3 are concrete recommendations and the 4th is an Other/custom option for free text. The app shows a picker and custom input; your next turn receives the user answer as this tool\'s result text. Call at most one per assistant turn; wait for the result before asking another question or drafting the final plan / task routing. Do not duplicate the same question in markdown.',
 		parameters: {
 			type: 'object',
 			properties: {
@@ -393,6 +393,77 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 				},
 			},
 			required: ['question', 'options'],
+		},
+	},
+	{
+		name: 'plan_submit_draft',
+		description:
+			'Submit the structured plan draft for Plan mode. Must be called exactly once when the plan is ready.',
+		parameters: {
+			type: 'object',
+			properties: {
+				title: { type: 'string', description: 'Concise plan title.' },
+				goal: { type: 'string', description: 'One or two sentence goal summary.' },
+				scopeContext: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'Key scope or context bullets.',
+				},
+				executionOverview: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'High-level sequencing or milestone bullets.',
+				},
+				implementationSteps: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							title: { type: 'string' },
+							description: { type: 'string' },
+						},
+						required: ['title', 'description'],
+					},
+					description: 'Ordered implementation steps.',
+				},
+				todos: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							id: { type: 'string' },
+							content: { type: 'string' },
+							status: { type: 'string', enum: ['pending', 'completed'] },
+						},
+						required: ['content'],
+					},
+					description: 'Checklist items for the plan.',
+				},
+				filesToChange: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							path: { type: 'string' },
+							action: { type: 'string', enum: ['Edit', 'New', 'Delete'] },
+							description: { type: 'string' },
+						},
+						required: ['path', 'action', 'description'],
+					},
+					description: 'Planned file changes.',
+				},
+				risksAndEdgeCases: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'Important risks and edge cases.',
+				},
+				openQuestions: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'Outstanding open questions.',
+				},
+			},
+			required: ['title', 'goal', 'implementationSteps', 'todos'],
 		},
 	},
 ];

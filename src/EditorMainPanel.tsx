@@ -81,6 +81,15 @@ export type EditorMainPanelProps = {
 	teamSession: TeamSessionState | null;
 	selectedTeamTaskId: string | null;
 	onSelectTeamTask: (taskId: string) => void;
+	workspaceRoot: string | null;
+	onOpenTeamAgentFile: (
+		relPath: string,
+		revealLine?: number,
+		revealEndLine?: number,
+		options?: { diff?: string | null; allowReviewActions?: boolean }
+	) => void;
+	revertedPaths: ReadonlySet<string>;
+	revertedChangeKeys: ReadonlySet<string>;
 };
 
 export const EditorMainPanel = memo(function EditorMainPanel({
@@ -133,6 +142,10 @@ export const EditorMainPanel = memo(function EditorMainPanel({
 	teamSession,
 	selectedTeamTaskId,
 	onSelectTeamTask,
+	workspaceRoot,
+	onOpenTeamAgentFile,
+	revertedPaths,
+	revertedChangeKeys,
 }: EditorMainPanelProps) {
 	return (
 		<main
@@ -155,6 +168,11 @@ export const EditorMainPanel = memo(function EditorMainPanel({
 								selectedTaskId={selectedTeamTaskId}
 								onSelectTask={onSelectTeamTask}
 								layout="editor-center"
+								workspaceRoot={workspaceRoot}
+								onOpenAgentFile={onOpenTeamAgentFile}
+								revertedPaths={revertedPaths}
+								revertedChangeKeys={revertedChangeKeys}
+								allowAgentFileActions
 							/>
 						</div>
 					) : showEditorPlanDocumentInCenter ? (

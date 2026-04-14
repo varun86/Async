@@ -23,7 +23,7 @@ function readTextFileSafe(fullPath: string, maxChars: number): string {
 	}
 }
 
-/** 简单剥离 `---` YAML frontmatter（与 Claude Code / SKILL.md 习惯对齐） */
+/** 简单剥离 `---` YAML frontmatter */
 function stripSimpleFrontmatter(md: string): { body: string; title?: string; description?: string } {
 	const t = md.trim();
 	if (!t.startsWith('---')) {
@@ -98,7 +98,7 @@ function scanSkillsDirectory(
 
 /**
  * 从工作区加载磁盘技能：
- * - `.claude/skills/<slug>/SKILL.md`（Claude Code）
+ * - `.claude/skills/<slug>/SKILL.md`
  * - `.cursor/skills/<slug>/SKILL.md`（Cursor）
  * - `.async/skills/<slug>/SKILL.md`（本应用约定）
  * 与设置里 Skills 合并时按 slug；**优先级：`.async` > `.cursor` > `.claude`**（后者可被前者覆盖）。
@@ -126,7 +126,7 @@ function mergeSkillsBySlug(settingsSkills: AgentSkill[] | undefined, workspaceSk
 	return [...map.values()];
 }
 
-/** 读取 `CLAUDE.md`、`.claude/CLAUDE.md` 与 `.claude/rules` 下规则（与 Claude Code 项目约定对齐） */
+/** 读取 `CLAUDE.md`、`.claude/CLAUDE.md` 与 `.claude/rules` 下规则 */
 export function loadClaudeProjectRulesMarkdown(workspaceRoot: string | null): string {
 	if (!workspaceRoot) {
 		return '';

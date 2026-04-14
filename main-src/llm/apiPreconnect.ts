@@ -1,5 +1,5 @@
 /**
- * 与 Claude Code `utils/apiPreconnect.ts` 同思路：对 API 基址发起 fire-and-forget `HEAD`，
+ * 对 API 基址发起 fire-and-forget `HEAD`，
  * 让 TCP/TLS 与界面侧准备并行，减轻「首条消息」体感延迟。
  *
  * 在以下情况跳过：与 CC `apiPreconnect.ts` 一致（Bedrock/Vertex/Foundry、代理 env、

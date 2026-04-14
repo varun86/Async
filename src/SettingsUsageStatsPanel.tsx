@@ -185,6 +185,8 @@ function modeLabel(t: (k: string) => string, mode?: string): string {
 			return t('settings.usage.mode.plan');
 		case 'ask':
 			return t('settings.usage.mode.ask');
+		case 'team':
+			return t('settings.usage.mode.team');
 		case 'debug':
 			return t('settings.usage.mode.debug');
 		default:

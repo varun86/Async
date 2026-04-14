@@ -11,7 +11,6 @@ import type { useWorkspaceManager } from '../hooks/useWorkspaceManager';
 import { useGitIntegration } from '../hooks/useGitIntegration';
 import type { AppAppearanceSettings } from '../appearanceSettings';
 import type { AppColorMode, ThemeTransitionOrigin } from '../colorMode';
-import type { IndexingSettingsState } from '../indexingSettingsTypes';
 import type { AppLocale, TFunction } from '../i18n';
 import type { ShellLayoutMode } from './shellLayoutStorage';
 
@@ -25,8 +24,6 @@ export type AppShellChromeValue = {
 	locale: AppLocale;
 	ipcOk: string;
 	setIpcOk: Dispatch<SetStateAction<string>>;
-	indexingSettings: IndexingSettingsState;
-	setIndexingSettings: Dispatch<SetStateAction<IndexingSettingsState>>;
 	layoutPinnedBySurface: boolean;
 	appSurface: ShellLayoutMode | undefined;
 	shellLayoutStorageKey: string;
@@ -99,7 +96,6 @@ export type AppShellSettingsValue = Pick<
 	| 'onPickDefaultModel'
 	| 'onChangeModelEntries'
 	| 'onChangeModelProviders'
-	| 'onPersistIndexingPatch'
 	| 'onRefreshMcpStatuses'
 	| 'onStartMcpServer'
 	| 'onStopMcpServer'

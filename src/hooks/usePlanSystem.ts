@@ -8,6 +8,13 @@ import {
 	type ParsedPlan,
 } from '../planParser';
 import {
+	extractLatestPlanDraftFromAssistantContent,
+	extractLatestPlanDraftFromMessages,
+	planDraftToMarkdown,
+	planDraftToParsedPlan,
+	planDraftToThreadPlan,
+} from '../planDraft';
+import {
 	flattenAssistantTextPartsForSearch,
 	isStructuredAssistantMessage,
 } from '../agentStructuredMessage';
@@ -79,7 +86,15 @@ export function usePlanSystem(
 	const planBuildPendingMarkerRef = useRef<{ threadId: string; pathKey: string } | null>(null);
 
 	// ── Derived plan state ──
+	const latestPersistedPlanDraft = useMemo(
+		() => (currentId && messagesThreadId === currentId ? extractLatestPlanDraftFromMessages(messages) : null),
+		[currentId, messagesThreadId, messages]
+	);
+
 	const latestPersistedAgentPlanMarkdown = useMemo(() => {
+		if (latestPersistedPlanDraft) {
+			return planDraftToMarkdown(latestPersistedPlanDraft);
+		}
 		if (!currentId || messagesThreadId !== currentId) {
 			return '';
 		}
@@ -94,10 +109,18 @@ export function usePlanSystem(
 			}
 		}
 		return '';
-	}, [currentId, messagesThreadId, messages]);
+	}, [currentId, messagesThreadId, messages, latestPersistedPlanDraft]);
+
+	const streamingPlanDraft = useMemo(
+		() => extractLatestPlanDraftFromAssistantContent(streaming),
+		[streaming]
+	);
 
 	const agentPlanPreviewMarkdown = useMemo(() => {
 		if (parsedPlan) return planBodyWithTodos(parsedPlan);
+		if (streamingPlanDraft) {
+			return planDraftToMarkdown(streamingPlanDraft);
+		}
 		if (!streamingMayContainAgentPlanHeading(streaming)) {
 			return latestPersistedAgentPlanMarkdown;
 		}
@@ -107,11 +130,19 @@ export function usePlanSystem(
 			? streamingText.slice(heading.index).trim()
 			: '';
 		return streamingPreview || latestPersistedAgentPlanMarkdown;
-	}, [parsedPlan, streaming, latestPersistedAgentPlanMarkdown]);
+	}, [parsedPlan, streaming, latestPersistedAgentPlanMarkdown, streamingPlanDraft]);
 
 	const agentPlanEffectivePlan = useMemo(
-		() => parsedPlan ?? (agentPlanPreviewMarkdown ? parsePlanDocument(agentPlanPreviewMarkdown) : null),
-		[parsedPlan, agentPlanPreviewMarkdown]
+		() =>
+			parsedPlan ??
+			(streamingPlanDraft
+				? planDraftToParsedPlan(streamingPlanDraft)
+				: latestPersistedPlanDraft
+					? planDraftToParsedPlan(latestPersistedPlanDraft)
+					: agentPlanPreviewMarkdown
+						? parsePlanDocument(agentPlanPreviewMarkdown)
+						: null),
+		[parsedPlan, agentPlanPreviewMarkdown, streamingPlanDraft, latestPersistedPlanDraft]
 	);
 
 	const agentPlanPreviewTitle = useMemo(
@@ -151,12 +182,20 @@ export function usePlanSystem(
 	// ── Callbacks ──
 	const getLatestAgentPlan = useCallback((): ParsedPlan | null => {
 		if (parsedPlan) return parsedPlan;
+		const draftFromStreaming = extractLatestPlanDraftFromAssistantContent(streaming);
+		if (draftFromStreaming) {
+			return planDraftToParsedPlan(draftFromStreaming);
+		}
 		if (streamingMayContainAgentPlanHeading(streaming)) {
 			const streamingText = flattenAssistantTextPartsForSearch(streaming);
 			const heading = streamingText.match(/^#\s+Plan:\s*.+$/m);
 			if (heading && heading.index !== undefined) {
 				return parsePlanDocument(streamingText.slice(heading.index).trim());
 			}
+		}
+		const draftFromMessages = extractLatestPlanDraftFromMessages(messagesRef.current);
+		if (draftFromMessages) {
+			return planDraftToParsedPlan(draftFromMessages);
 		}
 		const msgs = messagesRef.current;
 		for (let i = msgs.length - 1; i >= 0; i--) {
@@ -171,16 +210,31 @@ export function usePlanSystem(
 		return null;
 	}, [parsedPlan, streaming]);
 
-	const planToStructuredDraft = useCallback((plan: ParsedPlan) => ({
-		title: plan.name,
-		steps: plan.todos.map((todo) => ({
-			id: todo.id,
-			title: todo.content.split(':')[0]?.trim() ?? todo.content,
-			description: todo.content,
-			status: todo.status === 'completed' ? ('completed' as const) : ('pending' as const),
-		})),
-		updatedAt: Date.now(),
-	}), []);
+	const planToStructuredDraft = useCallback(
+		(plan: ParsedPlan) =>
+			planDraftToThreadPlan(
+				{
+					title: plan.name,
+					goal: plan.overview,
+					scopeContext: [],
+					executionOverview: [],
+					implementationSteps: plan.todos.map((todo) => ({
+						title: todo.content.split(':')[0]?.trim() ?? todo.content,
+						description: todo.content,
+					})),
+					todos: plan.todos.map((todo) => ({
+						id: todo.id,
+						content: todo.content,
+						status: todo.status,
+					})),
+					filesToChange: [],
+					risksAndEdgeCases: [],
+					openQuestions: [],
+				},
+				{ path: planFilePath, relPath: planFileRelPath }
+			),
+		[planFilePath, planFileRelPath]
+	);
 
 	const persistPlanDraft = useCallback(
 		async (plan: ParsedPlan) => {
@@ -301,6 +355,29 @@ export function usePlanSystem(
 			setExecutedPlanKeys(rec.ok && Array.isArray(rec.keys) ? rec.keys : []);
 		});
 		return () => { cancelled = true; };
+	}, [shell, currentId]);
+
+	useEffect(() => {
+		if (!shell || !currentId) {
+			setPlanFilePath(null);
+			setPlanFileRelPath(null);
+			return;
+		}
+		let cancelled = false;
+		void shell.invoke('threads:getPlan', currentId).then((response) => {
+			if (cancelled) {
+				return;
+			}
+			const result = response as {
+				ok?: boolean;
+				plan?: { sourcePath?: string | null; sourceRelPath?: string | null } | null;
+			};
+			setPlanFilePath(result.ok ? result.plan?.sourcePath ?? null : null);
+			setPlanFileRelPath(result.ok ? result.plan?.sourceRelPath ?? null : null);
+		});
+		return () => {
+			cancelled = true;
+		};
 	}, [shell, currentId]);
 
 	useEffect(() => {

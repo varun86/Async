@@ -74,9 +74,9 @@ import { textBeforeCaretForAt } from './composerRichDom';
 import { useComposerAtMention, type AtComposerSlot } from './useComposerAtMention';
 import { useComposerSlashCommand } from './useComposerSlashCommand';
 import { type AgentRuleScope } from './agentSettingsTypes';
-import { normalizeIndexingSettings, type IndexingSettingsState } from './indexingSettingsTypes';
 
 const EMPTY_AGENT_PENDING_PATCHES: AgentPendingPatch[] = [];
+const EMPTY_SNAPSHOT_PATHS: ReadonlySet<string> = new Set<string>();
 import { tabIdFromPath, type MarkdownTabView } from './EditorTabBar';
 import {
 	isMarkdownEditorPath,
@@ -142,6 +142,10 @@ import { AppShellOverlays } from './app/AppShellOverlays';
 import type { ShellLeftRailGroupProps, ShellCenterRightGroupProps } from './app/ShellWorkspaceColumns';
 import { ShellWorkspaceGrid } from './app/ShellWorkspaceGrid';
 import { formatThreadRowSubtitle, threadRowTitle } from './app/threadRowUi';
+import {
+	type WorkspaceLauncherTool,
+	workspaceLauncherLabel,
+} from './app/workspaceLaunchers';
 
 const EditorMainPanel = lazy(() => import('./EditorMainPanel').then((m) => ({ default: m.EditorMainPanel })));
 
@@ -268,9 +272,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	const { t, setLocale, locale } = useI18n();
 	const [ipcOk, setIpcOk] = useState<string>('…');
 
-	// 初始值为默认值，init effect 加载完 settings:get 后会 setIndexingSettings 更新
-	const [indexingSettings, setIndexingSettings] = useState<IndexingSettingsState>(() => normalizeIndexingSettings());
-
 	// ── 提取的 hooks（必须在所有依赖其返回值的代码之前调用）──────────────────
 	const {
 		workspace,
@@ -314,7 +315,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		onPickDefaultModel,
 		onChangeModelEntries,
 		onChangeModelProviders,
-		onPersistIndexingPatch,
 		onRefreshMcpStatuses,
 		onStartMcpServer,
 		onStopMcpServer,
@@ -332,8 +332,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			locale,
 			ipcOk,
 			setIpcOk,
-			indexingSettings,
-			setIndexingSettings,
 			layoutPinnedBySurface,
 			appSurface,
 			shellLayoutStorageKey,
@@ -353,8 +351,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			locale,
 			ipcOk,
 			setIpcOk,
-			indexingSettings,
-			setIndexingSettings,
 			layoutPinnedBySurface,
 			appSurface,
 			shellLayoutStorageKey,
@@ -440,7 +436,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			onPickDefaultModel,
 			onChangeModelEntries,
 			onChangeModelProviders,
-			onPersistIndexingPatch,
 			onRefreshMcpStatuses,
 			onStartMcpServer,
 			onStopMcpServer,
@@ -476,7 +471,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			onPickDefaultModel,
 			onChangeModelEntries,
 			onChangeModelProviders,
-			onPersistIndexingPatch,
 			onRefreshMcpStatuses,
 			onStartMcpServer,
 			onStopMcpServer,
@@ -502,8 +496,6 @@ function AppMainWorkspaceInner() {
 		locale,
 		ipcOk,
 		setIpcOk,
-		indexingSettings,
-		setIndexingSettings,
 		layoutPinnedBySurface,
 		appSurface,
 		shellLayoutStorageKey,
@@ -586,7 +578,6 @@ function AppMainWorkspaceInner() {
 		onPickDefaultModel,
 		onChangeModelEntries,
 		onChangeModelProviders,
-		onPersistIndexingPatch,
 		onRefreshMcpStatuses,
 		onStartMcpServer,
 		onStopMcpServer,
@@ -686,7 +677,16 @@ function AppMainWorkspaceInner() {
 		setStreaming,
 		setAwaitingReply,
 	} = useStreamingChat();
-	const { applyTeamPayload, getTeamSession, setSelectedTask, abortTeamSession, startTeamSession, restoreTeamSession, markTeamPlanProposalDecided } = useTeamSession();
+	const {
+		applyTeamPayload,
+		getTeamSession,
+		setSelectedTask,
+		clearPendingQuestion: clearTeamPendingQuestion,
+		abortTeamSession,
+		startTeamSession,
+		restoreTeamSession,
+		markTeamPlanProposalDecided,
+	} = useTeamSession();
 	const {
 		agentReviewPendingByThread,
 		setAgentReviewPendingByThread,
@@ -1316,7 +1316,6 @@ function AppMainWorkspaceInner() {
 		};
 	}, [uiZoom]);
 
-
 	const {
 		workspaceMenuPath,
 		workspaceMenuPosition,
@@ -1722,7 +1721,6 @@ function AppMainWorkspaceInner() {
 			setRailWidths,
 			setLayoutMode,
 			applyLoadedSettings,
-			setIndexingSettings,
 			setColorMode,
 			setAppearanceSettings,
 			setMcpServers,
@@ -1742,7 +1740,6 @@ function AppMainWorkspaceInner() {
 		setRailWidths,
 		setLayoutMode,
 		applyLoadedSettings,
-		setIndexingSettings,
 		setColorMode,
 		setAppearanceSettings,
 		setMcpServers,
@@ -2339,6 +2336,40 @@ function AppMainWorkspaceInner() {
 		toggleAgentRightSidebarView('git');
 	}, [layoutMode, toggleAgentRightSidebarView]);
 
+	const launchWorkspaceWithTool = useCallback(
+		async (tool: WorkspaceLauncherTool) => {
+			if (!shell || !workspace) {
+				flashComposerAttachErr(t('app.noWorkspace'));
+				return;
+			}
+			try {
+				const r = (await shell.invoke('workspace:openInExternalTool', { tool })) as {
+					ok?: boolean;
+					code?: string;
+					error?: string;
+				};
+				if (!r?.ok) {
+					if (r?.code === 'tool-unavailable') {
+						flashComposerAttachErr(
+							t('app.workspaceLauncher.toolUnavailable', { app: workspaceLauncherLabel(t, tool) })
+						);
+						return;
+					}
+					if (r?.code === 'no-workspace') {
+						flashComposerAttachErr(t('app.noWorkspace'));
+						return;
+					}
+					flashComposerAttachErr(
+						r?.error ?? t('app.workspaceLauncher.openFailed', { app: workspaceLauncherLabel(t, tool) })
+					);
+				}
+			} catch (e) {
+				flashComposerAttachErr(e instanceof Error ? e.message : String(e));
+			}
+		},
+		[shell, workspace, flashComposerAttachErr, t]
+	);
+
 	const zoomInUi = useCallback(() => {
 		setUiZoom((value) => Math.min(1.6, Math.round((value + 0.1) * 10) / 10));
 	}, []);
@@ -2574,10 +2605,46 @@ function AppMainWorkspaceInner() {
 		return onAbortRef.current();
 	}, [currentId, abortTeamSession]);
 
+	const getCurrentPlanQuestionState = useCallback(() => {
+		if (composerMode === 'team') {
+			const liveTeamSession = getTeamSession(currentIdRef.current);
+			return {
+				question: liveTeamSession?.pendingQuestion ?? planQuestion,
+				requestId: liveTeamSession?.pendingQuestionRequestId ?? planQuestionRequestId,
+			};
+		}
+		return {
+			question: planQuestion,
+			requestId: planQuestionRequestId,
+		};
+	}, [composerMode, getTeamSession, planQuestion, planQuestionRequestId, currentIdRef]);
+
+	const formatPlanQuestionReply = useCallback(
+		(answer: string) => {
+			const questionText = getCurrentPlanQuestionState().question?.text?.trim();
+			const normalizedAnswer = answer.trim();
+			if (!questionText) {
+				return `我选择：${normalizedAnswer}`;
+			}
+			return [
+				'[PLAN QUESTION]',
+				questionText,
+				'',
+				'[USER ANSWER]',
+				normalizedAnswer,
+			].join('\n');
+		},
+		[getCurrentPlanQuestionState]
+	);
+
 	const onPlanQuestionSubmit = useCallback(
 		(answer: string) => {
-			const rid = planQuestionRequestId;
-			const reply = `我选择：${answer}`;
+			const { requestId: rid } = getCurrentPlanQuestionState();
+			const threadId = currentIdRef.current;
+			const reply = formatPlanQuestionReply(answer);
+			if (composerMode === 'team' && threadId) {
+				clearTeamPendingQuestion(threadId);
+			}
 			if (rid && shell) {
 				setPlanQuestion(null);
 				setPlanQuestionRequestId(null);
@@ -2590,13 +2657,27 @@ function AppMainWorkspaceInner() {
 			setPlanQuestionRequestId(null);
 			void onSend(reply);
 		},
-		[planQuestionRequestId, shell, setPlanQuestion, setPlanQuestionRequestId, onSend]
+		[
+			clearTeamPendingQuestion,
+			composerMode,
+			currentIdRef,
+			formatPlanQuestionReply,
+			getCurrentPlanQuestionState,
+			shell,
+			setPlanQuestion,
+			setPlanQuestionRequestId,
+			onSend,
+		]
 	);
 
 	const onPlanQuestionSkip = useCallback(() => {
 		recordPlanQuestionDismissed();
-		const rid = planQuestionRequestId;
+		const { requestId: rid } = getCurrentPlanQuestionState();
+		const threadId = currentIdRef.current;
 		const skipText = t('plan.q.skipUserMessage');
+		if (composerMode === 'team' && threadId) {
+			clearTeamPendingQuestion(threadId);
+		}
 		if (rid && shell) {
 			setPlanQuestion(null);
 			setPlanQuestionRequestId(null);
@@ -2608,7 +2689,16 @@ function AppMainWorkspaceInner() {
 		setPlanQuestion(null);
 		setPlanQuestionRequestId(null);
 		void onSend(skipText);
-	}, [t, onSend, shell, planQuestionRequestId, recordPlanQuestionDismissed]);
+	}, [
+		t,
+		onSend,
+		shell,
+		composerMode,
+		currentIdRef,
+		clearTeamPendingQuestion,
+		getCurrentPlanQuestionState,
+		recordPlanQuestionDismissed,
+	]);
 
 
 	const onPlanBuild = useCallback(
@@ -2784,9 +2874,6 @@ function AppMainWorkspaceInner() {
 				memoryExtraction: agentCustomization.memoryExtraction,
 			},
 			editor: editorSettings,
-			indexing: {
-				symbolIndexEnabled: indexingSettings.symbolIndexEnabled,
-			},
 			team: teamSettings,
 			mcp: { servers: mcpServers },
 			ui: {
@@ -2815,7 +2902,6 @@ function AppMainWorkspaceInner() {
 		thinkingByModelId,
 		agentCustomization,
 		editorSettings,
-		indexingSettings,
 		locale,
 		mcpServers,
 		teamSettings,
@@ -3622,6 +3708,15 @@ function AppMainWorkspaceInner() {
 	const showPlanFileEditorChrome =
 		hasConversation && !!currentId && isPlanMdPath(filePath.trim());
 	const teamSession = useMemo(() => getTeamSession(currentId), [getTeamSession, currentId]);
+	const activePlanQuestion = useMemo(
+		() =>
+			resendFromUserIndex !== null
+				? null
+				: composerMode === 'team'
+					? teamSession?.pendingQuestion ?? planQuestion
+					: planQuestion,
+		[composerMode, teamSession, planQuestion, resendFromUserIndex]
+	);
 	const hasActiveTeamSidebarContent = useMemo(
 		() => composerMode === 'team' && buildTeamWorkflowItems(teamSession).length > 0,
 		[composerMode, teamSession]
@@ -3645,7 +3740,7 @@ function AppMainWorkspaceInner() {
 		layoutMode === 'editor' &&
 		composerMode === 'team' &&
 		hasConversation &&
-		buildTeamWorkflowItems(teamSession).length > 0;
+		!!teamSession?.selectedTaskId;
 	const editorCenterPlanCanBuild =
 		!awaitingReply && !!agentPlanEffectivePlan && !!editorPlanBuildModelId.trim() && modelPickerItems.length > 0;
 	const agentPlanSidebarAutopenRef = useRef(false);
@@ -4382,6 +4477,14 @@ function AppMainWorkspaceInner() {
 		if (!currentId || messagesThreadId !== currentId) {
 			setPlanQuestion(null);
 			setPlanQuestionRequestId(null);
+			return;
+		}
+		/* Team 模式：澄清题由 IPC plan_question_request 驱动，勿按 Plan 逻辑清空 */
+		if (composerMode === 'team') {
+			if (resendFromUserIndex !== null) {
+				setPlanQuestion(null);
+				setPlanQuestionRequestId(null);
+			}
 			return;
 		}
 		if (composerMode !== 'plan') {
@@ -5410,7 +5513,7 @@ function AppMainWorkspaceInner() {
 		onApplyAgentPatchOne,
 		onApplyAgentPatchesAll,
 		onDiscardAgentReview,
-		planQuestion,
+		planQuestion: activePlanQuestion,
 		onPlanQuestionSubmit,
 		onPlanQuestionSkip,
 		wizardPending,
@@ -5432,6 +5535,7 @@ function AppMainWorkspaceInner() {
 		onPlanTodoToggle,
 		toolApprovalRequest,
 		respondToolApproval,
+		snapshotPaths: EMPTY_SNAPSHOT_PATHS,
 		dismissedFiles,
 		fileChangesDismissed,
 		onKeepAllEdits,
@@ -5487,6 +5591,10 @@ function AppMainWorkspaceInner() {
 		onCommitAndPush,
 		teamSession,
 		onSelectTeamExpert: onSelectTeamTask,
+		workspaceRoot: workspace,
+		onOpenTeamAgentFile: onAgentConversationOpenFile,
+		revertedPaths: revertedFiles,
+		revertedChangeKeys,
 	});
 
 	const editorMainPanelProps = useEditorMainPanelProps({
@@ -5540,6 +5648,10 @@ function AppMainWorkspaceInner() {
 		teamSession,
 		selectedTeamTaskId: teamSession?.selectedTaskId ?? null,
 		onSelectTeamTask,
+		workspaceRoot: workspace,
+		onOpenTeamAgentFile: onAgentConversationOpenFile,
+		revertedPaths: revertedFiles,
+		revertedChangeKeys,
 	});
 
 	const editorLeftSidebarProps = useMemo(
@@ -5607,6 +5719,9 @@ function AppMainWorkspaceInner() {
 					agentRightSidebarOpen={agentRightSidebarOpen}
 					agentRightSidebarView={agentRightSidebarView}
 					toggleAgentRightSidebarView={toggleAgentRightSidebarView}
+					onLaunchWorkspaceWithTool={(tool) => {
+						void launchWorkspaceWithTool(tool);
+					}}
 					chatPanelProps={agentChatPanelProps}
 				/>
 			);
@@ -5638,6 +5753,7 @@ function AppMainWorkspaceInner() {
 		agentRightSidebarOpen,
 		agentRightSidebarView,
 		toggleAgentRightSidebarView,
+		launchWorkspaceWithTool,
 		agentChatPanelProps,
 		editorMainPanelProps,
 	]);
@@ -5799,9 +5915,6 @@ function AppMainWorkspaceInner() {
 			editorSettings,
 			onChangeEditorSettings: setEditorSettings,
 			onPersistLanguage: (loc) => void onPersistLanguage(loc),
-			indexingSettings,
-			onChangeIndexingSettings: setIndexingSettings,
-			onPersistIndexingPatch,
 			mcpServers,
 			onChangeMcpServers: setMcpServers,
 			mcpStatuses,
@@ -5834,9 +5947,6 @@ function AppMainWorkspaceInner() {
 			editorSettings,
 			setEditorSettings,
 			onPersistLanguage,
-			indexingSettings,
-			setIndexingSettings,
-			onPersistIndexingPatch,
 			mcpServers,
 			setMcpServers,
 			mcpStatuses,
@@ -5952,7 +6062,6 @@ function AppMainWorkspaceInner() {
 				workspaceFileList={workspaceFileListRef.current}
 				homeRecents={homeRecents}
 				filePath={filePath}
-				indexingSettingsSymbolIndexEnabled={indexingSettings.symbolIndexEnabled}
 				searchWorkspaceSymbolsFn={searchWorkspaceSymbolsFn}
 				applyWorkspacePath={applyWorkspacePath}
 				openWorkspaceByPath={openWorkspaceByPath}

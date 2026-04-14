@@ -1,5 +1,5 @@
 /**
- * 工具权限规则（对齐 Claude Code `PermissionRule` / `ToolPermissionContext` 的精简子集）。
+ * 工具权限规则的数据结构。
  *
  * - `deny` 优先于 `ask` 与 `allow`；
  * - `allow` 在无非 deny 匹配时直接放行（绕过 Bash/Write 的默认确认流）；

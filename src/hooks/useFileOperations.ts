@@ -153,7 +153,7 @@ export function useFileOperations(p: UseFileOperationsParams) {
 						originalContent = snapshotResult.previousContent ?? '';
 						const { createTwoFilesPatch } = await import('diff');
 						previewDiff = createTwoFilesPatch(
-							`a/${normalizedRel}`,
+							snapshotResult.previousContent === null ? '/dev/null' : `a/${normalizedRel}`,
 							`b/${normalizedRel}`,
 							originalContent,
 							content,

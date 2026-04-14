@@ -4,13 +4,13 @@
  * 历史中的结构化助手消息经 `structuredAssistantToApi.ts` 展开为 OpenAI/Anthropic 原生 tool 序列；
  * 随后 `messageNormalizeForApi.ts` 做相邻 user 合并、纯文本 assistant 回溯合并、assistant 内孤儿 server/mcp tool_use 剥离（对齐 CC `normalizeMessagesForAPI` 子集），
  * 再由 `apiConversationRepair.ts` 做跨消息配对修复（孤儿 tool、缺失 tool 响应补全、Anthropic 侧孤儿 tool_result user 等），
- * 对齐 Claude Code `messages.ts` `ensureToolResultPairing`；无法安全展开时仍回退单条 legacy XML。配对修复后再合并一次相邻 user，避免 repair 产生连续 user。
+ * 随后在发送前做 tool 配对修复；无法安全展开时仍回退单条 legacy XML。配对修复后再合并一次相邻 user，避免 repair 产生连续 user。
  *
- * 类似 Cursor / Claude Code 的实现方式：
+ * 当前实现方式：
  * 1. 将对话消息 + 工具定义发给 LLM
  * 2. 如果 LLM 返回工具调用 → 执行 → 把结果加入对话 → 再次调用 LLM
  * 3. 如果 LLM 只返回文本 → 结束循环
- * 4. 工具循环轮次：默认不限制（与 Claude Code 可选 `maxTurns` 一致）；可通过 `ASYNC_AGENT_MAX_ROUNDS` 或 `settings.agent.maxToolRounds` 设上限。
+ * 4. 工具循环轮次：默认不限制；可通过 `ASYNC_AGENT_MAX_ROUNDS` 或 `settings.agent.maxToolRounds` 设上限。
  */
 
 import OpenAI from 'openai';
@@ -45,6 +45,7 @@ import {
 	type AgentToolDef,
 	type ToolCall,
 } from './agentTools.js';
+import type { TeamPlanQuestionRoleScope } from './planQuestionTool.js';
 import { executeTool, type ToolExecutionHooks } from './toolExecutor.js';
 import type { WorkspaceLspManager } from '../lsp/workspaceLspManager.js';
 import { getMcpManager } from '../mcp/index.js';
@@ -83,6 +84,11 @@ const READ_TOOLS_SKIP_INPUT_DELTA = new Set([
 	'ListMcpResourcesTool',
 	'ReadMcpResourceTool',
 	'ask_plan_question',
+	'plan_submit_draft',
+	'team_plan_decide',
+	'team_escalate_to_lead',
+	'team_request_from_peer',
+	'team_reply_to_peer',
 	'Agent',
 	'Task',
 ]);
@@ -112,7 +118,7 @@ function maxStreamingToolArgChars(): number {
 }
 
 /**
- * 与 Claude Code `query.ts` 的 `maxTurns?: number` 一致：未配置时为 `null`（不限制）。
+ * 未配置时为 `null`（不限制）。
  */
 function resolveAgentMaxRounds(settings: ShellSettings): number | null {
 	const raw = process.env.ASYNC_AGENT_MAX_ROUNDS?.trim();
@@ -210,7 +216,15 @@ export type AgentLoopOptions = {
 	/** 当前会话线程 ID，用于 TodoWrite 等按线程隔离状态的工具 */
 	threadId?: string | null;
 	/**
-	 * Anthropic：与 Claude Code fork 的 `skipCacheWrite` 一致，prompt cache 断点挂在倒数第二条消息，避免无后续读取的尾部写入 KVCC。
+	 * Team 子循环：与流式 `teamRoleScope` 对齐，供 `ask_plan_question` 把澄清题挂到对应角色工作流。
+	 */
+	teamToolRoleScope?: TeamPlanQuestionRoleScope;
+	/**
+	 * Called before each LLM round. Use this to inject additional user/assistant messages into a running loop.
+	 */
+	beforeRoundMessages?: () => Promise<ChatMessage[]>;
+	/**
+	 * Anthropic：prompt cache 断点挂在倒数第二条消息，避免无后续读取的尾部写入 KVCC。
 	 */
 	skipAnthropicPromptCacheWrite?: boolean;
 };
@@ -271,7 +285,7 @@ function inferOpenAIToolNameFromPartialArguments(partial: string): string {
 }
 
 /**
- * 组装本轮回合的工具表（对齐 Claude Code assembleToolPool）：
+ * 组装本轮回合的工具表：
  * - Plan：仅只读内置工具 + List/Read MCP 资源工具；不注册动态 `mcp__*` 工具。
  * - Agent：内置 + 过滤后的动态 MCP 工具；同名以内置为准。
  */
@@ -312,6 +326,46 @@ function appendMcpToolsSystemHint(
 		'Use `ListMcpResourcesTool` / `ReadMcpResourceTool` to browse MCP resources when needed.',
 		'Use them when the user needs integrations beyond the built-in workspace tools (e.g. web, APIs, databases). Follow each tool\'s description and parameter schema.',
 	].join('\n');
+}
+
+function appendMessagesToOpenAIConversation(conversation: OAIMsg[], messages: ChatMessage[]): OAIMsg[] {
+	let next = [...conversation];
+	for (const message of messages) {
+		if (message.role === 'system') {
+			continue;
+		}
+		if (message.role === 'assistant') {
+			const payload = parseAgentAssistantPayload(message.content);
+			if (payload) {
+				next.push(...expandStructuredAssistantPayloadToOpenAI(payload));
+			} else {
+				next.push({ role: 'assistant', content: message.content });
+			}
+			continue;
+		}
+		next.push({ role: 'user', content: message.content });
+	}
+	return mergeAdjacentOpenAIUserMessages(next);
+}
+
+function appendMessagesToAnthropicConversation(conversation: MessageParam[], messages: ChatMessage[]): MessageParam[] {
+	let next = [...conversation];
+	for (const message of messages) {
+		if (message.role === 'system') {
+			continue;
+		}
+		if (message.role === 'assistant') {
+			const payload = parseAgentAssistantPayload(message.content);
+			if (payload) {
+				next.push(...expandStructuredAssistantPayloadToAnthropic(payload));
+			} else {
+				next.push({ role: 'assistant', content: message.content });
+			}
+			continue;
+		}
+		next.push({ role: 'user', content: message.content });
+	}
+	return mergeAdjacentAnthropicUserMessages(next);
 }
 
 /**
@@ -585,6 +639,7 @@ async function runOpenAILoop(
 			workspaceLspManager: options.workspaceLspManager ?? null,
 			threadId: options.threadId ?? null,
 			signal: options.signal,
+			teamToolRoleScope: options.teamToolRoleScope,
 		});
 		console.log(`[AgentLoop] tool=${tc.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
 		if (mistakeLimitEnabled) {
@@ -642,6 +697,12 @@ async function runOpenAILoop(
 
 		if (await handleMistakeLimitBeforeRound()) {
 			return;
+		}
+		if (options.beforeRoundMessages) {
+			const injected = await options.beforeRoundMessages();
+			if (injected.length > 0) {
+				conversation = appendMessagesToOpenAIConversation(conversation, injected);
+			}
 		}
 
 		console.log(`[AgentLoop] round ${round} — starting LLM call`);
@@ -1002,6 +1063,7 @@ async function runAnthropicLoop(
 			workspaceLspManager: options.workspaceLspManager ?? null,
 			threadId: options.threadId ?? null,
 			signal: options.signal,
+			teamToolRoleScope: options.teamToolRoleScope,
 		});
 		console.log(`[AgentLoop/A] tool=${tu.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
 		if (mistakeLimitEnabled) {
@@ -1060,6 +1122,12 @@ async function runAnthropicLoop(
 
 		if (await handleMistakeLimitBeforeRoundAnthropic()) {
 			return;
+		}
+		if (options.beforeRoundMessages) {
+			const injected = await options.beforeRoundMessages();
+			if (injected.length > 0) {
+				conversation = appendMessagesToAnthropicConversation(conversation, injected);
+			}
 		}
 
 		console.log(`[AgentLoop/A] round ${round} — starting LLM call`);

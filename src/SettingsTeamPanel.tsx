@@ -7,6 +7,7 @@ import {
 	TEAM_PRESET_LIBRARY,
 	buildTeamPresetExperts,
 	getTeamPreset,
+	getTeamPresetDefaults,
 	mergeTeamPresetSavedRows,
 } from './teamPresetCatalog';
 import { VoidSelect } from './VoidSelect';
@@ -36,6 +37,35 @@ function newRole(): TeamExpertConfig {
 	};
 }
 
+function defaultPlanReviewerPrompt() {
+	return [
+		'You are reviewing a proposed team plan before any specialist executes.',
+		'Judge role fit, task granularity, acceptance criteria clarity, and dependency sanity.',
+		'Do not review implementation quality yet because no implementation exists.',
+		'Surface ambiguity, missing scope, and blockers directly and concisely.',
+	].join('\n');
+}
+
+function defaultDeliveryReviewerPrompt() {
+	return [
+		'You are reviewing completed specialist outputs for correctness, regressions, and delivery quality.',
+		'Judge whether the delivered work satisfies the user goal and whether important gaps remain.',
+		'Be concrete about blockers, risks, and missing verification.',
+	].join('\n');
+}
+
+function newReviewer(kind: 'plan' | 'delivery'): TeamExpertConfig {
+	return {
+		id: `team-${kind}-reviewer`,
+		name: kind === 'plan' ? 'Plan Reviewer' : 'Delivery Reviewer',
+		roleType: 'reviewer',
+		assignmentKey: 'reviewer',
+		systemPrompt: kind === 'plan' ? defaultPlanReviewerPrompt() : defaultDeliveryReviewerPrompt(),
+		enabled: true,
+		allowedTools: ['Read', 'Glob', 'Grep', 'LSP'],
+	};
+}
+
 export function SettingsTeamPanel({ value, onChange, modelEntries, modelProviders = [] }: Props) {
 	const { t } = useI18n();
 	const experts = value.experts ?? [];
@@ -44,14 +74,6 @@ export function SettingsTeamPanel({ value, onChange, modelEntries, modelProvider
 
 	const [editingRole, setEditingRole] = useState<TeamExpertConfig | null>(null);
 
-	const restoreDefaults = () => {
-		onChange({
-			useDefaults: true,
-			presetId: 'engineering',
-			experts: [],
-			presetExpertSnapshots: undefined,
-		});
-	};
 	const applyPreset = (nextPresetId: TeamPresetId) => {
 		const currentPresetId = (value.presetId ?? 'engineering') as TeamPresetId;
 		if (nextPresetId === currentPresetId) {
@@ -74,6 +96,7 @@ export function SettingsTeamPanel({ value, onChange, modelEntries, modelProvider
 			useDefaults: true,
 			presetExpertSnapshots: snapshots,
 			experts: nextExperts,
+			...getTeamPresetDefaults(nextPresetId),
 		});
 	};
 	const modelOptions = useMemo(
@@ -97,6 +120,22 @@ export function SettingsTeamPanel({ value, onChange, modelEntries, modelProvider
 		[modelOptions]
 	);
 	const customCount = experts.length;
+
+	const setNamedReviewer = (key: 'planReviewer' | 'deliveryReviewer', next: TeamExpertConfig | null) => {
+		onChange({
+			...value,
+			[key]: next,
+		});
+	};
+
+	const patchNamedReviewer = (
+		key: 'planReviewer' | 'deliveryReviewer',
+		kind: 'plan' | 'delivery',
+		patch: Partial<TeamExpertConfig>
+	) => {
+		const current = (key === 'planReviewer' ? value.planReviewer : value.deliveryReviewer) ?? newReviewer(kind);
+		setNamedReviewer(key, { ...current, ...patch });
+	};
 
 	const patchEditingRole = (patch: Partial<TeamExpertConfig>) => {
 		if (editingRole) {
@@ -172,69 +211,120 @@ export function SettingsTeamPanel({ value, onChange, modelEntries, modelProvider
 					})}
 				</section>
 
-				<section className="ref-settings-team-config-card">
-					<div className="ref-settings-team-config-grid">
-						<label className="ref-settings-team-inline-check">
-							<input
-								type="checkbox"
-								checked={value.useDefaults !== false}
-								onChange={(e) => onChange({ ...value, useDefaults: e.target.checked })}
-							/>
-							<span>{t('settings.team.useDefaults')}</span>
-						</label>
-						<label className="ref-settings-team-inline-check">
-							<input
-								type="checkbox"
-								checked={value.requirePlanApproval !== false}
-								onChange={(e) => onChange({ ...value, requirePlanApproval: e.target.checked })}
-							/>
-							<span>{t('settings.team.requirePlanApproval')}</span>
-						</label>
-						<label className="ref-settings-team-inline-check">
-							<input
-								type="checkbox"
-								checked={value.enablePreflightReview !== false}
-								onChange={(e) => onChange({ ...value, enablePreflightReview: e.target.checked })}
-							/>
-							<span>{t('settings.team.enablePreflightReview')}</span>
-						</label>
-					</div>
-					<div className="ref-settings-team-actions">
-						<button
-							type="button"
-							className="ref-settings-add-model"
-							onClick={() => setEditingRole(newRole())}
-						>
-							{t('settings.team.addRole')}
-						</button>
-						<button
-							type="button"
-							className="ref-settings-add-model"
-							onClick={() => {
-								const pid = (value.presetId ?? 'engineering') as TeamPresetId;
-								const snaps = { ...(value.presetExpertSnapshots ?? {}) };
-								delete snaps[pid];
-								onChange({
-									...value,
-									experts: buildTeamPresetExperts(pid),
-									presetExpertSnapshots: snaps,
-								});
-							}}
-						>
-							{t('settings.team.applyPresetRoles')}
-						</button>
-						<button
-							type="button"
-							className="ref-settings-remove-model"
-							onClick={restoreDefaults}
-						>
-							{t('settings.team.restoreDefaults')}
-						</button>
-					</div>
-				</section>
-
 				{roleList.length === 0 ? <p className="ref-settings-proxy-hint">{t('settings.team.empty')}</p> : null}
 			</div>
+
+			<section className="ref-settings-panel" style={{ marginTop: 18 }}>
+				<h3 style={{ margin: '0 0 12px' }}>{t('settings.team.reviewersTitle')}</h3>
+				<div style={{ display: 'grid', gap: 16 }}>
+					{([
+						{
+							key: 'planReviewer' as const,
+							kind: 'plan' as const,
+							label: t('settings.team.planReviewer'),
+							hint: t('settings.team.planReviewerHint'),
+							value: value.planReviewer,
+						},
+						{
+							key: 'deliveryReviewer' as const,
+							kind: 'delivery' as const,
+							label: t('settings.team.deliveryReviewer'),
+							hint: t('settings.team.deliveryReviewerHint'),
+							value: value.deliveryReviewer,
+						},
+					]).map((reviewerConfig) => (
+						<div key={reviewerConfig.key} className="ref-settings-team-shell" style={{ padding: 16 }}>
+							<div
+								style={{
+									display: 'flex',
+									justifyContent: 'space-between',
+									alignItems: 'flex-start',
+									gap: 16,
+									marginBottom: reviewerConfig.value ? 16 : 0,
+								}}
+							>
+								<div>
+									<strong>{reviewerConfig.label}</strong>
+									<p className="ref-settings-proxy-hint" style={{ margin: '6px 0 0' }}>
+										{reviewerConfig.value ? reviewerConfig.hint : t('settings.team.reviewerFallbackHint')}
+									</p>
+								</div>
+								<label className="ref-settings-team-inline-check">
+									<input
+										type="checkbox"
+										checked={Boolean(reviewerConfig.value)}
+										onChange={(e) =>
+											setNamedReviewer(
+												reviewerConfig.key,
+												e.target.checked ? reviewerConfig.value ?? newReviewer(reviewerConfig.kind) : null
+											)
+										}
+									/>
+									<span>{t('settings.team.customReviewerToggle')}</span>
+								</label>
+							</div>
+							{reviewerConfig.value ? (
+								<>
+									<div className="ref-settings-team-role-grid" style={{ marginBottom: 16 }}>
+										<label className="ref-settings-field ref-settings-field--compact">
+											<span>{t('settings.team.roleName')}</span>
+											<input
+												value={reviewerConfig.value.name}
+												onChange={(e) =>
+													patchNamedReviewer(reviewerConfig.key, reviewerConfig.kind, {
+														name: e.target.value,
+													})
+												}
+											/>
+										</label>
+										<label className="ref-settings-field ref-settings-field--compact">
+											<span>{t('settings.team.model')}</span>
+											<VoidSelect
+												variant="compact"
+												ariaLabel={t('settings.team.model')}
+												value={reviewerConfig.value.preferredModelId ?? ''}
+												onChange={(selected) =>
+													patchNamedReviewer(reviewerConfig.key, reviewerConfig.kind, {
+														preferredModelId: selected || undefined,
+													})
+												}
+												options={teamModelOptions}
+											/>
+										</label>
+										<label className="ref-settings-field ref-settings-field--compact" style={{ gridColumn: '1 / -1' }}>
+											<span>{t('settings.team.toolsCsv')}</span>
+											<input
+												value={(reviewerConfig.value.allowedTools ?? []).join(', ')}
+												onChange={(e) =>
+													patchNamedReviewer(reviewerConfig.key, reviewerConfig.kind, {
+														allowedTools: e.target.value
+															.split(',')
+															.map((item) => item.trim())
+															.filter(Boolean),
+													})
+												}
+											/>
+										</label>
+									</div>
+									<label className="ref-settings-field">
+										<span>{t('settings.team.prompt')}</span>
+										<textarea
+											className="ref-settings-models-search"
+											style={{ minHeight: 120, resize: 'vertical' }}
+											value={reviewerConfig.value.systemPrompt}
+											onChange={(e) =>
+												patchNamedReviewer(reviewerConfig.key, reviewerConfig.kind, {
+													systemPrompt: e.target.value,
+												})
+											}
+										/>
+									</label>
+								</>
+							) : null}
+						</div>
+					))}
+				</div>
+			</section>
 
 			<div className="ref-settings-team-badges">
 				{roleList.map((role) => {

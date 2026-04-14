@@ -55,7 +55,7 @@ export async function streamAnthropic(
 	}
 
 	const baseURL = options.requestBaseURL?.trim() || undefined;
-	// maxRetries: 0 与 Claude Code `services/api/claude.ts` 流式路径一致
+// maxRetries: 0，避免流式请求自动重试拉长等待
 	const client = new Anthropic({
 		apiKey: key,
 		baseURL: baseURL || undefined,

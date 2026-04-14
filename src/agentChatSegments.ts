@@ -1028,6 +1028,21 @@ function summarizeToolActivity(mk: ParsedMarker, t: TFunction): ActivitySegment 
 				mk
 			);
 		}
+		case 'plan_submit_draft': {
+			return withNestActivity(
+				{
+					type: 'activity',
+					text: inProgress
+						? t('plan.draft.toolActivityPending')
+						: failed
+							? t('plan.draft.toolActivityFailed')
+							: t('plan.draft.toolActivityDone'),
+					status: inProgress ? 'pending' : failed ? 'error' : 'success',
+					detail,
+				},
+				mk
+			);
+		}
 		case 'Bash':
 		case 'execute_command': {
 			const cmd = getPath('command').slice(0, 60);

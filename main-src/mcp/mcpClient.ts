@@ -1,5 +1,5 @@
 /**
- * MCP 客户端 — 基于 @modelcontextprotocol/sdk，与 Claude Code 使用同一官方栈。
+ * MCP 客户端，基于 @modelcontextprotocol/sdk。
  * 支持 stdio、SSE（兼容旧远端）、Streamable HTTP（推荐，对应配置 transport: 'http'）。
  */
 

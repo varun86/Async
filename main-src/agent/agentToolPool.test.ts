@@ -49,6 +49,7 @@ describe('assembleAgentToolPool', () => {
 		expect(pool.some((t) => t.name.startsWith('mcp__'))).toBe(false);
 		expect(pool.some((t) => t.name === 'ListMcpResourcesTool')).toBe(true);
 		expect(pool.some((t) => t.name === 'ask_plan_question')).toBe(true);
+		expect(pool.some((t) => t.name === 'plan_submit_draft')).toBe(true);
 	});
 
 	it('agent mode appends sorted mcp tools after builtins', () => {

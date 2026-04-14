@@ -24,6 +24,11 @@ import { flattenAssistantTextPartsForSearch } from '../agentStructuredMessage';
 import { clearPersistedAgentFileChanges } from '../agentFileChangesPersist';
 import { translateChatError, type TFunction } from '../i18n';
 import type { ChatMessage } from '../threadTypes';
+import {
+	normalizePlanDraftSubmission,
+	planDraftToParsedPlan,
+	planDraftToThreadPlan,
+} from '../planDraft';
 
 export type StreamingToast = { key: number; ok: boolean; text: string } | null;
 
@@ -460,6 +465,17 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 			}
 
 			const visible = payload.threadId === rt.currentIdRef.current;
+			/* plan_question_request 可能带 teamRoleScope；须先弹出 UI，再写入对应专家工作流 */
+			if (payload.type === 'plan_question_request') {
+				if (visible) {
+					rt.setPlanQuestion(payload.question);
+					rt.setPlanQuestionRequestId(payload.requestId);
+				}
+				if ('teamRoleScope' in payload && payload.teamRoleScope) {
+					rt.applyTeamPayload(payload);
+				}
+				return;
+			}
 			if ('teamRoleScope' in payload && payload.teamRoleScope) {
 				rt.applyTeamPayload(payload);
 				return;
@@ -591,6 +607,40 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 				if (
 					visible &&
 					!payload.parentToolCallId &&
+					payload.name === 'plan_submit_draft' &&
+					rt.shell
+				) {
+					try {
+						const parsedArgs = JSON.parse(payload.args) as Record<string, unknown>;
+						const normalized = normalizePlanDraftSubmission(parsedArgs);
+						if (normalized.ok) {
+							const parsedPlan = planDraftToParsedPlan(normalized.draft);
+							rt.setParsedPlan(parsedPlan);
+							void (async () => {
+								const filename = generatePlanFilename(parsedPlan.name);
+								const result = (await rt.shell!.invoke('plan:save', { filename, content: toPlanMd(parsedPlan) })) as
+									| { ok: true; path: string; relPath?: string }
+									| { ok: false };
+								if (result.ok) {
+									rt.setPlanFilePath(result.path);
+									rt.setPlanFileRelPath(result.relPath ?? null);
+								}
+								await rt.shell!.invoke('plan:saveStructured', {
+									threadId: payload.threadId,
+									plan: planDraftToThreadPlan(normalized.draft, {
+										path: result.ok ? result.path : null,
+										relPath: result.ok ? result.relPath ?? null : null,
+									}),
+								});
+							})();
+						}
+					} catch {
+						// Ignore malformed draft args; the tool result path will surface the error.
+					}
+				}
+				if (
+					visible &&
+					!payload.parentToolCallId &&
 					rt.streamingToolPreviewClearTimerRef.current !== null
 				) {
 					window.clearTimeout(rt.streamingToolPreviewClearTimerRef.current);
@@ -652,11 +702,6 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 						path: payload.path,
 					});
 				}
-			} else if (payload.type === 'plan_question_request') {
-				if (visible) {
-					rt.setPlanQuestion(payload.question);
-					rt.setPlanQuestionRequestId(payload.requestId);
-				}
 			} else if (payload.type === 'agent_mistake_limit') {
 				if (visible) {
 					rt.setMistakeLimitRequest({
@@ -681,7 +726,8 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 				payload.type === 'team_plan_summary' ||
 				payload.type === 'team_preflight_review' ||
 				payload.type === 'team_plan_proposed' ||
-				payload.type === 'team_plan_decision'
+				payload.type === 'team_plan_decision' ||
+				payload.type === 'team_plan_revised'
 			) {
 				rt.applyTeamPayload(payload);
 			} else if (payload.type === 'done') {

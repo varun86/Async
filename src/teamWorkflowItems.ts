@@ -8,6 +8,7 @@ import type {
 export type TeamWorkflowListItem = {
 	id: string;
 	expertId: string;
+	expertAssignmentKey?: string;
 	expertName: string;
 	roleType: TeamRoleType;
 	description: string;
@@ -34,6 +35,7 @@ export function buildTeamWorkflowItems(session: TeamSessionState | null): TeamWo
 			? session.tasks.map((task) => ({
 					id: task.id,
 					expertId: task.expertId,
+					expertAssignmentKey: task.expertAssignmentKey,
 					expertName: task.expertName,
 					roleType: task.roleType,
 					description: task.description,
@@ -95,6 +97,7 @@ export function buildTeamWorkflowItems(session: TeamSessionState | null): TeamWo
 	const reviewerItem: TeamWorkflowListItem = {
 		id: session.reviewerTaskId ?? 'team-reviewer',
 		expertId: reviewerWorkflow?.expertId ?? 'reviewer',
+		expertAssignmentKey: 'reviewer',
 		expertName: reviewerWorkflow?.expertName ?? 'Reviewer',
 		roleType: reviewerWorkflow?.roleType ?? 'reviewer',
 		description: reviewerDescription,

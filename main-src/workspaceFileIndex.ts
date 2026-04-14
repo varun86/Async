@@ -10,7 +10,6 @@ import {
 	removeWorkspaceSymbolsUnderPrefix,
 	clearWorkspaceSymbolIndexForRoot,
 } from './workspaceSymbolIndex.js';
-import { getWorkspaceFilesIndexPath } from './workspaceIndexPaths.js';
 
 const execFileAsync = promisify(execFile);
 const AUTO_ATTACH_WORKSPACE_FILE_WATCHER = process.env.ASYNC_ENABLE_WORKSPACE_FILE_WATCHER === '1';
@@ -67,7 +66,6 @@ type FileIndexBucket = {
 	basenameTwoCharBuckets: Map<string, Set<string>> | null;
 	watcher: chokidar.FSWatcher | null;
 	inFlightRefresh: Promise<string[]> | null;
-	persistTimer: ReturnType<typeof setTimeout> | null;
 	refCount: number;
 };
 
@@ -90,7 +88,6 @@ function getBucket(rootNorm: string): FileIndexBucket {
 			basenameTwoCharBuckets: null,
 			watcher: null,
 			inFlightRefresh: null,
-			persistTimer: null,
 			refCount: 0,
 		};
 		buckets.set(rootNorm, b);
@@ -126,10 +123,6 @@ function destroyBucket(b: FileIndexBucket): void {
 		void b.watcher.close();
 		b.watcher = null;
 	}
-	if (b.persistTimer) {
-		clearTimeout(b.persistTimer);
-		b.persistTimer = null;
-	}
 	b.relPathSet = new Set();
 	b.sortedPathsSnapshot = null;
 	b.basenameTwoCharBuckets = null;
@@ -139,23 +132,6 @@ function destroyBucket(b: FileIndexBucket): void {
 function invalidateSortedPathsSnapshot(b: FileIndexBucket): void {
 	b.sortedPathsSnapshot = null;
 	b.basenameTwoCharBuckets = null;
-}
-
-export function getWorkspaceFileIndexLiveStatsForRoot(rootAbs: string | null): { root: string | null; fileCount: number } {
-	if (!rootAbs) {
-		return { root: null, fileCount: 0 };
-	}
-	const rootNorm = path.normalize(path.resolve(rootAbs));
-	const b = buckets.get(rootNorm);
-	if (!b) {
-		return { root: rootNorm, fileCount: 0 };
-	}
-	return { root: rootNorm, fileCount: b.relPathSet.size };
-}
-
-/** @deprecated 使用 getWorkspaceFileIndexLiveStatsForRoot；无参数时返回空统计 */
-export function getWorkspaceFileIndexLiveStats(): { root: string | null; fileCount: number } {
-	return { root: null, fileCount: 0 };
 }
 
 export function registerKnownWorkspaceRelPath(relPath: string, rootAbs: string): void {
@@ -170,7 +146,6 @@ export function registerKnownWorkspaceRelPath(relPath: string, rootAbs: string):
 	}
 	b.relPathSet.add(norm);
 	invalidateSortedPathsSnapshot(b);
-	schedulePersistWorkspaceFileIndex(b);
 }
 
 let workspaceFsTouchNotifier: (() => void) | null = null;
@@ -196,40 +171,6 @@ function scheduleWorkspaceFsTouchNotify(): void {
 			/* ignore */
 		}
 	}, WORKSPACE_FS_TOUCH_DEBOUNCE_MS);
-}
-
-function schedulePersistWorkspaceFileIndex(b: FileIndexBucket): void {
-	if (b.persistTimer) {
-		clearTimeout(b.persistTimer);
-	}
-	b.persistTimer = setTimeout(() => {
-		b.persistTimer = null;
-		void persistWorkspaceFileIndexSnapshot(b);
-	}, 250);
-}
-
-async function persistWorkspaceFileIndexSnapshot(b: FileIndexBucket): Promise<void> {
-	const target = getWorkspaceFilesIndexPath(b.rootNorm);
-	const files = Array.from(b.relPathSet).sort((a, c) => a.localeCompare(c, undefined, { sensitivity: 'base' }));
-	try {
-		await fsp.mkdir(path.dirname(target), { recursive: true });
-		await fsp.writeFile(
-			target,
-			JSON.stringify(
-				{
-					version: 1,
-					root: b.rootNorm,
-					generatedAt: new Date().toISOString(),
-					files,
-				},
-				null,
-				2
-			),
-			'utf8'
-		);
-	} catch {
-		/* ignore */
-	}
 }
 
 function normalizeRel(rootNorm: string, absPath: string): string | null {
@@ -402,57 +343,6 @@ async function scanFullAsync(rootNorm: string, signal?: AbortSignal): Promise<st
 	return out;
 }
 
-/** 尝试从上次持久化的缓存（.async/index/files.json）加载文件列表，避免冷启动全量扫描 */
-async function tryLoadPersistedFileIndex(rootNorm: string): Promise<string[] | null> {
-	const target = getWorkspaceFilesIndexPath(rootNorm);
-	try {
-		const raw = await fsp.readFile(target, 'utf8');
-		const parsed = JSON.parse(raw) as {
-			version?: number;
-			root?: string;
-			files?: unknown;
-		};
-		if (
-			parsed.version === 1 &&
-			typeof parsed.root === 'string' &&
-			path.normalize(parsed.root) === rootNorm &&
-			Array.isArray(parsed.files) &&
-			parsed.files.length > 0 &&
-			typeof parsed.files[0] === 'string'
-		) {
-			const files = (parsed.files as string[])
-				.map((item) => item.replace(/\\/g, '/').replace(/^\/+/, '').trim())
-				.filter((item) => item && !item.startsWith('..'))
-				.filter((item) => !shouldIgnoreRelativePath(item));
-			const filteredOut = parsed.files.length - files.length;
-			if (filteredOut > 0) {
-				try {
-					await fsp.writeFile(
-						target,
-						JSON.stringify(
-							{
-								version: 1,
-								root: rootNorm,
-								generatedAt: new Date().toISOString(),
-								files,
-							},
-							null,
-							2
-						),
-						'utf8'
-					);
-				} catch {
-					/* ignore cache rewrite failures */
-				}
-			}
-			return files;
-		}
-	} catch {
-		/* 缓存不存在或损坏，正常降级 */
-	}
-	return null;
-}
-
 /**
  * 通过 `git ls-files` 获取工作区文件列表（~50ms），作为 filesystem 全量扫描的替代。
  * 同时拉取追踪文件和未追踪文件（遵守 .gitignore）。
@@ -558,7 +448,6 @@ function attachWatcher(b: FileIndexBucket): void {
 			if (rel) {
 				b.relPathSet.add(rel);
 				invalidateSortedPathsSnapshot(b);
-				schedulePersistWorkspaceFileIndex(b);
 				void indexWorkspaceSourceFile(rootNorm, rel);
 				scheduleWorkspaceFsTouchNotify();
 			}
@@ -573,7 +462,6 @@ function attachWatcher(b: FileIndexBucket): void {
 		if (rel) {
 			b.relPathSet.add(rel);
 			invalidateSortedPathsSnapshot(b);
-			schedulePersistWorkspaceFileIndex(b);
 			void indexWorkspaceSourceFile(rootNorm, rel);
 			scheduleWorkspaceFsTouchNotify();
 		}
@@ -587,7 +475,6 @@ function attachWatcher(b: FileIndexBucket): void {
 		if (rel) {
 			b.relPathSet.delete(rel);
 			invalidateSortedPathsSnapshot(b);
-			schedulePersistWorkspaceFileIndex(b);
 			removeWorkspaceSymbolsForRel(rootNorm, rel);
 			scheduleWorkspaceFsTouchNotify();
 		}
@@ -608,7 +495,6 @@ function attachWatcher(b: FileIndexBucket): void {
 			}
 		}
 		invalidateSortedPathsSnapshot(b);
-		schedulePersistWorkspaceFileIndex(b);
 		removeWorkspaceSymbolsUnderPrefix(rootNorm, rel);
 		scheduleWorkspaceFsTouchNotify();
 	};
@@ -842,16 +728,13 @@ export async function ensureWorkspaceFileIndex(rootAbs: string, signal?: AbortSi
 	}
 
 	b.inFlightRefresh = (async () => {
-		const finalize = (sorted: string[], persist: boolean) => {
+		const finalize = (sorted: string[]) => {
 			b.relPathSet = new Set(sorted);
 			b.sortedPathsSnapshot = sorted;
 			if (AUTO_ATTACH_WORKSPACE_FILE_WATCHER) {
 				attachWatcher(b);
 			} else {
 				stopWatcherOnly(b);
-			}
-			if (persist) {
-				schedulePersistWorkspaceFileIndex(b);
 			}
 			try {
 				notifyFileIndexReady?.(rootNorm);
@@ -861,29 +744,21 @@ export async function ensureWorkspaceFileIndex(rootAbs: string, signal?: AbortSi
 			return sorted;
 		};
 
-		// 1. 磁盘缓存（上次会话结果，读 JSON 文件，近乎瞬时）
-		throwIfAborted(signal, 'ensureWorkspaceFileIndex:beforeCache', rootNorm);
-		const cached = await tryLoadPersistedFileIndex(rootNorm);
-		if (cached) {
-			console.log(`[fileIndex] loaded ${cached.length} files from cache`);
-			return finalize(cached, false);
-		}
-
-		// 2. git ls-files（~50ms，覆盖绝大多数 git 仓库场景）
+		// 1. git ls-files（~50ms，覆盖绝大多数 git 仓库场景）
 		throwIfAborted(signal, 'ensureWorkspaceFileIndex:beforeGitLsFiles', rootNorm);
 		const gitFiles = await getFilesViaGit(rootNorm, signal);
 		if (gitFiles) {
 			const sorted = gitFiles.sort((a, c) => a.localeCompare(c, undefined, { sensitivity: 'base' }));
 			console.log(`[fileIndex] git ls-files: ${sorted.length} files`);
-			return finalize(sorted, true);
+			return finalize(sorted);
 		}
 
-		// 3. 兜底：全量 filesystem 扫描（非 git 仓库）
+		// 2. 兜底：全量 filesystem 扫描（非 git 仓库）
 		const t0 = Date.now();
 		throwIfAborted(signal, 'ensureWorkspaceFileIndex:beforeFullScan', rootNorm);
 		const list = await scanFullAsync(rootNorm, signal);
 		console.log(`[fileIndex] scan done: ${list.length} files in ${Date.now() - t0}ms`);
-		return finalize(list, true);
+		return finalize(list);
 	})();
 
 	try {

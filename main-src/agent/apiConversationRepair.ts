@@ -1,5 +1,5 @@
 /**
- * 在发往模型前对对话做 tool 配对修复，对齐 Claude Code `utils/messages.ts` 中
+ * 在发往模型前对对话做 tool 配对修复，
  * `ensureToolResultPairing` 的核心语义：
  * - Forward：assistant 声明的每个 tool_call / tool_use 必须有对应 tool / tool_result，缺失则插入合成错误结果；
  * - Reverse：剥离引用不存在 tool_use 的孤儿 tool_result（及重复 tool_use_id）；
@@ -43,7 +43,7 @@ function dedupeOpenAIAssistantToolCalls(
  */
 export function repairOpenAIToolPairing(messages: OAIMsg[]): OAIMsg[] {
 	const out: OAIMsg[] = [];
-	/** 跨 assistant 消息去重 tool_call id（对齐 Claude Code `ensureToolResultPairing` / CC-1212） */
+/** 跨 assistant 消息去重 tool_call id */
 	const globalSeenToolCallIds = new Set<string>();
 	let i = 0;
 	while (i < messages.length) {

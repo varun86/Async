@@ -107,9 +107,12 @@ export function useEditorMainPanelProps({
 			er.onMonacoMount,
 			er.onPlanBuild,
 			er.openTabs,
+			er.onOpenTeamAgentFile,
 			er.planFilePath,
 			er.planFileRelPath,
 			er.planReviewIsBuilt,
+			er.revertedChangeKeys,
+			er.revertedPaths,
 			er.setActiveEditorTerminalId,
 			er.setEditorPlanBuildModelId,
 			er.setMarkdownPaneMode,
@@ -119,6 +122,7 @@ export function useEditorMainPanelProps({
 			er.showPlanFileEditorChrome,
 			er.t,
 			er.teamSession,
+			er.workspaceRoot,
 		]
 	);
 }

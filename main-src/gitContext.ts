@@ -1,7 +1,7 @@
 /**
  * Git 状态快照注入 — 为 Agent 对话提供当前分支、未提交改动和最近提交的上下文。
  *
- * 参考 Claude Code 的 getSystemContext()：memoize 缓存，避免每轮都重复 exec。
+ * 使用 memoize 缓存，避免每轮都重复 exec。
  * 缓存有效期 30 秒，适合交互式对话节奏。
  */
 

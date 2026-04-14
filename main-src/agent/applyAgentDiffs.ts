@@ -1,6 +1,6 @@
 /**
  * Agent 模式：从助手 Markdown 中提取 ```diff / unified diff，并写入当前工作区。
- * 思路类似终端 Agent（如 [Claude Code](https://github.com/anthropics/claude-code)）的「应用改动」，此处用补丁解析而非长工具循环。
+ * 这里采用“应用补丁”的方式处理改动，而不是长工具循环。
  */
 
 import { applyPatch } from 'diff';

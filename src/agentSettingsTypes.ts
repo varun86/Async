@@ -51,7 +51,7 @@ export type AgentCommand = {
 	body: string;
 };
 
-/** 与 Claude Code `PermissionBehavior` 一致 */
+/** 与当前权限行为枚举保持一致 */
 export type ToolPermissionBehavior = 'allow' | 'deny' | 'ask';
 
 export type AgentToolPermissionRule = {
@@ -91,10 +91,16 @@ export type TeamSettings = {
 	presetId?: TeamPresetId;
 	/** 切换团队模板时按 preset 缓存角色列表（含模型等），切回时可恢复 */
 	presetExpertSnapshots?: Partial<Record<TeamPresetId, TeamExpertConfig[]>>;
-	/** Lead 出方案后先等用户确认再派发专家；默认 true */
+	/** Lead 出方案后先等用户确认再派发专家；默认值随 preset 决定 */
 	requirePlanApproval?: boolean;
-	/** 执行前先让评审专家评估需求/方案；默认 true（需有 reviewer 角色） */
+	/** 执行前先让评审专家评估需求/方案；默认值随 preset 决定（engineering 默认 false） */
 	enablePreflightReview?: boolean;
+	/** 规划前先让调研员调研代码库、澄清需求；默认值随 preset 决定 */
+	enableResearchPhase?: boolean;
+	/** 可选的规划评审专家；为空时复用 reviewer */
+	planReviewer?: TeamExpertConfig | null;
+	/** 可选的交付评审专家；为空时复用 reviewer */
+	deliveryReviewer?: TeamExpertConfig | null;
 };
 
 /** Bash 执行权限三档（与 Composer 下拉、设置页一致） */
@@ -124,7 +130,7 @@ export type AgentCustomization = {
 	maxConsecutiveMistakes?: number;
 	/** 是否启用连续失败暂停，默认 true */
 	mistakeLimitEnabled?: boolean;
-	/** 省略 subagent_type 时 Agent 后台运行（对齐 Claude Code fork），默认 false */
+	/** 省略 subagent_type 时 Agent 后台运行，默认 false */
 	backgroundForkAgent?: boolean;
 	/** 无新 chunk 最长等待（ms），见主进程 agentSettingsTypes */
 	streamIdleTimeoutMs?: number;

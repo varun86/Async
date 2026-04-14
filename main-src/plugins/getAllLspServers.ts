@@ -12,7 +12,7 @@ export type GetAllLspServersOptions = {
 };
 
 /**
- * 合并 LSP 来源（与 Claude Code 思路一致：插件目录 + 作用域名；Async 另含可选的 TSLS 路径探测与 settings 迁移）。
+ * 合并 LSP 来源：插件目录 + 作用域名；Async 另含可选的 TSLS 路径探测与 settings 迁移。
  * 同一扩展名多服务器时，**后合并的覆盖先合并的**（工作区插件优先于用户目录与内置）。
  */
 export async function getAllLspServers(opts: GetAllLspServersOptions): Promise<Record<string, ScopedLspServerConfig>> {

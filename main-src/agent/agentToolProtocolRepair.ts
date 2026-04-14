@@ -1,5 +1,5 @@
 /**
- * 借鉴 Claude Code `ensureToolResultPairing` 思路：在把对话发给 LLM 之前做磁盘侧修复。
+ * 在把对话发给 LLM 之前做磁盘侧配对修复。
  *
  * - **Legacy XML**：移除无法按 FIFO 与 `<tool_call>` 配对的孤儿 `<tool_result>`。
  * - **结构化 JSON**：对重复 `toolUseId` 去重（对齐 CC 对重复 tool_use id 的防御）。
