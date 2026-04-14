@@ -61,6 +61,7 @@ export function createAppWindow(opts?: {
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: false,
+			webviewTag: true,
 		},
 		show: false,
 	});

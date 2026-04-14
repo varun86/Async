@@ -150,7 +150,7 @@ import {
 const EditorMainPanel = lazy(() => import('./EditorMainPanel').then((m) => ({ default: m.EditorMainPanel })));
 
 type LayoutMode = ShellLayoutMode;
-type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team';
+type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team' | 'browser';
 type EditorLeftSidebarView = 'explorer' | 'search' | 'git';
 import { useI18n, type AppLocale } from './i18n';
 import { hideBootSplash } from './bootSplash';

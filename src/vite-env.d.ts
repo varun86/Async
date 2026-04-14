@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import type * as React from 'react';
 
 export interface AsyncShellAPI {
 	invoke(channel: string, ...args: unknown[]): Promise<unknown>;
@@ -15,6 +16,29 @@ export interface AsyncShellAPI {
 	subscribeTerminalPtyExit?(callback: (id: string, code: unknown) => void): () => void;
 }
 declare global {
+	interface AsyncShellWebviewElement extends HTMLElement {
+		canGoBack(): boolean;
+		canGoForward(): boolean;
+		goBack(): void;
+		goForward(): void;
+		getUserAgent(): string;
+		reload(): void;
+		setUserAgent(userAgent: string): void;
+		stop(): void;
+		getURL(): string;
+	}
+
+	namespace JSX {
+		interface IntrinsicElements {
+			webview: React.DetailedHTMLProps<React.HTMLAttributes<AsyncShellWebviewElement>, AsyncShellWebviewElement> & {
+				src?: string;
+				partition?: string;
+				allowpopups?: boolean | 'true' | 'false';
+				useragent?: string;
+			};
+		}
+	}
+
 	interface Window {
 		asyncShell?: AsyncShellAPI;
 		/** 调试：标签/删除等（见 tabCloseDebug.ts） */

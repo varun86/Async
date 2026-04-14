@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, type WebContents } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, session, type WebContents } from 'electron';
 import { createAppWindow } from '../appWindow.js';
 import { applyThemeChromeToWindow, type NativeChromeOverride, type ThemeChromeScheme } from '../themeChrome.js';
 import { applyPatch, formatPatch, parsePatch, reversePatch } from 'diff';
@@ -159,6 +159,175 @@ import { getAutoMemEntrypoint } from '../memdir/paths.js';
 import { buildMemoryEntrypoint, queueExtractMemories } from '../services/extractMemories/extractMemories.js';
 
 const execFileAsync = promisify(execFile);
+
+type BrowserSidebarConfig = {
+	userAgent: string;
+	acceptLanguage: string;
+	extraHeadersText: string;
+	extraHeaders: Array<[string, string]>;
+	proxyMode: 'system' | 'direct' | 'custom';
+	proxyRules: string;
+	proxyBypassRules: string;
+};
+
+const DEFAULT_BROWSER_SIDEBAR_CONFIG: BrowserSidebarConfig = {
+	userAgent: '',
+	acceptLanguage: '',
+	extraHeadersText: '',
+	extraHeaders: [],
+	proxyMode: 'system',
+	proxyRules: '',
+	proxyBypassRules: '',
+};
+
+const browserSidebarConfigsByHost = new Map<number, BrowserSidebarConfig>();
+const browserSidebarConfigsByPartition = new Map<string, BrowserSidebarConfig>();
+const browserSidebarHookedPartitions = new Set<string>();
+const browserDefaultUserAgentByPartition = new Map<string, string>();
+
+function browserPartitionForHost(sender: WebContents): string {
+	return `async-agent-browser-host-${sender.id}`;
+}
+
+function cloneBrowserSidebarConfig(config?: BrowserSidebarConfig | null): BrowserSidebarConfig {
+	const src = config ?? DEFAULT_BROWSER_SIDEBAR_CONFIG;
+	return {
+		userAgent: String(src.userAgent ?? '').trim(),
+		acceptLanguage: String(src.acceptLanguage ?? '').trim(),
+		extraHeadersText: String(src.extraHeadersText ?? '').replace(/\r/g, ''),
+		extraHeaders: Array.isArray(src.extraHeaders)
+			? src.extraHeaders.map(([key, value]) => [String(key), String(value)])
+			: [],
+		proxyMode:
+			src.proxyMode === 'direct' || src.proxyMode === 'custom' || src.proxyMode === 'system'
+				? src.proxyMode
+				: 'system',
+		proxyRules: String(src.proxyRules ?? '').trim(),
+		proxyBypassRules: String(src.proxyBypassRules ?? '').trim(),
+	};
+}
+
+function parseBrowserExtraHeadersText(raw: unknown):
+	| { ok: true; extraHeadersText: string; extraHeaders: Array<[string, string]> }
+	| { ok: false; line: number } {
+	const text = String(raw ?? '').replace(/\r/g, '');
+	const lines = text.split('\n');
+	const extraHeaders: Array<[string, string]> = [];
+	for (let i = 0; i < lines.length; i += 1) {
+		const line = lines[i].trim();
+		if (!line) {
+			continue;
+		}
+		const sep = line.indexOf(':');
+		if (sep <= 0) {
+			return { ok: false, line: i + 1 };
+		}
+		const name = line.slice(0, sep).trim();
+		const value = line.slice(sep + 1).trim();
+		if (!name) {
+			return { ok: false, line: i + 1 };
+		}
+		extraHeaders.push([name, value]);
+	}
+	return { ok: true, extraHeadersText: text, extraHeaders };
+}
+
+function normalizeBrowserSidebarConfig(raw: unknown):
+	| { ok: true; config: BrowserSidebarConfig }
+	| { ok: false; line: number } {
+	const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+	const parsedHeaders = parseBrowserExtraHeadersText(obj.extraHeadersText);
+	if (!parsedHeaders.ok) {
+		return { ok: false, line: parsedHeaders.line };
+	}
+	return {
+		ok: true,
+		config: {
+			userAgent: String(obj.userAgent ?? '').trim(),
+			acceptLanguage: String(obj.acceptLanguage ?? '').trim(),
+			extraHeadersText: parsedHeaders.extraHeadersText,
+			extraHeaders: parsedHeaders.extraHeaders,
+			proxyMode:
+				obj.proxyMode === 'direct' || obj.proxyMode === 'custom' || obj.proxyMode === 'system'
+					? obj.proxyMode
+					: 'system',
+			proxyRules: String(obj.proxyRules ?? '').trim(),
+			proxyBypassRules: String(obj.proxyBypassRules ?? '').trim(),
+		},
+	};
+}
+
+function upsertRequestHeader(headers: Record<string, string>, name: string, value: string): void {
+	const existing = Object.keys(headers).find((key) => key.toLowerCase() === name.toLowerCase());
+	if (existing && existing !== name) {
+		delete headers[existing];
+	}
+	headers[existing ?? name] = value;
+}
+
+function ensureBrowserSidebarSessionHook(partition: string) {
+	const ses = session.fromPartition(partition);
+	if (!browserDefaultUserAgentByPartition.has(partition)) {
+		browserDefaultUserAgentByPartition.set(partition, ses.getUserAgent());
+	}
+	if (browserSidebarHookedPartitions.has(partition)) {
+		return ses;
+	}
+	ses.webRequest.onBeforeSendHeaders((details, callback) => {
+		const config = browserSidebarConfigsByPartition.get(partition);
+		if (!config) {
+			callback({ requestHeaders: details.requestHeaders });
+			return;
+		}
+		const requestHeaders = { ...(details.requestHeaders as Record<string, string>) };
+		for (const [name, value] of config.extraHeaders) {
+			upsertRequestHeader(requestHeaders, name, value);
+		}
+		if (config.acceptLanguage) {
+			upsertRequestHeader(requestHeaders, 'Accept-Language', config.acceptLanguage);
+		}
+		if (config.userAgent) {
+			upsertRequestHeader(requestHeaders, 'User-Agent', config.userAgent);
+		}
+		callback({ requestHeaders });
+	});
+	browserSidebarHookedPartitions.add(partition);
+	return ses;
+}
+
+async function applyBrowserSidebarConfigToPartition(partition: string, config: BrowserSidebarConfig): Promise<string> {
+	const ses = ensureBrowserSidebarSessionHook(partition);
+	browserSidebarConfigsByPartition.set(partition, cloneBrowserSidebarConfig(config));
+	const defaultUserAgent = browserDefaultUserAgentByPartition.get(partition) ?? ses.getUserAgent();
+	ses.setUserAgent(config.userAgent || defaultUserAgent);
+	if (config.proxyMode === 'direct') {
+		await ses.setProxy({ mode: 'direct' });
+	} else if (config.proxyMode === 'custom') {
+		await ses.setProxy({
+			mode: 'fixed_servers',
+			proxyRules: config.proxyRules,
+			proxyBypassRules: config.proxyBypassRules || undefined,
+		});
+	} else {
+		await ses.setProxy({ mode: 'system' });
+	}
+	try {
+		await ses.closeAllConnections();
+	} catch {
+		/* ignore */
+	}
+	return defaultUserAgent;
+}
+
+function getOrCreateBrowserSidebarConfigForHost(sender: WebContents): BrowserSidebarConfig {
+	const existing = browserSidebarConfigsByHost.get(sender.id);
+	if (existing) {
+		return cloneBrowserSidebarConfig(existing);
+	}
+	const next = cloneBrowserSidebarConfig(DEFAULT_BROWSER_SIDEBAR_CONFIG);
+	browserSidebarConfigsByHost.set(sender.id, next);
+	return cloneBrowserSidebarConfig(next);
+}
 
 function senderWorkspaceRoot(event: { sender: WebContents }): string | null {
 	return getWorkspaceRootForWebContents(event.sender);
@@ -1334,6 +1503,52 @@ export function registerIpc(): void {
 			}
 		}
 	);
+
+	ipcMain.handle('browser:getConfig', async (event) => {
+		const partition = browserPartitionForHost(event.sender);
+		const config = getOrCreateBrowserSidebarConfigForHost(event.sender);
+		const defaultUserAgent = await applyBrowserSidebarConfigToPartition(partition, config);
+		return {
+			ok: true as const,
+			partition,
+			config: {
+				userAgent: config.userAgent,
+				acceptLanguage: config.acceptLanguage,
+				extraHeadersText: config.extraHeadersText,
+				proxyMode: config.proxyMode,
+				proxyRules: config.proxyRules,
+				proxyBypassRules: config.proxyBypassRules,
+			},
+			defaultUserAgent,
+		};
+	});
+
+	ipcMain.handle('browser:setConfig', async (event, rawConfig: unknown) => {
+		const normalized = normalizeBrowserSidebarConfig(rawConfig);
+		if (!normalized.ok) {
+			return { ok: false as const, error: 'invalid-header-line' as const, line: normalized.line };
+		}
+		const partition = browserPartitionForHost(event.sender);
+		const config = cloneBrowserSidebarConfig(normalized.config);
+		if (config.proxyMode === 'custom' && !config.proxyRules) {
+			return { ok: false as const, error: 'proxy-rules-required' as const };
+		}
+		browserSidebarConfigsByHost.set(event.sender.id, config);
+		const defaultUserAgent = await applyBrowserSidebarConfigToPartition(partition, config);
+		return {
+			ok: true as const,
+			partition,
+			config: {
+				userAgent: config.userAgent,
+				acceptLanguage: config.acceptLanguage,
+				extraHeadersText: config.extraHeadersText,
+				proxyMode: config.proxyMode,
+				proxyRules: config.proxyRules,
+				proxyBypassRules: config.proxyBypassRules,
+			},
+			defaultUserAgent,
+		};
+	});
 
 	const COMPOSER_ATTACH_MAX_BYTES = 8 * 1024 * 1024;
 

@@ -13,6 +13,8 @@ const INVOKE_CHANNELS = new Set([
 	'workspace:deleteSkillFromDisk',
 	'workspace:listFiles',
 	'workspace:searchFiles',
+	'browser:getConfig',
+	'browser:setConfig',
 	'workspace:saveComposerAttachment',
 	'workspace:searchSymbols',
 	'lsp:ts:start',

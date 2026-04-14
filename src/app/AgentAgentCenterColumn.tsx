@@ -1,11 +1,11 @@
 import { memo, type KeyboardEvent } from 'react';
 import { AgentChatPanel, type AgentChatPanelProps } from '../AgentChatPanel';
-import { IconDoc, IconGitSCM } from '../icons';
+import { IconDoc, IconGitSCM, IconGlobe } from '../icons';
 import type { TFunction } from '../i18n';
 import { AgentWorkspaceLauncher } from './AgentWorkspaceLauncher';
 import type { WorkspaceLauncherTool } from './workspaceLaunchers';
 
-export type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team';
+export type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team' | 'browser';
 
 export type AgentAgentCenterColumnProps = {
 	t: TFunction;
@@ -91,6 +91,17 @@ export const AgentAgentCenterColumn = memo(function AgentAgentCenterColumn({
 					workspace={workspace}
 					onLaunchTool={onLaunchWorkspaceWithTool}
 				/>
+				<button
+					type="button"
+					className={`ref-agent-rail-toggle ${agentRightSidebarOpen && agentRightSidebarView === 'browser' ? 'is-open' : ''}`}
+					onClick={() => toggleAgentRightSidebarView('browser')}
+					title={t('app.tabBrowser')}
+					aria-label={t('app.tabBrowser')}
+					aria-pressed={agentRightSidebarOpen && agentRightSidebarView === 'browser'}
+					aria-controls="agent-right-sidebar"
+				>
+					<IconGlobe />
+				</button>
 				<button
 					type="button"
 					className={`ref-agent-rail-toggle ${agentRightSidebarOpen && agentRightSidebarView === 'git' ? 'is-open' : ''}`}

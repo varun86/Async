@@ -1,13 +1,29 @@
-import { memo, useEffect, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	type Dispatch,
+	type FormEvent,
+	type ReactNode,
+	type RefObject,
+	type SetStateAction,
+} from 'react';
 import { AgentFilePreviewPanel } from './AgentFilePreviewPanel';
 import { ChatMarkdown } from './ChatMarkdown';
 import { VoidSelect } from './VoidSelect';
 import { GitUnavailableState } from './gitBadge';
 import {
+	IconArrowLeft,
+	IconArrowRight,
 	IconCloseSmall,
 	IconDoc,
 	IconGitSCM,
+	IconGlobe,
 	IconRefresh,
+	IconSettings,
+	IconStop,
 	IconArrowUp,
 	IconArrowUpRight,
 } from './icons';
@@ -25,7 +41,331 @@ import type { TeamSessionState } from './hooks/useTeamSession';
 import { TeamRoleWorkflowPanel } from './TeamRoleWorkflowPanel';
 import { buildTeamWorkflowItems } from './teamWorkflowItems';
 
-type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team';
+type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team' | 'browser';
+
+const BROWSER_HOME_URL = 'https://www.bing.com/';
+
+type BrowserNavEvent = Event & { url?: string; isMainFrame?: boolean };
+type BrowserTitleEvent = Event & { title?: string };
+type BrowserFailEvent = Event & {
+	errorCode?: number;
+	errorDescription?: string;
+	validatedURL?: string;
+	isMainFrame?: boolean;
+};
+
+type BrowserSidebarConfig = {
+	userAgent: string;
+	acceptLanguage: string;
+	extraHeadersText: string;
+	proxyMode: 'system' | 'direct' | 'custom';
+	proxyRules: string;
+	proxyBypassRules: string;
+};
+
+const DEFAULT_BROWSER_SIDEBAR_CONFIG: BrowserSidebarConfig = {
+	userAgent: '',
+	acceptLanguage: '',
+	extraHeadersText: '',
+	proxyMode: 'system',
+	proxyRules: '',
+	proxyBypassRules: '',
+};
+
+function normalizeBrowserSidebarConfig(raw?: Partial<BrowserSidebarConfig> | null): BrowserSidebarConfig {
+	return {
+		userAgent: String(raw?.userAgent ?? '').trim(),
+		acceptLanguage: String(raw?.acceptLanguage ?? '').trim(),
+		extraHeadersText: String(raw?.extraHeadersText ?? '').replace(/\r/g, ''),
+		proxyMode:
+			raw?.proxyMode === 'direct' || raw?.proxyMode === 'custom' || raw?.proxyMode === 'system'
+				? raw.proxyMode
+				: 'system',
+		proxyRules: String(raw?.proxyRules ?? '').trim(),
+		proxyBypassRules: String(raw?.proxyBypassRules ?? '').trim(),
+	};
+}
+
+function parseBrowserExtraHeadersText(raw: string): { ok: true; headers: Array<[string, string]> } | { ok: false; line: number } {
+	const text = String(raw ?? '').replace(/\r/g, '');
+	const lines = text.split('\n');
+	const headers: Array<[string, string]> = [];
+	for (let i = 0; i < lines.length; i += 1) {
+		const line = lines[i].trim();
+		if (!line) {
+			continue;
+		}
+		const sep = line.indexOf(':');
+		if (sep <= 0) {
+			return { ok: false, line: i + 1 };
+		}
+		const name = line.slice(0, sep).trim();
+		const value = line.slice(sep + 1).trim();
+		if (!name) {
+			return { ok: false, line: i + 1 };
+		}
+		headers.push([name, value]);
+	}
+	return { ok: true, headers };
+}
+
+function safeGetWebviewUrl(node: AsyncShellWebviewElement | null): string {
+	if (!node) {
+		return '';
+	}
+	try {
+		return String(node.getURL?.() ?? '').trim();
+	} catch {
+		return '';
+	}
+}
+
+function looksLikeDirectUrl(raw: string): boolean {
+	if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(raw)) {
+		return true;
+	}
+	return /^(localhost|(?:\d{1,3}\.){3}\d{1,3}|(?:[\w-]+\.)+[a-z]{2,})(?::\d+)?(?:[/?#].*)?$/i.test(raw);
+}
+
+function normalizeBrowserTarget(raw: string): string {
+	const text = raw.trim();
+	if (!text) {
+		return BROWSER_HOME_URL;
+	}
+	if (looksLikeDirectUrl(text)) {
+		return /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(text) ? text : `https://${text}`;
+	}
+	return `https://www.bing.com/search?q=${encodeURIComponent(text)}`;
+}
+
+function BrowserSettingsModal({
+	open,
+	t,
+	draft,
+	setDraft,
+	error,
+	saving,
+	onClose,
+	onReset,
+	onSave,
+}: {
+	open: boolean;
+	t: TFunction;
+	draft: BrowserSidebarConfig;
+	setDraft: Dispatch<SetStateAction<BrowserSidebarConfig>>;
+	error: string | null;
+	saving: boolean;
+	onClose: () => void;
+	onReset: () => void;
+	onSave: () => void | Promise<void>;
+}) {
+	const firstInputRef = useRef<HTMLInputElement | null>(null);
+
+	useEffect(() => {
+		if (!open) {
+			return;
+		}
+		const timer = window.setTimeout(() => firstInputRef.current?.focus(), 40);
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				onClose();
+			}
+		};
+		window.addEventListener('keydown', onKey);
+		return () => {
+			window.clearTimeout(timer);
+			window.removeEventListener('keydown', onKey);
+		};
+	}, [open, onClose]);
+
+	if (!open) {
+		return null;
+	}
+
+	return (
+		<div className="ref-browser-settings-backdrop" role="presentation" onClick={onClose}>
+			<form
+				className="ref-browser-settings-modal"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="browser-settings-title"
+				onClick={(event) => event.stopPropagation()}
+				onSubmit={(event) => {
+					event.preventDefault();
+					void onSave();
+				}}
+			>
+				<div className="ref-browser-settings-head">
+					<div className="ref-browser-settings-title-stack">
+						<span className="ref-browser-settings-kicker">{t('app.tabBrowser')}</span>
+						<h2 id="browser-settings-title" className="ref-browser-settings-title">
+							{t('app.browserSettings')}
+						</h2>
+					</div>
+					<button
+						type="button"
+						className="ref-browser-settings-close"
+						aria-label={t('common.close')}
+						title={t('common.close')}
+						onClick={onClose}
+					>
+						<IconCloseSmall />
+					</button>
+				</div>
+
+				<div className="ref-browser-settings-body">
+					<p className="ref-browser-settings-note">{t('app.browserSettingsDescription')}</p>
+
+					<label className="ref-browser-settings-field">
+						<span className="ref-browser-settings-label">{t('app.browserUserAgent')}</span>
+						<input
+							ref={firstInputRef}
+							type="text"
+							className="ref-browser-settings-input"
+							value={draft.userAgent}
+							placeholder={t('app.browserUserAgentPlaceholder')}
+							spellCheck={false}
+							onChange={(event) =>
+								setDraft((prev) => ({
+									...prev,
+									userAgent: event.target.value,
+								}))
+							}
+						/>
+					</label>
+
+					<label className="ref-browser-settings-field">
+						<span className="ref-browser-settings-label">{t('app.browserAcceptLanguage')}</span>
+						<input
+							type="text"
+							className="ref-browser-settings-input"
+							value={draft.acceptLanguage}
+							placeholder={t('app.browserAcceptLanguagePlaceholder')}
+							spellCheck={false}
+							onChange={(event) =>
+								setDraft((prev) => ({
+									...prev,
+									acceptLanguage: event.target.value,
+								}))
+							}
+						/>
+					</label>
+
+					<div className="ref-browser-settings-field">
+						<span className="ref-browser-settings-label">{t('app.browserProxyMode')}</span>
+						<div className="ref-browser-settings-segmented" role="radiogroup" aria-label={t('app.browserProxyMode')}>
+							{(
+								[
+									['system', 'app.browserProxyModeSystem', 'app.browserProxyModeSystemDesc'],
+									['direct', 'app.browserProxyModeDirect', 'app.browserProxyModeDirectDesc'],
+									['custom', 'app.browserProxyModeCustom', 'app.browserProxyModeCustomDesc'],
+								] as const
+							).map(([mode, titleKey, descKey]) => {
+								const active = draft.proxyMode === mode;
+								return (
+									<button
+										key={mode}
+										type="button"
+										role="radio"
+										aria-checked={active}
+										className={`ref-browser-settings-segment ${active ? 'is-selected' : ''}`}
+										onClick={() =>
+											setDraft((prev) => ({
+												...prev,
+												proxyMode: mode,
+											}))
+										}
+									>
+										<span className="ref-browser-settings-segment-title">{t(titleKey)}</span>
+										<span className="ref-browser-settings-segment-desc">{t(descKey)}</span>
+									</button>
+								);
+							})}
+						</div>
+					</div>
+
+					{draft.proxyMode === 'custom' ? (
+						<>
+							<label className="ref-browser-settings-field">
+								<span className="ref-browser-settings-label">{t('app.browserProxyRules')}</span>
+								<input
+									type="text"
+									className="ref-browser-settings-input"
+									value={draft.proxyRules}
+									placeholder={t('app.browserProxyRulesPlaceholder')}
+									spellCheck={false}
+									onChange={(event) =>
+										setDraft((prev) => ({
+											...prev,
+											proxyRules: event.target.value,
+										}))
+									}
+								/>
+								<span className="ref-browser-settings-help">{t('app.browserProxyRulesHint')}</span>
+							</label>
+
+							<label className="ref-browser-settings-field">
+								<span className="ref-browser-settings-label">{t('app.browserProxyBypassRules')}</span>
+								<input
+									type="text"
+									className="ref-browser-settings-input"
+									value={draft.proxyBypassRules}
+									placeholder={t('app.browserProxyBypassRulesPlaceholder')}
+									spellCheck={false}
+									onChange={(event) =>
+										setDraft((prev) => ({
+											...prev,
+											proxyBypassRules: event.target.value,
+										}))
+									}
+								/>
+								<span className="ref-browser-settings-help">{t('app.browserProxyBypassRulesHint')}</span>
+							</label>
+						</>
+					) : null}
+
+					<label className="ref-browser-settings-field">
+						<span className="ref-browser-settings-label">{t('app.browserExtraHeaders')}</span>
+						<textarea
+							className="ref-browser-settings-textarea"
+							value={draft.extraHeadersText}
+							placeholder={t('app.browserExtraHeadersPlaceholder')}
+							spellCheck={false}
+							onChange={(event) =>
+								setDraft((prev) => ({
+									...prev,
+									extraHeadersText: event.target.value,
+								}))
+							}
+						/>
+						<span className="ref-browser-settings-help">{t('app.browserExtraHeadersHint')}</span>
+					</label>
+
+					{error ? <div className="ref-browser-settings-error">{error}</div> : null}
+				</div>
+
+				<div className="ref-browser-settings-actions">
+					<button type="button" className="ref-browser-settings-btn ref-browser-settings-btn--ghost" onClick={onReset}>
+						{t('app.browserResetDefaults')}
+					</button>
+					<div className="ref-browser-settings-actions-right">
+						<button
+							type="button"
+							className="ref-browser-settings-btn ref-browser-settings-btn--secondary"
+							onClick={onClose}
+						>
+							{t('common.cancel')}
+						</button>
+						<button type="submit" className="ref-browser-settings-btn" disabled={saving}>
+							{t('app.browserSaveAndReload')}
+						</button>
+					</div>
+				</div>
+			</form>
+		</div>
+	);
+}
 
 export type AgentRightSidebarProps = {
 	open: boolean;
@@ -253,11 +593,13 @@ function RightSidebarTabs({
 	hasPlan,
 	openView,
 	closeSidebar,
+	extraActions,
 }: {
 	t: TFunction;
 	hasPlan: boolean;
 	openView: (view: AgentRightSidebarView) => void;
 	closeSidebar: () => void;
+	extraActions?: ReactNode;
 }) {
 	return (
 		<div className="ref-right-icon-tabs" aria-label={t('app.rightSidebarViews')}>
@@ -272,6 +614,7 @@ function RightSidebarTabs({
 					<IconDoc />
 				</button>
 			) : null}
+			{extraActions}
 			<button
 				type="button"
 				aria-label={t('common.close')}
@@ -602,6 +945,413 @@ const AgentRightSidebarFilePanel = memo(function AgentRightSidebarFilePanel({
 	);
 });
 
+const AgentRightSidebarBrowserPanel = memo(function AgentRightSidebarBrowserPanel({
+	hasAgentPlanSidebarContent,
+	closeSidebar,
+	openView,
+}: {
+	hasAgentPlanSidebarContent: boolean;
+	closeSidebar: () => void;
+	openView: (view: AgentRightSidebarView) => void;
+}) {
+	const { t, shell } = useAppShellChrome();
+	const webviewRef = useRef<AsyncShellWebviewElement | null>(null);
+	const defaultUserAgentRef = useRef('');
+	const [pageTitle, setPageTitle] = useState('');
+	const [currentUrl, setCurrentUrl] = useState(BROWSER_HOME_URL);
+	const [draftUrl, setDraftUrl] = useState(BROWSER_HOME_URL);
+	const [isLoading, setIsLoading] = useState(true);
+	const [canGoBack, setCanGoBack] = useState(false);
+	const [canGoForward, setCanGoForward] = useState(false);
+	const [loadError, setLoadError] = useState<{ message: string; url: string } | null>(null);
+	const [browserPartition, setBrowserPartition] = useState('');
+	const [browserConfigReady, setBrowserConfigReady] = useState(false);
+	const [browserSettingsOpen, setBrowserSettingsOpen] = useState(false);
+	const [browserSettingsSaving, setBrowserSettingsSaving] = useState(false);
+	const [browserSettingsError, setBrowserSettingsError] = useState<string | null>(null);
+	const [browserConfig, setBrowserConfig] = useState<BrowserSidebarConfig>(DEFAULT_BROWSER_SIDEBAR_CONFIG);
+	const [browserDraft, setBrowserDraft] = useState<BrowserSidebarConfig>(DEFAULT_BROWSER_SIDEBAR_CONFIG);
+
+	const syncLocation = useCallback((nextUrl?: string) => {
+		const resolved = String(nextUrl ?? '').trim() || BROWSER_HOME_URL;
+		setCurrentUrl((prev) => (prev === resolved ? prev : resolved));
+		setDraftUrl((prev) => (prev === resolved ? prev : resolved));
+	}, []);
+
+	useEffect(() => {
+		let cancelled = false;
+		if (!shell) {
+			setBrowserPartition('async-agent-browser-fallback');
+			setBrowserConfigReady(true);
+			return () => {
+				cancelled = true;
+			};
+		}
+		void shell
+			.invoke('browser:getConfig')
+			.then((payload) => {
+				if (cancelled) {
+					return;
+				}
+				const response = payload as {
+					ok?: boolean;
+					partition?: string;
+					config?: Partial<BrowserSidebarConfig>;
+					defaultUserAgent?: string;
+				};
+				if (response.ok && response.partition) {
+					const nextConfig = normalizeBrowserSidebarConfig(response.config);
+					setBrowserPartition(response.partition);
+					setBrowserConfig(nextConfig);
+					setBrowserDraft(nextConfig);
+					defaultUserAgentRef.current = String(response.defaultUserAgent ?? '').trim();
+				} else {
+					setBrowserPartition('async-agent-browser-fallback');
+				}
+				setBrowserConfigReady(true);
+			})
+			.catch(() => {
+				if (cancelled) {
+					return;
+				}
+				setBrowserPartition('async-agent-browser-fallback');
+				setBrowserConfigReady(true);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [shell]);
+
+	const refreshNavState = useCallback(() => {
+		const node = webviewRef.current;
+		if (!node) {
+			setCanGoBack(false);
+			setCanGoForward(false);
+			return;
+		}
+		try {
+			setCanGoBack(Boolean(node.canGoBack?.()));
+			setCanGoForward(Boolean(node.canGoForward?.()));
+		} catch {
+			setCanGoBack(false);
+			setCanGoForward(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		const node = webviewRef.current;
+		if (!node) {
+			return;
+		}
+
+		const handleStartLoading = () => {
+			setIsLoading(true);
+			setLoadError(null);
+			refreshNavState();
+		};
+		const handleStopLoading = () => {
+			setIsLoading(false);
+			syncLocation(safeGetWebviewUrl(node));
+			refreshNavState();
+		};
+		const handleNavigate = (event: Event) => {
+			const navEvent = event as BrowserNavEvent;
+			if (navEvent.isMainFrame === false) {
+				return;
+			}
+			setLoadError(null);
+			syncLocation(navEvent.url ?? safeGetWebviewUrl(node));
+			refreshNavState();
+		};
+		const handleTitleUpdated = (event: Event) => {
+			setPageTitle(String((event as BrowserTitleEvent).title ?? '').trim());
+		};
+		const handleDomReady = () => {
+			if (!defaultUserAgentRef.current) {
+				try {
+					defaultUserAgentRef.current = String(node.getUserAgent?.() ?? '').trim();
+				} catch {
+					/* ignore */
+				}
+			}
+			refreshNavState();
+		};
+		const handleFailLoad = (event: Event) => {
+			const failEvent = event as BrowserFailEvent;
+			if (failEvent.isMainFrame === false || failEvent.errorCode === -3) {
+				return;
+			}
+			setIsLoading(false);
+			const failedUrl = String(failEvent.validatedURL ?? safeGetWebviewUrl(node) ?? '').trim();
+			syncLocation(failedUrl);
+			setLoadError({
+				message: String(failEvent.errorDescription ?? t('app.browserLoadFailed')),
+				url: failedUrl,
+			});
+			refreshNavState();
+		};
+
+		node.addEventListener('dom-ready', handleDomReady);
+		node.addEventListener('did-start-loading', handleStartLoading);
+		node.addEventListener('did-stop-loading', handleStopLoading);
+		node.addEventListener('did-navigate', handleNavigate);
+		node.addEventListener('did-navigate-in-page', handleNavigate);
+		node.addEventListener('page-title-updated', handleTitleUpdated);
+		node.addEventListener('did-fail-load', handleFailLoad);
+		refreshNavState();
+
+		return () => {
+			node.removeEventListener('dom-ready', handleDomReady);
+			node.removeEventListener('did-start-loading', handleStartLoading);
+			node.removeEventListener('did-stop-loading', handleStopLoading);
+			node.removeEventListener('did-navigate', handleNavigate);
+			node.removeEventListener('did-navigate-in-page', handleNavigate);
+			node.removeEventListener('page-title-updated', handleTitleUpdated);
+			node.removeEventListener('did-fail-load', handleFailLoad);
+		};
+	}, [browserConfigReady, browserPartition, refreshNavState, syncLocation, t]);
+
+	const onAddressSubmit = useCallback(
+		(event: FormEvent<HTMLFormElement>) => {
+			event.preventDefault();
+			const nextUrl = normalizeBrowserTarget(draftUrl);
+			setLoadError(null);
+			setPageTitle('');
+			if (nextUrl === currentUrl) {
+				webviewRef.current?.reload();
+				return;
+			}
+			setCanGoBack(false);
+			setCanGoForward(false);
+			setCurrentUrl(nextUrl);
+			setDraftUrl(nextUrl);
+		},
+		[currentUrl, draftUrl]
+	);
+
+	const openBrowserSettings = useCallback(() => {
+		setBrowserDraft(browserConfig);
+		setBrowserSettingsError(null);
+		setBrowserSettingsOpen(true);
+	}, [browserConfig]);
+
+	const closeBrowserSettings = useCallback(() => {
+		setBrowserDraft(browserConfig);
+		setBrowserSettingsError(null);
+		setBrowserSettingsOpen(false);
+	}, [browserConfig]);
+
+	const saveBrowserSettings = useCallback(async () => {
+		const parsedHeaders = parseBrowserExtraHeadersText(browserDraft.extraHeadersText);
+		if (!parsedHeaders.ok) {
+			setBrowserSettingsError(t('app.browserHeaderFormatError', { line: String(parsedHeaders.line) }));
+			return;
+		}
+		if (browserDraft.proxyMode === 'custom' && !browserDraft.proxyRules.trim()) {
+			setBrowserSettingsError(t('app.browserProxyRulesRequired'));
+			return;
+		}
+		setBrowserSettingsSaving(true);
+		setBrowserSettingsError(null);
+		try {
+			let nextConfig = normalizeBrowserSidebarConfig(browserDraft);
+			if (shell) {
+				const payload = (await shell.invoke('browser:setConfig', nextConfig)) as {
+					ok?: boolean;
+					error?: string;
+					line?: number;
+					config?: Partial<BrowserSidebarConfig>;
+					defaultUserAgent?: string;
+				};
+				if (!payload?.ok) {
+					if (payload?.error === 'invalid-header-line' && payload.line) {
+						setBrowserSettingsError(t('app.browserHeaderFormatError', { line: String(payload.line) }));
+					} else if (payload?.error === 'proxy-rules-required') {
+						setBrowserSettingsError(t('app.browserProxyRulesRequired'));
+					} else {
+						setBrowserSettingsError(t('app.browserLoadFailed'));
+					}
+					return;
+				}
+				nextConfig = normalizeBrowserSidebarConfig(payload.config ?? nextConfig);
+				defaultUserAgentRef.current = String(payload.defaultUserAgent ?? defaultUserAgentRef.current ?? '').trim();
+			}
+			setBrowserConfig(nextConfig);
+			setBrowserDraft(nextConfig);
+			setBrowserSettingsOpen(false);
+			const node = webviewRef.current;
+			if (node) {
+				const nextUserAgent = nextConfig.userAgent.trim() || defaultUserAgentRef.current;
+				if (nextUserAgent) {
+					try {
+						node.setUserAgent(nextUserAgent);
+					} catch {
+						/* ignore */
+					}
+				}
+				setLoadError(null);
+				node.reload();
+			}
+		} finally {
+			setBrowserSettingsSaving(false);
+		}
+	}, [browserDraft, shell, t]);
+
+	const pageLabel = pageTitle || currentUrl.replace(/^https?:\/\//i, '') || t('app.tabBrowser');
+
+	return (
+		<div className="ref-agent-review-shell">
+			<div className="ref-agent-review-head">
+				<div className="ref-agent-review-title-stack">
+					<span className="ref-agent-review-kicker">{t('app.tabBrowser')}</span>
+					<span className="ref-agent-review-title" title={currentUrl}>
+						{isLoading ? t('app.browserLoading') : pageLabel}
+					</span>
+				</div>
+				<RightSidebarTabs
+					t={t}
+					hasPlan={hasAgentPlanSidebarContent}
+					openView={openView}
+					closeSidebar={closeSidebar}
+					extraActions={
+						<button
+							type="button"
+							aria-label={t('app.browserSettings')}
+							title={t('app.browserSettings')}
+							className="ref-right-icon-tab"
+							onClick={openBrowserSettings}
+						>
+							<IconSettings />
+						</button>
+					}
+				/>
+			</div>
+			<div className="ref-right-panel-stage">
+				<div className="ref-right-panel-view ref-right-panel-view--agent ref-browser-panel">
+					<div className="ref-right-toolbar ref-browser-toolbar">
+						<button
+							type="button"
+							className="ref-icon-tile ref-browser-tool-btn"
+							aria-label={t('common.back')}
+							title={t('common.back')}
+							disabled={!canGoBack}
+							onClick={() => {
+								const node = webviewRef.current;
+								if (!node?.canGoBack()) {
+									return;
+								}
+								node.goBack();
+							}}
+						>
+							<IconArrowLeft />
+						</button>
+						<button
+							type="button"
+							className="ref-icon-tile ref-browser-tool-btn"
+							aria-label={t('app.browserForward')}
+							title={t('app.browserForward')}
+							disabled={!canGoForward}
+							onClick={() => {
+								const node = webviewRef.current;
+								if (!node?.canGoForward()) {
+									return;
+								}
+								node.goForward();
+							}}
+						>
+							<IconArrowRight />
+						</button>
+						<form className="ref-browser-address-form" onSubmit={onAddressSubmit}>
+							<IconGlobe className="ref-browser-address-icon" />
+							<input
+								type="text"
+								className="ref-browser-address-input"
+								value={draftUrl}
+								placeholder={t('app.browserAddressPlaceholder')}
+								spellCheck={false}
+								autoCapitalize="none"
+								autoCorrect="off"
+								onChange={(event) => setDraftUrl(event.target.value)}
+							/>
+						</form>
+						<button
+							type="button"
+							className="ref-icon-tile ref-browser-tool-btn"
+							aria-label={isLoading ? t('app.browserStop') : t('common.refresh')}
+							title={isLoading ? t('app.browserStop') : t('common.refresh')}
+							onClick={() => {
+								const node = webviewRef.current;
+								if (!node) {
+									return;
+								}
+								if (isLoading) {
+									node.stop();
+									return;
+								}
+								setLoadError(null);
+								node.reload();
+							}}
+						>
+							{isLoading ? <IconStop /> : <IconRefresh />}
+						</button>
+					</div>
+					<div className="ref-browser-webview-wrap">
+						{browserConfigReady ? (
+							<webview
+								ref={webviewRef}
+								className="ref-browser-webview"
+								src={currentUrl}
+								partition={browserPartition}
+								useragent={browserConfig.userAgent.trim() || undefined}
+							/>
+						) : (
+							<div className="ref-browser-preparing">
+								<div className="ref-agent-plan-status-title">{t('app.browserPreparing')}</div>
+								<p className="ref-agent-plan-status-body">{t('app.browserSettingsDescription')}</p>
+							</div>
+						)}
+						{loadError ? (
+							<div className="ref-browser-error-card" role="status">
+								<div className="ref-browser-error-title">{t('app.browserLoadFailed')}</div>
+								<p className="ref-browser-error-body">{loadError.message}</p>
+								{loadError.url ? (
+									<p className="ref-browser-error-url" title={loadError.url}>
+										{loadError.url}
+									</p>
+								) : null}
+								<button
+									type="button"
+									className="ref-browser-error-btn"
+									onClick={() => {
+										setLoadError(null);
+										webviewRef.current?.reload();
+									}}
+								>
+									{t('common.refresh')}
+								</button>
+							</div>
+						) : null}
+					</div>
+				</div>
+			</div>
+			<BrowserSettingsModal
+				open={browserSettingsOpen}
+				t={t}
+				draft={browserDraft}
+				setDraft={setBrowserDraft}
+				error={browserSettingsError}
+				saving={browserSettingsSaving}
+				onClose={closeBrowserSettings}
+				onReset={() => {
+					setBrowserDraft(DEFAULT_BROWSER_SIDEBAR_CONFIG);
+					setBrowserSettingsError(null);
+				}}
+				onSave={saveBrowserSettings}
+			/>
+		</div>
+	);
+});
+
 /** Git 面板：只订阅 AppShell Git/Chrome context，父级因消息/流式重渲时若 Git 切片未变则可跳过本 subtree。 */
 const AgentRightSidebarGitPanel = memo(function AgentRightSidebarGitPanel({
 	hasAgentPlanSidebarContent,
@@ -853,6 +1603,14 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 				onAcceptAgentFilePreviewHunk={onAcceptAgentFilePreviewHunk}
 				onRevertAgentFilePreviewHunk={onRevertAgentFilePreviewHunk}
 				agentFilePreviewBusyPatch={agentFilePreviewBusyPatch}
+			/>
+		);
+	} else if (view === 'browser') {
+		content = (
+			<AgentRightSidebarBrowserPanel
+				hasAgentPlanSidebarContent={hasAgentPlanSidebarContent}
+				closeSidebar={closeSidebar}
+				openView={openView}
 			/>
 		);
 	} else if (view === 'team') {
