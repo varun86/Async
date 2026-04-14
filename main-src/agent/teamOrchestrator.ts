@@ -277,7 +277,10 @@ const TEAM_PACKET_TEXT_LIMIT = 4000;
 const TEAM_HANDOFF_TEXT_LIMIT = 2200;
 
 function stripFencedBlocks(text: string): string {
-	return text.replace(/```[\s\S]*?```/g, '').trim();
+	const closed = text.replace(/```[\s\S]*?```/g, '');
+	// Also drop a trailing unclosed fence block that is still streaming in.
+	const unclosed = closed.replace(/```[\s\S]*$/m, '');
+	return unclosed.trim();
 }
 
 function stripTrailingRawJson(text: string): string {
@@ -732,9 +735,9 @@ async function runPreflightReviewerAgent(params: {
 	emit: (evt: TeamEmit) => void;
 }): Promise<{ verdict: 'ok' | 'needs_clarification'; summary: string }> {
 	const {
-		settings, threadId, reviewer, plannedTasks, userRequest, planSummary, specialists,
+		settings, reviewer, plannedTasks, userRequest, planSummary, specialists,
 		modelSelection, resolvedModel,
-		signal, thinkingLevel, workspaceRoot, workspaceLspManager, baseTools, emit,
+		signal, thinkingLevel, workspaceRoot, workspaceLspManager, baseTools,
 	} = params;
 
 	const messages: ChatMessage[] = [
@@ -745,19 +748,6 @@ async function runPreflightReviewerAgent(params: {
 			}),
 		},
 	];
-
-	const preflightTask: TeamTask = {
-		id: `preflight-${randomUUID()}`,
-		expertId: reviewer.id,
-		expertAssignmentKey: reviewer.assignmentKey,
-		expertName: reviewer.name,
-		roleType: reviewer.roleType,
-		description: 'Preflight review: evaluate user request and lead proposal before execution.',
-		status: 'in_progress',
-		dependencies: [],
-		acceptanceCriteria: ['Classify verdict OK / NEEDS_CLARIFICATION', 'Surface risks and gaps to the user'],
-	};
-	const teamRoleScope = createTeamRoleScope(preflightTask, 'reviewer');
 
 	let reviewText = '';
 	const specializedTools = buildSpecialistToolPool(baseTools, reviewer);
@@ -792,53 +782,16 @@ async function runPreflightReviewerAgent(params: {
 		}
 	}
 
-	emit({
-		threadId,
-		type: 'team_task_created',
-		task: {
-			id: preflightTask.id,
-			expertId: preflightTask.expertId,
-			expertAssignmentKey: preflightTask.expertAssignmentKey,
-			expertName: preflightTask.expertName,
-			roleType: preflightTask.roleType,
-			description: preflightTask.description,
-			status: 'in_progress',
-			dependencies: [],
-			acceptanceCriteria: preflightTask.acceptanceCriteria,
-		},
-	});
-
 	const handlers: AgentLoopHandlers = {
 		onTextDelta: (text) => {
 			reviewText += text;
-			emit({ threadId, type: 'delta', text, teamRoleScope });
 		},
-		onToolInputDelta: ({ name, partialJson, index }) => {
-			emit({ threadId, type: 'tool_input_delta', name, partialJson, index, teamRoleScope });
-		},
-		onThinkingDelta: (text) => {
-			emit({ threadId, type: 'thinking_delta', text, teamRoleScope });
-		},
-		onToolProgress: ({ name, phase, detail }) => {
-			emit({ threadId, type: 'tool_progress', name, phase, detail, teamRoleScope });
-		},
-		onToolCall: (name, args, toolCallId) => {
-			emit({
-				threadId, type: 'tool_call', name, args: JSON.stringify(args), toolCallId, teamRoleScope,
-			});
-		},
-		onToolResult: (name, result, success, toolCallId) => {
-			emit({
-				threadId, type: 'tool_result', name, result, success, toolCallId, teamRoleScope,
-			});
-		},
-		onDone: (text, usage) => {
+		onToolCall: () => {},
+		onToolResult: () => {},
+		onDone: (text) => {
 			reviewText = text;
-			emit({ threadId, type: 'done', text, usage, teamRoleScope });
 		},
-		onError: (message) => {
-			emit({ threadId, type: 'error', message, teamRoleScope });
-		},
+		onError: () => {},
 	};
 
 	try {
@@ -849,11 +802,6 @@ async function runPreflightReviewerAgent(params: {
 
 	const needsClarification = /###\s*Verdict:\s*NEEDS_CLARIFICATION/i.test(reviewText);
 	const summary = reviewText.trim() || 'Preflight review not produced; proceeding as OK.';
-	emit({
-		threadId, type: 'team_expert_done',
-		taskId: preflightTask.id, expertId: preflightTask.expertId,
-		success: true, result: summary,
-	});
 	return {
 		verdict: needsClarification ? 'needs_clarification' : 'ok',
 		summary,
