@@ -140,6 +140,10 @@ export type TeamSettings = {
 	maxParallelExperts?: number;
 	presetId?: TeamPresetId;
 	presetExpertSnapshots?: Partial<Record<TeamPresetId, TeamExpertConfig[]>>;
+	/** Lead 出方案后先等用户确认再派发专家；默认 true */
+	requirePlanApproval?: boolean;
+	/** 执行前先让评审专家评估需求/方案；默认 true（需有 reviewer 角色） */
+	enablePreflightReview?: boolean;
 };
 
 export type ShellSettings = {

@@ -714,6 +714,20 @@ export const messagesZhCN: Record<string, string> = {
 	'plan.review.executeUserBubble':
 		'请执行已保存的计划文档：严格按其中步骤顺序完成实现并修改代码。完整计划已在本轮系统上下文中提供。',
 
+	// team plan review
+	'team.plan.aria': '团队方案评审',
+	'team.plan.label': '等待确认方案',
+	'team.plan.preflightOk': '评审专家：需求清晰',
+	'team.plan.preflightNeedsClarification': '评审专家：需澄清',
+	'team.plan.preflightHeading': '评审专家意见',
+	'team.plan.tasks': '专家任务（{{count}}）',
+	'team.plan.feedbackLabel': '修改建议（可选）',
+	'team.plan.feedbackPlaceholder': '需要调整方向或补充约束？写在这里发给团队。',
+	'team.plan.approve': '确认并执行',
+	'team.plan.reject': '取消',
+	'team.plan.decisionApproved': '已确认，正在派发专家',
+	'team.plan.decisionRejected': '已取消',
+
 	// thought block
 	'thought.thinking': '思考中…',
 	'thought.for': '思考用时 {{sec}}s',
@@ -932,6 +946,8 @@ export const messagesZhCN: Record<string, string> = {
 	'settings.team.addRole': '新增角色',
 	'settings.team.maxParallel': '最大并行专家数',
 	'settings.team.useDefaults': '包含内置默认团队',
+	'settings.team.requirePlanApproval': '执行前需要用户确认计划',
+	'settings.team.enablePreflightReview': '启用评审专家做需求预审',
 	'settings.team.empty': '暂无自定义 Team 角色。',
 	'settings.team.roleName': '角色名称',
 	'settings.team.roleType': '角色类型',

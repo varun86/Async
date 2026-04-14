@@ -25,6 +25,7 @@ import { SubagentScopeDialog } from './SubagentScopeDialog';
 import { ToolApprovalInlineCard, type ToolApprovalPayload } from './ToolApprovalCard';
 import { AgentMistakeLimitDialog, type MistakeLimitPayload } from './AgentMistakeLimitDialog';
 import { PlanReviewPanel } from './PlanReviewPanel';
+import { TeamPlanReviewPanel } from './TeamPlanReviewPanel';
 import { ComposerThoughtBlock } from './ComposerThoughtBlock';
 import { UserMessageRich } from './UserMessageRich';
 import {
@@ -140,6 +141,8 @@ export type AgentChatPanelProps = {
 	agentPlanSummaryCard: ReactNode;
 	teamSession: TeamSessionState | null;
 	onSelectTeamExpert: (taskId: string) => void;
+	onTeamPlanApprove: (proposalId: string, feedback?: string) => void;
+	onTeamPlanReject: (proposalId: string, feedback?: string) => void;
 };
 
 /** 未测量行时用于高度预算的估算高度（与旧虚拟列表 estimate 对齐） */
@@ -270,6 +273,8 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	agentPlanSummaryCard,
 	teamSession,
 	onSelectTeamExpert,
+	onTeamPlanApprove,
+	onTeamPlanReject,
 }: AgentChatPanelProps) {
 	if (import.meta.env.DEV) {
 		console.log(`[perf] AgentChatPanel render: thread=${messagesThreadId}, messages=${displayMessages.length}, hasConv=${hasConversation}`);
@@ -797,6 +802,22 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		}
 		const workflowItems = buildTeamWorkflowItems(teamSession);
 		const leaderRow = buildTeamLeaderRow();
+		const planProposal = teamSession.planProposal;
+		const planProposalRow: ReactNode | null = planProposal ? (
+			<div
+				key={`row-${conversationRenderKey}-team-plan-proposal`}
+				className="ref-msg-row-measure ref-msg-row-measure--team-plan"
+				data-msg-index={String(displayMessages.length)}
+			>
+				<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-plan">
+					<TeamPlanReviewPanel
+						proposal={planProposal}
+						onApprove={(fb) => onTeamPlanApprove(planProposal.proposalId, fb)}
+						onReject={(fb) => onTeamPlanReject(planProposal.proposalId, fb)}
+					/>
+				</div>
+			</div>
+		) : null;
 		const timelineItemRows = workflowItems.map((item, idx) => (
 			<div
 				key={`row-${conversationRenderKey}-team-item-${item.id}`}
@@ -838,6 +859,9 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			if (leaderRow) {
 				nodes.push(leaderRow);
 			}
+			if (planProposalRow) {
+				nodes.push(planProposalRow);
+			}
 			nodes.push(...timelineItemRows);
 			if (trailingAssistant) {
 				nodes.push(trailingAssistant);
@@ -847,6 +871,9 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 
 		if (leaderRow) {
 			nodes.push(leaderRow);
+		}
+		if (planProposalRow) {
+			nodes.push(planProposalRow);
 		}
 		nodes.push(...timelineItemRows);
 		return nodes;

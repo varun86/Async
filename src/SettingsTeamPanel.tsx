@@ -182,6 +182,22 @@ export function SettingsTeamPanel({ value, onChange, modelEntries, modelProvider
 							/>
 							<span>{t('settings.team.useDefaults')}</span>
 						</label>
+						<label className="ref-settings-team-inline-check">
+							<input
+								type="checkbox"
+								checked={value.requirePlanApproval !== false}
+								onChange={(e) => onChange({ ...value, requirePlanApproval: e.target.checked })}
+							/>
+							<span>{t('settings.team.requirePlanApproval')}</span>
+						</label>
+						<label className="ref-settings-team-inline-check">
+							<input
+								type="checkbox"
+								checked={value.enablePreflightReview !== false}
+								onChange={(e) => onChange({ ...value, enablePreflightReview: e.target.checked })}
+							/>
+							<span>{t('settings.team.enablePreflightReview')}</span>
+						</label>
 					</div>
 					<div className="ref-settings-team-actions">
 						<button

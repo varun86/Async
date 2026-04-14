@@ -8,7 +8,34 @@ import {
 } from '../liveAgentBlocks';
 import { extractTeamLeadNarrative } from '../teamWorkflowText';
 
-export type TeamSessionPhase = 'planning' | 'executing' | 'reviewing' | 'delivering';
+export type TeamSessionPhase =
+	| 'planning'
+	| 'preflight'
+	| 'proposing'
+	| 'executing'
+	| 'reviewing'
+	| 'delivering'
+	| 'cancelled';
+
+export type TeamPlanProposedTask = {
+	expert: string;
+	expertName: string;
+	roleType: TeamRoleType;
+	task: string;
+	dependencies?: string[];
+	acceptanceCriteria?: string[];
+};
+
+export type TeamPlanProposalState = {
+	proposalId: string;
+	summary: string;
+	tasks: TeamPlanProposedTask[];
+	preflightSummary?: string;
+	preflightVerdict?: 'ok' | 'needs_clarification';
+	/** true while awaiting user approval; false after decision */
+	awaitingApproval: boolean;
+	decision?: 'approved' | 'rejected';
+};
 export type TeamTaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'revision';
 export type TeamRoleType = 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
 
@@ -70,6 +97,9 @@ export type TeamSessionState = {
 	planSummary: string;
 	reviewSummary: string;
 	reviewVerdict: 'approved' | 'revision_needed' | null;
+	preflightSummary: string;
+	preflightVerdict: 'ok' | 'needs_clarification' | null;
+	planProposal: TeamPlanProposalState | null;
 	selectedTaskId: string | null;
 	reviewerTaskId: string | null;
 	roleWorkflowByTaskId: Record<string, TeamRoleWorkflowState>;
@@ -86,6 +116,9 @@ function emptySession(): TeamSessionState {
 		planSummary: '',
 		reviewSummary: '',
 		reviewVerdict: null,
+		preflightSummary: '',
+		preflightVerdict: null,
+		planProposal: null,
 		selectedTaskId: null,
 		reviewerTaskId: null,
 		roleWorkflowByTaskId: {},
@@ -331,6 +364,9 @@ function snapshotSession(session: TeamSessionState): TeamSessionState {
 					},
 				}
 			: null,
+		planProposal: session.planProposal
+			? { ...session.planProposal, tasks: session.planProposal.tasks.map((t) => ({ ...t })) }
+			: null,
 		roleWorkflowByTaskId,
 	};
 }
@@ -475,6 +511,36 @@ export function useTeamSession() {
 					session.reviewVerdict = payload.verdict;
 					session.reviewSummary = payload.summary;
 					break;
+				case 'team_preflight_review':
+					session.preflightVerdict = payload.verdict;
+					session.preflightSummary = payload.summary;
+					break;
+				case 'team_plan_proposed':
+					session.planProposal = {
+						proposalId: payload.proposalId,
+						summary: payload.summary,
+						tasks: payload.tasks.map((t) => ({
+							expert: t.expert,
+							expertName: t.expertName,
+							roleType: (t.roleType as TeamRoleType) || 'custom',
+							task: t.task,
+							dependencies: t.dependencies ?? [],
+							acceptanceCriteria: t.acceptanceCriteria ?? [],
+						})),
+						preflightSummary: payload.preflightSummary,
+						preflightVerdict: payload.preflightVerdict,
+						awaitingApproval: true,
+					};
+					break;
+				case 'team_plan_decision':
+					if (session.planProposal && session.planProposal.proposalId === payload.proposalId) {
+						session.planProposal = {
+							...session.planProposal,
+							awaitingApproval: false,
+							decision: payload.approved ? 'approved' : 'rejected',
+						};
+					}
+					break;
 				default:
 					return;
 			}
@@ -544,10 +610,34 @@ export function useTeamSession() {
 				session.leaderWorkflow.liveBlocks = createEmptyLiveAgentBlocks();
 				changed = true;
 			}
+			if (session.planProposal?.awaitingApproval) {
+				session.planProposal = {
+					...session.planProposal,
+					awaitingApproval: false,
+					decision: 'rejected',
+				};
+				changed = true;
+			}
 			if (changed) {
 				session.updatedAt = Date.now();
 				scheduleFlush(threadId, true);
 			}
+		},
+		[scheduleFlush]
+	);
+
+	const markTeamPlanProposalDecided = useCallback(
+		(threadId: string, proposalId: string, approved: boolean) => {
+			const session = sessionsRef.current[threadId];
+			if (!session?.planProposal) return;
+			if (session.planProposal.proposalId !== proposalId) return;
+			session.planProposal = {
+				...session.planProposal,
+				awaitingApproval: false,
+				decision: approved ? 'approved' : 'rejected',
+			};
+			session.updatedAt = Date.now();
+			scheduleFlush(threadId, true);
 		},
 		[scheduleFlush]
 	);
@@ -605,6 +695,9 @@ export function useTeamSession() {
 				planSummary: snapshot.planSummary,
 				reviewSummary: snapshot.reviewSummary,
 				reviewVerdict: snapshot.reviewVerdict,
+				preflightSummary: '',
+				preflightVerdict: null,
+				planProposal: null,
 				selectedTaskId: snapshot.tasks[0]?.id ?? null,
 				reviewerTaskId: null,
 				roleWorkflowByTaskId: {},
@@ -629,6 +722,7 @@ export function useTeamSession() {
 			abortTeamSession,
 			getTeamSession,
 			restoreTeamSession,
+			markTeamPlanProposalDecided,
 		}),
 		[
 			sessionsByThread,
@@ -639,6 +733,7 @@ export function useTeamSession() {
 			abortTeamSession,
 			getTeamSession,
 			restoreTeamSession,
+			markTeamPlanProposalDecided,
 		]
 	);
 }

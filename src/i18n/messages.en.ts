@@ -716,6 +716,20 @@ export const messagesEn: Record<string, string> = {
 	'plan.review.executeUserBubble':
 		'Execute the saved plan document: follow every step in order and apply the necessary code changes. The full plan is attached in the system context for this turn.',
 
+	// team plan review
+	'team.plan.aria': 'Team plan review',
+	'team.plan.label': 'Awaiting plan approval',
+	'team.plan.preflightOk': 'Reviewer: requirement clear',
+	'team.plan.preflightNeedsClarification': 'Reviewer: needs clarification',
+	'team.plan.preflightHeading': 'Reviewer notes',
+	'team.plan.tasks': 'Specialist tasks ({{count}})',
+	'team.plan.feedbackLabel': 'Feedback (optional)',
+	'team.plan.feedbackPlaceholder': 'Want to redirect or add constraints? Leave a note for the team.',
+	'team.plan.approve': 'Approve & run',
+	'team.plan.reject': 'Cancel',
+	'team.plan.decisionApproved': 'Approved — dispatching specialists',
+	'team.plan.decisionRejected': 'Cancelled',
+
 	'thought.thinking': 'Thinking…',
 	'thought.for': 'Thought for {{sec}}s',
 	'thought.mode.ask': 'Ask mode: explanations and read-only analysis.',
@@ -934,6 +948,8 @@ export const messagesEn: Record<string, string> = {
 	'settings.team.addRole': 'Add role',
 	'settings.team.maxParallel': 'Max parallel experts',
 	'settings.team.useDefaults': 'Include built-in default team',
+	'settings.team.requirePlanApproval': 'Require user approval before execution',
+	'settings.team.enablePreflightReview': 'Enable reviewer preflight assessment',
 	'settings.team.empty': 'No custom team roles yet.',
 	'settings.team.roleName': 'Role name',
 	'settings.team.roleType': 'Role type',

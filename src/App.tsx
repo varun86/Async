@@ -686,7 +686,7 @@ function AppMainWorkspaceInner() {
 		setStreaming,
 		setAwaitingReply,
 	} = useStreamingChat();
-	const { applyTeamPayload, getTeamSession, setSelectedTask, abortTeamSession, startTeamSession, restoreTeamSession } = useTeamSession();
+	const { applyTeamPayload, getTeamSession, setSelectedTask, abortTeamSession, startTeamSession, restoreTeamSession, markTeamPlanProposalDecided } = useTeamSession();
 	const {
 		agentReviewPendingByThread,
 		setAgentReviewPendingByThread,
@@ -4818,6 +4818,32 @@ function AppMainWorkspaceInner() {
 		[currentId, setSelectedTask, layoutMode]
 	);
 
+	const onTeamPlanApprove = useCallback(
+		(proposalId: string, feedback?: string) => {
+			if (!currentId || !shell) return;
+			markTeamPlanProposalDecided(currentId, proposalId, true);
+			void shell.invoke('team:planApprovalRespond', {
+				proposalId,
+				approved: true,
+				feedbackText: feedback,
+			});
+		},
+		[currentId, markTeamPlanProposalDecided, shell]
+	);
+
+	const onTeamPlanReject = useCallback(
+		(proposalId: string, feedback?: string) => {
+			if (!currentId || !shell) return;
+			markTeamPlanProposalDecided(currentId, proposalId, false);
+			void shell.invoke('team:planApprovalRespond', {
+				proposalId,
+				approved: false,
+				feedbackText: feedback,
+			});
+		},
+		[currentId, markTeamPlanProposalDecided, shell]
+	);
+
 	useEffect(() => {
 		const onResize = () => {
 			setRailWidths((prev) => {
@@ -5417,6 +5443,8 @@ function AppMainWorkspaceInner() {
 		agentPlanSummaryCard,
 		teamSession,
 		onSelectTeamExpert: onSelectTeamTask,
+		onTeamPlanApprove,
+		onTeamPlanReject,
 	});
 
 

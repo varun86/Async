@@ -13996,6 +13996,145 @@ select.ref-settings-native-select:focus {
 	padding: 7px 4px;
 }
 
+/* ── Team plan review (mirrors plan-review styling) ── */
+
+.ref-team-plan-verdict {
+	font-size: 11px;
+	font-weight: 600;
+	padding: 3px 8px;
+	border-radius: 999px;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+
+.ref-team-plan-verdict--ok {
+	background: rgba(94, 167, 94, 0.18);
+	color: #8ecb8e;
+	border: 1px solid rgba(94, 167, 94, 0.35);
+}
+
+.ref-team-plan-verdict--needs_clarification {
+	background: rgba(232, 168, 72, 0.18);
+	color: #e8a848;
+	border: 1px solid rgba(232, 168, 72, 0.35);
+}
+
+.ref-team-plan-task {
+	display: flex;
+	gap: 10px;
+	padding: 10px 12px;
+	border-top: 1px solid #2a2a2a;
+	text-align: left;
+}
+
+.ref-team-plan-task:first-child {
+	border-top: none;
+}
+
+.ref-team-plan-task-body {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.ref-team-plan-task-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.ref-team-plan-task-name {
+	font-size: 12.5px;
+	font-weight: 700;
+	color: #d8dae0;
+}
+
+.ref-team-plan-task-role {
+	font-size: 11px;
+	color: #7a7e8a;
+	font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+}
+
+.ref-team-plan-task-desc {
+	font-size: 12.5px;
+	color: #b8bcc6;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.ref-team-plan-task-criteria {
+	margin: 4px 0 0;
+	padding-left: 18px;
+	font-size: 11.5px;
+	color: #8c909c;
+	line-height: 1.45;
+}
+
+.ref-team-plan-feedback {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 12px;
+}
+
+.ref-team-plan-feedback-label {
+	font-size: 11px;
+	font-weight: 600;
+	color: #7a7e8a;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.ref-team-plan-feedback-input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 8px 10px;
+	background: #181818;
+	color: #d8dae0;
+	border: 1px solid #2a2a2a;
+	border-radius: 6px;
+	font: inherit;
+	font-size: 12.5px;
+	line-height: 1.5;
+	resize: vertical;
+	min-height: 36px;
+	max-height: 160px;
+}
+
+.ref-team-plan-feedback-input:focus {
+	outline: none;
+	border-color: var(--void-ring, #e8a848);
+}
+
+.ref-team-plan-review-foot {
+	gap: 10px;
+}
+
+.ref-team-plan-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 7px 16px;
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	border: 1px solid #333;
+	background: transparent;
+	color: #b8bcc6;
+	transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.ref-team-plan-btn--ghost:hover {
+	color: #e0e2e8;
+	border-color: #444;
+	background: #252525;
+}
+
 .ref-right--agent-layout .ref-plan-q-head,
 .ref-right--agent-layout .ref-plan-q-foot,
 .ref-right--agent-layout .ref-plan-review-head,
@@ -16376,6 +16515,8 @@ select.ref-settings-native-select:focus {
 	display: flex;
 	flex: 1;
 	min-height: 0;
+	min-width: 0;
+	overflow: hidden;
 }
 
 .ref-team-sidebar-close {
@@ -16411,6 +16552,13 @@ select.ref-settings-native-select:focus {
 .ref-team-right-sidebar-layout {
 	flex: 1;
 	min-height: 0;
+	min-width: 0;
+}
+
+.ref-team-right-sidebar-layout {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 }
 
 .ref-team-sidebar-empty {
@@ -16675,13 +16823,17 @@ select.ref-settings-native-select:focus {
 
 .ref-team-role-shell-body {
 	min-height: 0;
+	min-width: 0;
 	overflow: auto;
+	overflow-x: hidden;
 }
 
 .ref-team-role-stream {
 	display: grid;
+	grid-template-columns: minmax(0, 1fr);
 	gap: 14px;
 	min-height: 0;
+	min-width: 0;
 }
 
 .ref-team-role-stream--agent-sidebar {
@@ -16711,11 +16863,34 @@ select.ref-settings-native-select:focus {
 .ref-team-role-msg {
 	width: 100%;
 	max-width: 100%;
+	min-width: 0;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .ref-team-role-msg.ref-msg-slot {
 	width: 100%;
 	max-width: 100%;
+	min-width: 0;
+}
+
+.ref-team-role-msg .ref-msg-assistant-body {
+	min-width: 0;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+.ref-team-role-msg .ref-msg-assistant-body pre,
+.ref-team-role-msg .ref-msg-assistant-body code {
+	max-width: 100%;
+	overflow-x: auto;
+}
+
+.ref-team-role-msg .ref-msg-assistant-body pre {
+	white-space: pre;
+	word-break: normal;
+	overflow-wrap: normal;
 }
 
 .ref-team-role-user-bubble,

@@ -122,7 +122,7 @@ type ChatStreamPayloadCore =
 	| {
 			threadId: string;
 			type: 'team_phase';
-			phase: 'planning' | 'executing' | 'reviewing' | 'delivering';
+			phase: 'planning' | 'preflight' | 'proposing' | 'executing' | 'reviewing' | 'delivering' | 'cancelled';
 	  }
 	| {
 			threadId: string;
@@ -171,6 +171,34 @@ type ChatStreamPayloadCore =
 			threadId: string;
 			type: 'team_plan_summary';
 			summary: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_preflight_review';
+			verdict: 'ok' | 'needs_clarification';
+			summary: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_plan_proposed';
+			proposalId: string;
+			summary: string;
+			tasks: Array<{
+				expert: string;
+				expertName: string;
+				roleType: 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
+				task: string;
+				dependencies?: string[];
+				acceptanceCriteria?: string[];
+			}>;
+			preflightSummary?: string;
+			preflightVerdict?: 'ok' | 'needs_clarification';
+	  }
+	| {
+			threadId: string;
+			type: 'team_plan_decision';
+			proposalId: string;
+			approved: boolean;
 	  };
 
 export type ChatStreamPayload = ChatStreamPayloadCore & ChatStreamNonce;

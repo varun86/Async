@@ -678,7 +678,10 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 				payload.type === 'team_expert_progress' ||
 				payload.type === 'team_expert_done' ||
 				payload.type === 'team_review' ||
-				payload.type === 'team_plan_summary'
+				payload.type === 'team_plan_summary' ||
+				payload.type === 'team_preflight_review' ||
+				payload.type === 'team_plan_proposed' ||
+				payload.type === 'team_plan_decision'
 			) {
 				rt.applyTeamPayload(payload);
 			} else if (payload.type === 'done') {

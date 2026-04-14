@@ -112,6 +112,10 @@ import {
 	abortPlanQuestionWaitersForThread,
 	resolvePlanQuestionTool,
 } from '../agent/planQuestionTool.js';
+import {
+	abortTeamPlanApprovalForThread,
+	resolveTeamPlanApproval,
+} from '../agent/teamPlanApprovalTool.js';
 import { loadClaudeWorkspaceSkills, prepareUserTurnForChat } from '../llm/agentMessagePrep.js';
 import {
 	buildSkillCreatorSystemAppend,
@@ -1922,6 +1926,7 @@ export function registerIpc(): void {
 
 	ipcMain.handle('chat:abort', (_e, threadId: string) => {
 		abortPlanQuestionWaitersForThread(threadId);
+		abortTeamPlanApprovalForThread(threadId);
 		preflightAbortByThread.get(threadId)?.abort();
 		preflightAbortByThread.delete(threadId);
 		abortByThread.get(threadId)?.abort();
@@ -1964,6 +1969,22 @@ export function registerIpc(): void {
 			const ok = resolvePlanQuestionTool(requestId, {
 				skipped: Boolean(payload?.skipped),
 				answerText: typeof payload?.answerText === 'string' ? payload.answerText : undefined,
+			});
+			return ok ? ({ ok: true as const } as const) : ({ ok: false as const, error: 'unknown request' as const });
+		}
+	);
+
+	ipcMain.handle(
+		'team:planApprovalRespond',
+		(
+			_e,
+			payload: { proposalId?: string; approved?: boolean; feedbackText?: string }
+		) => {
+			const proposalId = String(payload?.proposalId ?? '');
+			if (!proposalId) return { ok: false as const, error: 'missing proposalId' as const };
+			const ok = resolveTeamPlanApproval(proposalId, {
+				approved: Boolean(payload?.approved),
+				feedbackText: typeof payload?.feedbackText === 'string' ? payload.feedbackText : undefined,
 			});
 			return ok ? ({ ok: true as const } as const) : ({ ok: false as const, error: 'unknown request' as const });
 		}
