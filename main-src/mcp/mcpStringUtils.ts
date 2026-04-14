@@ -1,9 +1,9 @@
 /**
- * MCP 工具名规则 — 与 Claude Code（mcpStringUtils / normalization）一致，
+ * MCP 工具名规则，
  * 便于与同一批 MCP Server 及模型侧命名习惯对齐。
  */
 
-// Claude.ai 服务端名称前缀（与 Claude Code 一致）
+// Claude.ai 服务端名称前缀
 const CLAUDEAI_SERVER_PREFIX = 'claude.ai ';
 
 /**
@@ -20,7 +20,7 @@ export function normalizeNameForMCP(name: string): string {
 
 /**
  * 从 `mcp__serverName__toolName` 解析；若格式不合法返回 null。
- * 已知限制：server 名本身若含 `__` 会与分隔符冲突（与 Claude Code 相同）。
+ * 已知限制：server 名本身若含 `__` 会与分隔符冲突。
  */
 export function mcpInfoFromString(toolString: string): {
 	serverName: string;

@@ -1,6 +1,6 @@
 /**
  * 将磁盘上的结构化助手 JSON 展开为 OpenAI / Anthropic API 的原生 tool 消息序列，
- * 对齐 Claude Code 在 `messages.ts` `ensureToolResultPairing` 所假设的块模型（assistant 含 tool_use，user 含 tool_result）。
+ * 使用块模型（assistant 含 tool_use，user 含 tool_result）。
  *
  * 若展开后以 `tool`（OpenAI）或仅含 tool_result 的 `user`（Anthropic）结尾，则整段回退为单条 assistant 字符串（legacy XML），
  * 避免违反「tool 后必须 assistant」等与线程存储「单条助手气泡含多轮工具」之间的张力。

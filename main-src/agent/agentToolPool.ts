@@ -1,5 +1,5 @@
 /**
- * Agent 工具池组装 — 对齐 Claude Code 的 assembleToolPool 思路：
+ * Agent 工具池组装：
  * 内置工具 +（仅 Agent 模式）动态 MCP 工具；按前缀 deny 过滤 MCP；同名以内置为准。
  */
 

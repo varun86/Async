@@ -1,7 +1,7 @@
 /**
  * Agent 工具执行前用户确认（主进程侧逻辑与「安全命令」白名单）。
  *
- * 可配置规则见 `toolPermissionModel.ts`（对齐 Claude Code `PermissionRule` 子集）；
+ * 可配置规则见 `toolPermissionModel.ts`；
  * 未命中规则时仍按工具名走 Bash / Write 等默认闸门。
  */
 

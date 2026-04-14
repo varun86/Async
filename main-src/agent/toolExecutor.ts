@@ -96,11 +96,11 @@ function coerceAgentDelegateArgs(call: ToolCall): {
 }
 
 const BACKGROUND_AGENT_TOOL_RESULT =
-	'[Background] Sub-agent started (Claude Code–style fork). Nested activity streams above; you will get a UI notice when it finishes. / 后台子 Agent 已启动，过程见上方嵌套区域，结束后会弹出提示。';
+	'[Background] Sub-agent started. Nested activity streams above; you will get a UI notice when it finishes. / 后台子 Agent 已启动，过程见上方嵌套区域，结束后会弹出提示。';
 
 const execFileAsync = promisify(execFile);
 
-/** Single Read call: max lines returned (aligned with Claude Code Read default cap). */
+/** Single Read call: max lines returned. */
 const MAX_READ_LINES_PER_CALL = 2000;
 /** Refuse to load extremely large text files into memory in one shot. */
 const MAX_READ_FILE_BYTES = 2 * 1024 * 1024;
@@ -1260,7 +1260,7 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 		return {
 			toolCallId: call.id,
 			name: call.name,
-			content: 'Error: `prompt` is required (Claude Code `Agent` tool).',
+			content: 'Error: `prompt` is required for the Agent tool.',
 			isError: true,
 		};
 	}
@@ -1777,7 +1777,7 @@ async function executeLspTool(call: ToolCall, execCtx: ToolExecutionContext): Pr
 		return {
 			toolCallId: call.id,
 			name: call.name,
-			content: `No LSP server handles extension "${ext}". Add a Claude-style plugin under <asyncData>/plugins/<name>/ or <workspace>/.async/plugins/<name>/ with .lsp.json (command + extensionToLanguage), or use legacy settings.json "lsp.servers". For TS/JS, install typescript-language-server in the project or register it explicitly.`,
+			content: `No LSP server handles extension "${ext}". Add a plugin under <asyncData>/plugins/<name>/ or <workspace>/.async/plugins/<name>/ with .lsp.json (command + extensionToLanguage), or use legacy settings.json "lsp.servers". For TS/JS, install typescript-language-server in the project or register it explicitly.`,
 			isError: false,
 		};
 	}

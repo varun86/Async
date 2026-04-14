@@ -18,7 +18,7 @@ export type ResolvedModelRequest =
 			requestModelId: string;
 			paradigm: ModelRequestParadigm;
 			maxOutputTokens: number;
-			/** 与 Claude Code 模型上下文对齐；未配置时在 `modelContext` 中解析 */
+/** 未配置时在 `modelContext` 中解析 */
 			contextWindowTokens?: number;
 			apiKey: string;
 			baseURL?: string;

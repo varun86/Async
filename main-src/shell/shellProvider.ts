@@ -1,7 +1,7 @@
 /**
  * Shell Provider 抽象接口
  * 
- * 参考 Claude Code 的 Provider 模式，提供：
+ * Shell Provider 抽象接口，提供：
  * - 统一的 Shell 执行接口
  * - 支持多种 Shell (bash, zsh, powershell)
  * - 易于扩展新的 Shell 类型

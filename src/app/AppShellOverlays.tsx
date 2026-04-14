@@ -80,7 +80,6 @@ export type AppShellOverlaysProps = {
 	workspaceFileList: string[];
 	homeRecents: string[];
 	filePath: string;
-	indexingSettingsSymbolIndexEnabled: boolean;
 	searchWorkspaceSymbolsFn:
 		| ((query: string) => Promise<{ name: string; path: string; line: number; kind: string }[]>)
 		| undefined;
@@ -169,7 +168,6 @@ export const AppShellOverlays = memo(function AppShellOverlays({
 	workspaceFileList,
 	homeRecents,
 	filePath,
-	indexingSettingsSymbolIndexEnabled,
 	searchWorkspaceSymbolsFn,
 	applyWorkspacePath,
 	openWorkspaceByPath,
@@ -329,7 +327,7 @@ export const AppShellOverlays = memo(function AppShellOverlays({
 				onFocusSearchSidebar={(q) => focusSearchSidebarFromQuickOpen(q)}
 				onGoToLine={goToLineInEditor}
 				initialQuery={quickOpenSeed}
-				searchWorkspaceSymbols={shell && indexingSettingsSymbolIndexEnabled ? searchWorkspaceSymbolsFn : undefined}
+				searchWorkspaceSymbols={shell ? searchWorkspaceSymbolsFn : undefined}
 				t={t}
 			/>
 

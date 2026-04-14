@@ -30,8 +30,8 @@ export function buildSkillCreatorSystemAppend(
 				? `**Target scope: this project only.** The user chose to store the new skill for the current workspace. Prefer creating or updating files under \`.async/skills/<slug>/SKILL.md\` (and mention \`.async/agent.json\` only if they also need an in-app skill entry). If no workspace is open, you should not claim files were written. Workspace root (if any): \`${workspaceRoot ?? '(none)'}\`.`
 				: `**适用范围：仅当前工作区。** 用户选择把新 Skill 存到当前项目。优先在工作区创建或更新 \`.async/skills/<slug>/SKILL.md\`（若还需出现在 Async 设置里，再说明是否同步写入 \`.async/agent.json\` 的 skills 列表）。若当前没有打开文件夹，不要假装已写入磁盘。工作区根目录：\`${workspaceRoot ?? '（无）'}\`。`
 			: lang === 'en'
-				? '**Target scope: all projects (global / user-level).** The user chose a skill that should apply across repositories. Describe saving via Async **Settings → Rules / Skills** (user-level skills list), not only a single repo path. Optionally mention \`~/.claude/skills/\` if they also use Claude Code-style layout on disk.'
-				: '**适用范围：所有项目（全局 / 用户级）。** 用户选择跨仓库生效的 Skill。请说明如何通过 Async **设置 → Rules / Skills** 写入用户级 Skills 列表，而不是只写某个仓库路径。若用户也使用 Claude Code 式目录，可补充 \`~/.claude/skills/\` 作为可选落盘位置。';
+				? '**Target scope: all projects (global / user-level).** The user chose a skill that should apply across repositories. Describe saving via Async **Settings → Rules / Skills** (user-level skills list), not only a single repo path. You may also mention \`~/.claude/skills/\` as an optional on-disk location when relevant.'
+				: '**适用范围：所有项目（全局 / 用户级）。** 用户选择跨仓库生效的 Skill。请说明如何通过 Async **设置 → Rules / Skills** 写入用户级 Skills 列表，而不是只写某个仓库路径。需要时也可补充 \`~/.claude/skills/\` 作为可选落盘位置。';
 
 	const toolBlock =
 		lang === 'en'

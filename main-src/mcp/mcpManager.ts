@@ -25,7 +25,7 @@ export type McpToolWithSource = McpToolDef & {
 	serverName: string;
 };
 
-/** 将 MCP 工具转换为 Agent 工具格式（命名规则与 Claude Code 一致） */
+/** 将 MCP 工具转换为 Agent 工具格式 */
 function mcpToolToAgentTool(tool: McpToolWithSource): AgentToolDef {
 	return {
 		name: buildMcpToolName(tool.serverId, tool.name),
@@ -69,7 +69,7 @@ export class McpManager extends EventEmitter<McpManagerEvents> {
 		return this.configs;
 	}
 
-	/** 已连接客户端（用于资源列举等，与 Claude Code 的 mcpClients 用途类似） */
+/** 已连接客户端（用于资源列举等） */
 	getConnectedClients(): McpClient[] {
 		return Array.from(this.clients.values()).filter((c) => c.getServerStatus().status === 'connected');
 	}

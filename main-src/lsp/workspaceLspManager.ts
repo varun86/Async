@@ -1,6 +1,6 @@
 /**
  * 按文件扩展名将 LSP 路由到 **插件**（`.lsp.json` / `plugin.json#lspServers`）及可选的 settings 迁移项；
- * 与 Claude Code「由插件登记、作用域名 `plugin:name:server`」同构。
+ * 由插件登记，作用域名形如 `plugin:name:server`。
  */
 
 import * as path from 'node:path';

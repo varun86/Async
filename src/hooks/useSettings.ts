@@ -2,7 +2,6 @@ import { startTransition, useCallback, useEffect, useMemo, useState, useTransiti
 import type { SettingsNavId } from '../SettingsPage';
 import type { EditorSettings } from '../EditorSettingsPanel';
 import { defaultEditorSettings } from '../EditorSettingsPanel';
-import type { IndexingSettingsState } from '../indexingSettingsTypes';
 import type { McpServerConfig, McpServerStatus } from '../mcpTypes';
 import {
 	coerceDefaultModel,
@@ -46,7 +45,6 @@ export type LoadedSettingsSnapshot = {
 	};
 	agent?: AgentCustomization;
 	editor?: Partial<EditorSettings>;
-	indexing?: Partial<IndexingSettingsState>;
 	team?: TeamSettings;
 };
 
@@ -181,14 +179,6 @@ export function useSettings(
 	const onChangeModelProviders = useCallback((providers: UserLlmProvider[]) => {
 		setModelProviders(providers);
 	}, []);
-
-	const onPersistIndexingPatch = useCallback(
-		(patch: Partial<IndexingSettingsState>) => {
-			if (!shell) return;
-			void shell.invoke('settings:set', { indexing: patch });
-		},
-		[shell]
-	);
 
 	const onRefreshMcpStatuses = useCallback(async () => {
 		if (!shell) return;
@@ -363,7 +353,6 @@ export function useSettings(
 		onPickDefaultModel,
 		onChangeModelEntries,
 		onChangeModelProviders,
-		onPersistIndexingPatch,
 		onRefreshMcpStatuses,
 		onStartMcpServer,
 		onStopMcpServer,

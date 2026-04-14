@@ -1,5 +1,5 @@
 /**
- * 子 Agent 类型解析：对齐 Claude Code 的 subagent_type + 设置中的 AgentSubagent。
+ * 子 Agent 类型解析：结合 subagent_type 与设置中的 AgentSubagent。
  */
 
 import type { AgentSubagent } from '../agentSettingsTypes.js';

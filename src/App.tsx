@@ -74,7 +74,6 @@ import { textBeforeCaretForAt } from './composerRichDom';
 import { useComposerAtMention, type AtComposerSlot } from './useComposerAtMention';
 import { useComposerSlashCommand } from './useComposerSlashCommand';
 import { type AgentRuleScope } from './agentSettingsTypes';
-import { normalizeIndexingSettings, type IndexingSettingsState } from './indexingSettingsTypes';
 
 const EMPTY_AGENT_PENDING_PATCHES: AgentPendingPatch[] = [];
 const EMPTY_SNAPSHOT_PATHS: ReadonlySet<string> = new Set<string>();
@@ -273,9 +272,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 	const { t, setLocale, locale } = useI18n();
 	const [ipcOk, setIpcOk] = useState<string>('…');
 
-	// 初始值为默认值，init effect 加载完 settings:get 后会 setIndexingSettings 更新
-	const [indexingSettings, setIndexingSettings] = useState<IndexingSettingsState>(() => normalizeIndexingSettings());
-
 	// ── 提取的 hooks（必须在所有依赖其返回值的代码之前调用）──────────────────
 	const {
 		workspace,
@@ -319,7 +315,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		onPickDefaultModel,
 		onChangeModelEntries,
 		onChangeModelProviders,
-		onPersistIndexingPatch,
 		onRefreshMcpStatuses,
 		onStartMcpServer,
 		onStopMcpServer,
@@ -337,8 +332,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			locale,
 			ipcOk,
 			setIpcOk,
-			indexingSettings,
-			setIndexingSettings,
 			layoutPinnedBySurface,
 			appSurface,
 			shellLayoutStorageKey,
@@ -358,8 +351,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			locale,
 			ipcOk,
 			setIpcOk,
-			indexingSettings,
-			setIndexingSettings,
 			layoutPinnedBySurface,
 			appSurface,
 			shellLayoutStorageKey,
@@ -445,7 +436,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			onPickDefaultModel,
 			onChangeModelEntries,
 			onChangeModelProviders,
-			onPersistIndexingPatch,
 			onRefreshMcpStatuses,
 			onStartMcpServer,
 			onStopMcpServer,
@@ -481,7 +471,6 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			onPickDefaultModel,
 			onChangeModelEntries,
 			onChangeModelProviders,
-			onPersistIndexingPatch,
 			onRefreshMcpStatuses,
 			onStartMcpServer,
 			onStopMcpServer,
@@ -507,8 +496,6 @@ function AppMainWorkspaceInner() {
 		locale,
 		ipcOk,
 		setIpcOk,
-		indexingSettings,
-		setIndexingSettings,
 		layoutPinnedBySurface,
 		appSurface,
 		shellLayoutStorageKey,
@@ -591,7 +578,6 @@ function AppMainWorkspaceInner() {
 		onPickDefaultModel,
 		onChangeModelEntries,
 		onChangeModelProviders,
-		onPersistIndexingPatch,
 		onRefreshMcpStatuses,
 		onStartMcpServer,
 		onStopMcpServer,
@@ -1735,7 +1721,6 @@ function AppMainWorkspaceInner() {
 			setRailWidths,
 			setLayoutMode,
 			applyLoadedSettings,
-			setIndexingSettings,
 			setColorMode,
 			setAppearanceSettings,
 			setMcpServers,
@@ -1755,7 +1740,6 @@ function AppMainWorkspaceInner() {
 		setRailWidths,
 		setLayoutMode,
 		applyLoadedSettings,
-		setIndexingSettings,
 		setColorMode,
 		setAppearanceSettings,
 		setMcpServers,
@@ -2890,9 +2874,6 @@ function AppMainWorkspaceInner() {
 				memoryExtraction: agentCustomization.memoryExtraction,
 			},
 			editor: editorSettings,
-			indexing: {
-				symbolIndexEnabled: indexingSettings.symbolIndexEnabled,
-			},
 			team: teamSettings,
 			mcp: { servers: mcpServers },
 			ui: {
@@ -2921,7 +2902,6 @@ function AppMainWorkspaceInner() {
 		thinkingByModelId,
 		agentCustomization,
 		editorSettings,
-		indexingSettings,
 		locale,
 		mcpServers,
 		teamSettings,
@@ -5935,9 +5915,6 @@ function AppMainWorkspaceInner() {
 			editorSettings,
 			onChangeEditorSettings: setEditorSettings,
 			onPersistLanguage: (loc) => void onPersistLanguage(loc),
-			indexingSettings,
-			onChangeIndexingSettings: setIndexingSettings,
-			onPersistIndexingPatch,
 			mcpServers,
 			onChangeMcpServers: setMcpServers,
 			mcpStatuses,
@@ -5970,9 +5947,6 @@ function AppMainWorkspaceInner() {
 			editorSettings,
 			setEditorSettings,
 			onPersistLanguage,
-			indexingSettings,
-			setIndexingSettings,
-			onPersistIndexingPatch,
 			mcpServers,
 			setMcpServers,
 			mcpStatuses,
@@ -6088,7 +6062,6 @@ function AppMainWorkspaceInner() {
 				workspaceFileList={workspaceFileListRef.current}
 				homeRecents={homeRecents}
 				filePath={filePath}
-				indexingSettingsSymbolIndexEnabled={indexingSettings.symbolIndexEnabled}
 				searchWorkspaceSymbolsFn={searchWorkspaceSymbolsFn}
 				applyWorkspacePath={applyWorkspacePath}
 				openWorkspaceByPath={openWorkspaceByPath}

@@ -1,5 +1,5 @@
 /**
- * Subset of Claude Code `normalizeMessagesForAPI` (`utils/messages.ts`) adapted for Async:
+ * Message normalization for Async API requests:
  * - Merge consecutive user turns (Bedrock-style constraint; harmless on 1P API).
  * - Hoist `tool_result` blocks before other user content blocks (API ordering).
  * - Join text seams with `\n` when merging user text blocks (avoid "2 + 23 + 3").

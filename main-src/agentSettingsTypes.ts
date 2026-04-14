@@ -47,7 +47,7 @@ export type AgentCommand = {
 	body: string;
 };
 
-/** 与 Claude Code `PermissionBehavior` 一致 */
+/** 与当前权限行为枚举一致 */
 export type ToolPermissionBehavior = 'allow' | 'deny' | 'ask';
 
 /**
@@ -62,7 +62,7 @@ export type AgentToolPermissionRule = {
 };
 
 /**
- * 后台记忆抽取阈值（对齐 Claude Code SessionMemory 的「首次 / 间隔 / 工具调用」思想，度量简化）。
+ * 后台记忆抽取阈值，按“首次 / 间隔 / 工具调用”三个维度控制，度量做了简化。
  */
 export type AgentMemoryExtractionSettings = {
 	enabled?: boolean;
@@ -108,7 +108,7 @@ export type AgentCustomization = {
 	 */
 	mistakeLimitEnabled?: boolean;
 	/**
-	 * 对齐 Claude Code `FORK_SUBAGENT`：开启后，调用 Agent 时**省略** `subagent_type` 则子 Agent 在后台运行，
+	 * 开启后，调用 Agent 时**省略** `subagent_type` 则子 Agent 在后台运行，
 	 * 工具立即返回占位说明，过程通过嵌套流展示，结束时前端提示。也可用参数 `run_in_background: true` 强制后台。
 	 * 环境变量 `ASYNC_AGENT_BACKGROUND_FORK=1` 等同开启。
 	 */
@@ -129,7 +129,7 @@ export type AgentCustomization = {
 	 */
 	roundHardTimeoutMs?: number;
 	/**
-	 * Agent 工具循环最大轮次（每轮 = 一次 LLM + 工具执行）。未设置且环境变量未指定时**不限制**（与 Claude Code `maxTurns` 可选语义一致）。
+	 * Agent 工具循环最大轮次（每轮 = 一次 LLM + 工具执行）。未设置且环境变量未指定时**不限制**。
 	 * 环境变量 `ASYNC_AGENT_MAX_ROUNDS` 优先；设为 `0` / `unlimited` / `off` 表示不限制。
 	 */
 	maxToolRounds?: number;

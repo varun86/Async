@@ -21,7 +21,6 @@ import {
 	setWorkspaceFileIndexReadyBroadcaster,
 	acquireWorkspaceFileIndexRef,
 	releaseWorkspaceFileIndexRef,
-	getWorkspaceFileIndexLiveStatsForRoot,
 	registerKnownWorkspaceRelPath,
 	setWorkspaceFsTouchNotifier,
 } from '../workspaceFileIndex.js';
@@ -151,9 +150,6 @@ import { setDelegateContext, clearDelegateContext } from '../agent/toolExecutor.
 import {
 	searchWorkspaceSymbols,
 	ensureSymbolIndexLoaded,
-	clearWorkspaceSymbolIndex,
-	getWorkspaceSymbolIndexStatsForRoot,
-	scheduleWorkspaceSymbolFullRebuild,
 } from '../workspaceSymbolIndex.js';
 import { getGitContextBlock, clearGitContextCacheForRoot } from '../gitContext.js';
 import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.js';
@@ -161,7 +157,6 @@ import { ensureMemoryDirExists, loadMemoryPrompt } from '../memdir/memdir.js';
 import { scanMemoryFiles } from '../memdir/memoryScan.js';
 import { getAutoMemEntrypoint } from '../memdir/paths.js';
 import { buildMemoryEntrypoint, queueExtractMemories } from '../services/extractMemories/extractMemories.js';
-import { getWorkspaceIndexDir } from '../workspaceIndexPaths.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -282,7 +277,7 @@ async function appendMemoryAndRetrievalContext(params: {
 		}
 	}
 
-	if (modeExpandsWorkspaceFileContext(params.mode) && params.root && params.settings.indexing?.gitContextEnabled !== false) {
+	if (modeExpandsWorkspaceFileContext(params.mode) && params.root) {
 		const gitBlock = await getGitContextBlock(params.root);
 		if (gitBlock) {
 			next = appendSystemBlock(next, gitBlock);
@@ -597,7 +592,7 @@ function runChatStream(
 				paradigm: String(resolved.paradigm),
 			});
 
-			// 与 Claude Code `apiPreconnect.ts` 一致：首条对话前预热到当前模型 API 基址的 TCP/TLS（无代理时）
+// 首条对话前预热到当前模型 API 基址的 TCP/TLS（无代理时）
 			preconnectLlmBaseUrlIfEligible({
 				paradigm: resolved.paradigm,
 				baseURL: resolved.baseURL,
@@ -1392,10 +1387,6 @@ export function registerIpc(): void {
 
 	ipcMain.handle('settings:set', (_e, partial: Record<string, unknown>) => {
 		const next = patchSettings(partial as Parameters<typeof patchSettings>[0]);
-		const idx = next.indexing;
-		if (idx?.symbolIndexEnabled === false) {
-			clearWorkspaceSymbolIndex();
-		}
 		const syncedColorMode = next.ui?.colorMode;
 		if (syncedColorMode === 'light' || syncedColorMode === 'dark' || syncedColorMode === 'system') {
 			for (const win of BrowserWindow.getAllWindows()) {
@@ -1505,20 +1496,6 @@ export function registerIpc(): void {
 		}
 	});
 
-	ipcMain.handle('workspace:indexing:stats', (event) => {
-		const r = senderWorkspaceRoot(event);
-		const w = getWorkspaceFileIndexLiveStatsForRoot(r);
-		const sym = getWorkspaceSymbolIndexStatsForRoot(r);
-		return {
-			ok: true as const,
-			workspaceRoot: w.root,
-			indexDir: w.root ? getWorkspaceIndexDir(w.root) : null,
-			fileCount: w.fileCount,
-			symbolUniqueNames: sym.uniqueNames,
-			symbolIndexedFiles: sym.filesWithSymbols,
-		};
-	});
-
 	ipcMain.handle('workspace:memory:stats', async (event) => {
 		const root = senderWorkspaceRoot(event);
 		if (!root) {
@@ -1550,19 +1527,6 @@ export function registerIpc(): void {
 			topicFiles: headers.length,
 			entryCount,
 		};
-	});
-
-	ipcMain.handle('workspace:indexing:rebuild', async (event, payload: { target?: 'symbols' }) => {
-		const root = senderWorkspaceRoot(event);
-		if (!root) {
-			return { ok: false as const, error: 'no-workspace' as const };
-		}
-		const files = await ensureWorkspaceFileIndex(root);
-		const t = payload?.target ?? 'symbols';
-		if (t === 'symbols') {
-			scheduleWorkspaceSymbolFullRebuild(root, files);
-		}
-		return { ok: true as const };
 	});
 
 	ipcMain.handle('workspace:memory:rebuild', async (event) => {

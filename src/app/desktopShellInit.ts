@@ -9,7 +9,6 @@ import {
 	type AppColorMode,
 } from '../colorMode';
 import { normalizeLocale, type AppLocale, type TFunction } from '../i18n';
-import { normalizeIndexingSettings, type IndexingSettingsState } from '../indexingSettingsTypes';
 import type { LoadedSettingsSnapshot } from '../hooks/useSettings';
 import type { McpServerConfig, McpServerStatus } from '../mcpTypes';
 import {
@@ -58,7 +57,6 @@ export type DesktopShellInitContext = {
 	setRailWidths: (next: { left: number; right: number }) => void;
 	setLayoutMode: (mode: ShellLayoutMode) => void;
 	applyLoadedSettings: (st: LoadedSettingsSnapshot | undefined) => void;
-	setIndexingSettings: (s: IndexingSettingsState) => void;
 	setColorMode: (m: AppColorMode) => void;
 	setAppearanceSettings: Dispatch<SetStateAction<AppAppearanceSettings>>;
 	setMcpServers: (list: McpServerConfig[]) => void;
@@ -85,7 +83,6 @@ export async function runDesktopShellInit(ctx: DesktopShellInitContext): Promise
 		setRailWidths,
 		setLayoutMode,
 		applyLoadedSettings,
-		setIndexingSettings,
 		setColorMode,
 		setAppearanceSettings,
 		setMcpServers,
@@ -146,7 +143,6 @@ export async function runDesktopShellInit(ctx: DesktopShellInitContext): Promise
 		}
 	}
 	applyLoadedSettings(st);
-	setIndexingSettings(normalizeIndexingSettings(st.indexing));
 	const cmRaw = st.ui?.colorMode;
 	const nextColorMode: AppColorMode =
 		cmRaw === 'light' || cmRaw === 'dark' || cmRaw === 'system' ? cmRaw : readStoredColorMode();

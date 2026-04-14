@@ -51,7 +51,7 @@ export type AgentCommand = {
 	body: string;
 };
 
-/** 与 Claude Code `PermissionBehavior` 一致 */
+/** 与当前权限行为枚举保持一致 */
 export type ToolPermissionBehavior = 'allow' | 'deny' | 'ask';
 
 export type AgentToolPermissionRule = {
@@ -130,7 +130,7 @@ export type AgentCustomization = {
 	maxConsecutiveMistakes?: number;
 	/** 是否启用连续失败暂停，默认 true */
 	mistakeLimitEnabled?: boolean;
-	/** 省略 subagent_type 时 Agent 后台运行（对齐 Claude Code fork），默认 false */
+	/** 省略 subagent_type 时 Agent 后台运行，默认 false */
 	backgroundForkAgent?: boolean;
 	/** 无新 chunk 最长等待（ms），见主进程 agentSettingsTypes */
 	streamIdleTimeoutMs?: number;

@@ -1,5 +1,5 @@
 /**
- * 模型上下文窗口与「发送前压缩」阈值 — 源码结构对齐 Claude Code：
+ * 模型上下文窗口与「发送前压缩」阈值：
  *
  * - {@link MODEL_CONTEXT_WINDOW_DEFAULT}、{@link COMPACT_MAX_OUTPUT_TOKENS}、{@link getContextWindowForModel}
  *   对应 `claude-code/src/utils/context.ts`

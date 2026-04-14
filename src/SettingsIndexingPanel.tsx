@@ -1,17 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from './i18n';
-import type { IndexingSettingsState } from './indexingSettingsTypes';
 import type { AgentCustomization, AgentMemoryExtractionSettings } from './agentSettingsTypes';
 import { defaultAgentCustomization } from './agentSettingsTypes';
-
-type IndexingStats = {
-	ok?: boolean;
-	workspaceRoot?: string | null;
-	indexDir?: string | null;
-	fileCount?: number;
-	symbolUniqueNames?: number;
-	symbolIndexedFiles?: number;
-};
 
 type MemoryStats = {
 	ok?: boolean;
@@ -26,10 +16,6 @@ type MemoryStats = {
 type ShellApi = NonNullable<Window['asyncShell']>;
 
 type Props = {
-	value: IndexingSettingsState;
-	onChange: (next: IndexingSettingsState) => void;
-	/** 切换单项时立即同步主进程（与关闭设置页时的全量保存配合） */
-	onPersistPatch: (patch: Partial<IndexingSettingsState>) => void;
 	shell: ShellApi | null;
 	workspaceOpen: boolean;
 	/** 会话记忆抽取阈值写入 `agent.memoryExtraction` */
@@ -38,9 +24,6 @@ type Props = {
 };
 
 export function SettingsIndexingPanel({
-	value,
-	onChange,
-	onPersistPatch,
 	shell,
 	workspaceOpen,
 	agentCustomization,
@@ -57,27 +40,9 @@ export function SettingsIndexingPanel({
 		},
 		[av, onChangeAgentCustomization]
 	);
-	const [stats, setStats] = useState<IndexingStats | null>(null);
-	const [statsLoading, setStatsLoading] = useState(false);
-	const [rebuildBusy, setRebuildBusy] = useState<'symbols' | null>(null);
 	const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
 	const [memoryLoading, setMemoryLoading] = useState(false);
 	const [memoryRebuilding, setMemoryRebuilding] = useState(false);
-
-	const refreshStats = useCallback(async () => {
-		if (!shell) {
-			return;
-		}
-		setStatsLoading(true);
-		try {
-			const r = (await shell.invoke('workspace:indexing:stats')) as IndexingStats;
-			setStats(r?.ok ? r : null);
-		} catch {
-			setStats(null);
-		} finally {
-			setStatsLoading(false);
-		}
-	}, [shell]);
 
 	const refreshMemoryStats = useCallback(async () => {
 		if (!shell || !workspaceOpen) {
@@ -96,31 +61,8 @@ export function SettingsIndexingPanel({
 	}, [shell, workspaceOpen]);
 
 	useEffect(() => {
-		void refreshStats();
-	}, [refreshStats, workspaceOpen, value.symbolIndexEnabled]);
-
-	useEffect(() => {
 		void refreshMemoryStats();
 	}, [refreshMemoryStats, workspaceOpen]);
-
-	const patchToggle = (key: keyof IndexingSettingsState, on: boolean) => {
-		const next = { ...value, [key]: on };
-		onChange(next);
-		onPersistPatch({ [key]: on });
-	};
-
-	const runRebuild = async () => {
-		if (!shell || !workspaceOpen) {
-			return;
-		}
-		setRebuildBusy('symbols');
-		try {
-			await shell.invoke('workspace:indexing:rebuild', { target: 'symbols' });
-			await refreshStats();
-		} finally {
-			setRebuildBusy(null);
-		}
-	};
 
 	const runMemoryRebuild = async () => {
 		if (!shell || !workspaceOpen) {
@@ -145,71 +87,6 @@ export function SettingsIndexingPanel({
 	return (
 		<div className="ref-settings-panel ref-settings-panel--indexing">
 			<p className="ref-settings-lead">{t('settings.indexing.lead')}</p>
-
-			<h2 className="ref-settings-subhead">{t('settings.indexing.codeIndexTitle')}</h2>
-			<div className="ref-settings-agent-card">
-				<div className="ref-settings-agent-card-row">
-					<div>
-						<div className="ref-settings-agent-card-title">{t('settings.indexing.symbolIndex')}</div>
-						<p className="ref-settings-agent-card-desc">{t('settings.indexing.symbolIndexDesc')}</p>
-					</div>
-					<button
-						type="button"
-						className={`ref-settings-toggle ${value.symbolIndexEnabled ? 'is-on' : ''}`}
-						role="switch"
-						aria-checked={value.symbolIndexEnabled}
-						onClick={() => patchToggle('symbolIndexEnabled', !value.symbolIndexEnabled)}
-					>
-						<span className="ref-settings-toggle-knob" />
-					</button>
-				</div>
-			</div>
-
-			<h2 className="ref-settings-subhead" style={{ marginTop: 24 }}>
-				{t('settings.indexing.statsTitle')}
-			</h2>
-			<p className="ref-settings-proxy-hint">{t('settings.indexing.statsHint')}</p>
-			<div className="ref-settings-indexing-stats">
-				{!workspaceOpen ? (
-					<p className="ref-settings-proxy-hint">{t('settings.indexing.noWorkspace')}</p>
-				) : statsLoading ? (
-					<p className="ref-settings-proxy-hint">{t('settings.indexing.statsLoading')}</p>
-				) : stats ? (
-					<ul className="ref-settings-indexing-stat-list">
-						<li>
-							{t('settings.indexing.indexDir')}: <strong>{stats.indexDir ?? '—'}</strong>
-						</li>
-						<li>
-							{t('settings.indexing.statFiles')}: <strong>{stats.fileCount ?? 0}</strong>
-						</li>
-						<li>
-							{t('settings.indexing.statSymbols')}:{' '}
-							<strong>{stats.symbolUniqueNames ?? 0}</strong> ({t('settings.indexing.statSymbolFiles')}:{' '}
-							{stats.symbolIndexedFiles ?? 0})
-						</li>
-					</ul>
-				) : (
-					<p className="ref-settings-proxy-hint">{t('settings.indexing.statsUnavailable')}</p>
-				)}
-			</div>
-			<div className="ref-settings-indexing-actions">
-				<button
-					type="button"
-					className="ref-settings-add-model"
-					disabled={!shell || !workspaceOpen || statsLoading || rebuildBusy !== null || !value.symbolIndexEnabled}
-					onClick={() => void runRebuild()}
-				>
-					{rebuildBusy === 'symbols' ? t('settings.indexing.rebuilding') : t('settings.indexing.rebuildSymbols')}
-				</button>
-				<button
-					type="button"
-					className="ref-settings-set-default"
-					disabled={!shell || !workspaceOpen || statsLoading}
-					onClick={() => void refreshStats()}
-				>
-					{t('settings.indexing.refreshStats')}
-				</button>
-			</div>
 
 			<h2 className="ref-settings-subhead" style={{ marginTop: 28 }}>
 				{t('settings.indexing.memoryTitle')}

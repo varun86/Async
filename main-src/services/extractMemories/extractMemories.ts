@@ -39,7 +39,7 @@ const MAX_SOURCE_CHARS = 16_000;
 const inFlight = new Map<string, Promise<void>>();
 const rerunRequested = new Set<string>();
 
-/** 对齐 Claude Code `SessionMemory` 默认的数量级（其用 token，此处用消息/工具计数近似） */
+/** 默认数量级设置（此处用消息/工具计数近似） */
 const DEFAULT_MIN_NON_SYSTEM_BEFORE_FIRST = 4;
 const DEFAULT_MIN_NON_SYSTEM_BETWEEN = 3;
 const DEFAULT_MIN_TOOL_CALLS_BETWEEN = 3;
