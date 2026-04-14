@@ -7480,7 +7480,8 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	position: absolute;
 	top: 14px;
 	right: 24px;
-	z-index: 4;
+	/* Keep launcher dropdown above sticky chat bubbles. */
+	z-index: 12;
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
