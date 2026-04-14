@@ -11,8 +11,6 @@ type IndexingStats = {
 	fileCount?: number;
 	symbolUniqueNames?: number;
 	symbolIndexedFiles?: number;
-	semanticChunks?: number;
-	semanticBusy?: boolean;
 };
 
 type MemoryStats = {
@@ -61,7 +59,7 @@ export function SettingsIndexingPanel({
 	);
 	const [stats, setStats] = useState<IndexingStats | null>(null);
 	const [statsLoading, setStatsLoading] = useState(false);
-	const [rebuildBusy, setRebuildBusy] = useState<'symbols' | 'semantic' | 'all' | null>(null);
+	const [rebuildBusy, setRebuildBusy] = useState<'symbols' | null>(null);
 	const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
 	const [memoryLoading, setMemoryLoading] = useState(false);
 	const [memoryRebuilding, setMemoryRebuilding] = useState(false);
@@ -99,7 +97,7 @@ export function SettingsIndexingPanel({
 
 	useEffect(() => {
 		void refreshStats();
-	}, [refreshStats, workspaceOpen, value.symbolIndexEnabled, value.semanticIndexEnabled]);
+	}, [refreshStats, workspaceOpen, value.symbolIndexEnabled]);
 
 	useEffect(() => {
 		void refreshMemoryStats();
@@ -111,13 +109,13 @@ export function SettingsIndexingPanel({
 		onPersistPatch({ [key]: on });
 	};
 
-	const runRebuild = async (target: 'symbols' | 'semantic' | 'all') => {
+	const runRebuild = async () => {
 		if (!shell || !workspaceOpen) {
 			return;
 		}
-		setRebuildBusy(target);
+		setRebuildBusy('symbols');
 		try {
-			await shell.invoke('workspace:indexing:rebuild', { target });
+			await shell.invoke('workspace:indexing:rebuild', { target: 'symbols' });
 			await refreshStats();
 		} finally {
 			setRebuildBusy(null);
@@ -165,21 +163,6 @@ export function SettingsIndexingPanel({
 						<span className="ref-settings-toggle-knob" />
 					</button>
 				</div>
-				<div className="ref-settings-agent-card-row" style={{ marginTop: 12 }}>
-					<div>
-						<div className="ref-settings-agent-card-title">{t('settings.indexing.semanticIndex')}</div>
-						<p className="ref-settings-agent-card-desc">{t('settings.indexing.semanticIndexDesc')}</p>
-					</div>
-					<button
-						type="button"
-						className={`ref-settings-toggle ${value.semanticIndexEnabled ? 'is-on' : ''}`}
-						role="switch"
-						aria-checked={value.semanticIndexEnabled}
-						onClick={() => patchToggle('semanticIndexEnabled', !value.semanticIndexEnabled)}
-					>
-						<span className="ref-settings-toggle-knob" />
-					</button>
-				</div>
 			</div>
 
 			<h2 className="ref-settings-subhead" style={{ marginTop: 24 }}>
@@ -204,10 +187,6 @@ export function SettingsIndexingPanel({
 							<strong>{stats.symbolUniqueNames ?? 0}</strong> ({t('settings.indexing.statSymbolFiles')}:{' '}
 							{stats.symbolIndexedFiles ?? 0})
 						</li>
-						<li>
-							{t('settings.indexing.statSemantic')}: <strong>{stats.semanticChunks ?? 0}</strong>
-							{stats.semanticBusy ? ` (${t('settings.indexing.statSemanticBusy')})` : ''}
-						</li>
 					</ul>
 				) : (
 					<p className="ref-settings-proxy-hint">{t('settings.indexing.statsUnavailable')}</p>
@@ -218,32 +197,9 @@ export function SettingsIndexingPanel({
 					type="button"
 					className="ref-settings-add-model"
 					disabled={!shell || !workspaceOpen || statsLoading || rebuildBusy !== null || !value.symbolIndexEnabled}
-					onClick={() => void runRebuild('symbols')}
+					onClick={() => void runRebuild()}
 				>
 					{rebuildBusy === 'symbols' ? t('settings.indexing.rebuilding') : t('settings.indexing.rebuildSymbols')}
-				</button>
-				<button
-					type="button"
-					className="ref-settings-add-model"
-					disabled={!shell || !workspaceOpen || statsLoading || rebuildBusy !== null || !value.semanticIndexEnabled}
-					onClick={() => void runRebuild('semantic')}
-				>
-					{rebuildBusy === 'semantic' ? t('settings.indexing.rebuilding') : t('settings.indexing.rebuildSemantic')}
-				</button>
-				<button
-					type="button"
-					className="ref-settings-add-model"
-					disabled={
-						!shell ||
-						!workspaceOpen ||
-						statsLoading ||
-						rebuildBusy !== null ||
-						!value.symbolIndexEnabled ||
-						!value.semanticIndexEnabled
-					}
-					onClick={() => void runRebuild('all')}
-				>
-					{rebuildBusy === 'all' ? t('settings.indexing.rebuilding') : t('settings.indexing.rebuildAll')}
 				</button>
 				<button
 					type="button"

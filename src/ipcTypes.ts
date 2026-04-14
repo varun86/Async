@@ -45,11 +45,26 @@ export type ChatStreamNest = { parentToolCallId?: string; nestingDepth?: number 
 /** 与渲染端 ipcStreamNonceRef 对齐，丢弃被 abort 的前一轮迟到 done/error */
 export type ChatStreamNonce = { streamNonce?: number };
 
+export type TeamRoleScope = {
+	teamTaskId: string;
+	teamExpertId: string;
+	teamRoleKind: 'specialist' | 'reviewer' | 'lead';
+	teamExpertName: string;
+	teamRoleType: 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
+};
+
 type ChatStreamPayloadCore =
-	| ({ threadId: string; type: 'delta'; text: string } & ChatStreamNest)
-	| { threadId: string; type: 'done'; text: string; pendingAgentPatches?: AgentPendingPatch[]; usage?: TurnTokenUsage }
-	| { threadId: string; type: 'error'; message: string }
-	| ({ threadId: string; type: 'tool_call'; name: string; args: string; toolCallId: string } & ChatStreamNest)
+	| ({ threadId: string; type: 'delta'; text: string; teamRoleScope?: TeamRoleScope } & ChatStreamNest)
+	| {
+			threadId: string;
+			type: 'done';
+			text: string;
+			pendingAgentPatches?: AgentPendingPatch[];
+			usage?: TurnTokenUsage;
+			teamRoleScope?: TeamRoleScope;
+	  }
+	| { threadId: string; type: 'error'; message: string; teamRoleScope?: TeamRoleScope }
+	| ({ threadId: string; type: 'tool_call'; name: string; args: string; toolCallId: string; teamRoleScope?: TeamRoleScope } & ChatStreamNest)
 	| ({
 			threadId: string;
 			type: 'tool_result';
@@ -57,15 +72,24 @@ type ChatStreamPayloadCore =
 			result: string;
 			success: boolean;
 			toolCallId: string;
+			teamRoleScope?: TeamRoleScope;
 	  } & ChatStreamNest)
-	| ({ threadId: string; type: 'tool_input_delta'; name: string; partialJson: string; index: number } & ChatStreamNest)
-	| ({ threadId: string; type: 'thinking_delta'; text: string } & ChatStreamNest)
+	| ({
+			threadId: string;
+			type: 'tool_input_delta';
+			name: string;
+			partialJson: string;
+			index: number;
+			teamRoleScope?: TeamRoleScope;
+	  } & ChatStreamNest)
+	| ({ threadId: string; type: 'thinking_delta'; text: string; teamRoleScope?: TeamRoleScope } & ChatStreamNest)
 	| ({
 			threadId: string;
 			type: 'tool_progress';
 			name: string;
 			phase: string;
 			detail?: string;
+			teamRoleScope?: TeamRoleScope;
 	  } & ChatStreamNest)
 	| {
 			threadId: string;
@@ -94,6 +118,87 @@ type ChatStreamPayloadCore =
 			parentToolCallId: string;
 			result: string;
 			success: boolean;
+	  }
+	| {
+			threadId: string;
+			type: 'team_phase';
+			phase: 'planning' | 'preflight' | 'proposing' | 'executing' | 'reviewing' | 'delivering' | 'cancelled';
+	  }
+	| {
+			threadId: string;
+			type: 'team_task_created';
+			task: {
+				id: string;
+				expertId: string;
+				expertAssignmentKey?: string;
+				expertName: string;
+				roleType: 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
+				description: string;
+				status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'revision';
+				dependencies?: string[];
+				acceptanceCriteria?: string[];
+			};
+	  }
+	| {
+			threadId: string;
+			type: 'team_expert_started';
+			taskId: string;
+			expertId: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_expert_progress';
+			taskId: string;
+			expertId: string;
+			message?: string;
+			delta?: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_expert_done';
+			taskId: string;
+			expertId: string;
+			success: boolean;
+			result: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_review';
+			verdict: 'approved' | 'revision_needed';
+			summary: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_plan_summary';
+			summary: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_preflight_review';
+			verdict: 'ok' | 'needs_clarification';
+			summary: string;
+	  }
+	| {
+			threadId: string;
+			type: 'team_plan_proposed';
+			proposalId: string;
+			summary: string;
+			tasks: Array<{
+				expert: string;
+				expertName: string;
+				roleType: 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
+				task: string;
+				dependencies?: string[];
+				acceptanceCriteria?: string[];
+			}>;
+			preflightSummary?: string;
+			preflightVerdict?: 'ok' | 'needs_clarification';
+	  }
+	| {
+			threadId: string;
+			type: 'team_plan_decision';
+			proposalId: string;
+			approved: boolean;
 	  };
 
 export type ChatStreamPayload = ChatStreamPayloadCore & ChatStreamNonce;

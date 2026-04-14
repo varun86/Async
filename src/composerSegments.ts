@@ -90,26 +90,85 @@ export function isSlashCommandDomPendingUpgrade(
  * 历史消息里可能仍是 ZWNJ（\u200c），解析端保留兼容。
  */
 const FILE_REF_GLUE_SPACE = ' ';
-const normalizedKnownPathsCache = new WeakMap<string[], string[]>();
 
-function normalizedKnownPaths(knownPaths: string[]): string[] {
-	const cached = normalizedKnownPathsCache.get(knownPaths);
-	if (cached) {
-		return cached;
+/**
+ * `@` 仅在这些前置字符后更可能是文件引用，避免 `user@mail.com` 误判。
+ * 发送端写入的 wire 在 `@` 前通常有空格/行首/括号等。
+ */
+function isLikelyAtFileStart(text: string, atIndex: number): boolean {
+	if (atIndex === 0) {
+		return true;
 	}
-	const t0 = import.meta.env.DEV ? performance.now() : 0;
-	const normalized = [...new Set(knownPaths.map((p) => p.replace(/\\/g, '/')))].sort((a, b) => b.length - a.length);
-	if (import.meta.env.DEV) {
-		const elapsed = performance.now() - t0;
-		if (elapsed > 8) {
-			// eslint-disable-next-line no-console
-			console.log(
-				`[perf] normalizedKnownPaths: ${elapsed.toFixed(1)}ms, in=${knownPaths.length}, out=${normalized.length}`
-			);
+	const prev = text[atIndex - 1]!;
+	return /[\s([{<'"\n\r:：,，（【「『]/.test(prev);
+}
+
+/** 历史 wire 若缺少分隔符，可能出现 `@foo.tshello`；从右侧剥掉误粘的字母后缀 */
+function peelGluedTextAfterExtension(raw: string): string {
+	const m = raw.match(/^(.+\.([A-Za-z0-9]{1,12}))([A-Za-z][A-Za-z0-9_]*)$/);
+	if (m && m[3].length >= 2) {
+		return m[1]!;
+	}
+	return raw;
+}
+
+function looksLikeFileRefPath(raw: string): boolean {
+	const p = raw.replace(/\\/g, '/');
+	if (p.length === 0) {
+		return false;
+	}
+	if (p.includes('/')) {
+		return true;
+	}
+	if (p.startsWith('.')) {
+		return true;
+	}
+	if (/\.[A-Za-z0-9]{1,12}$/.test(p)) {
+		return true;
+	}
+	if (/^[\w-]+\.[\w.-]+$/.test(p)) {
+		return true;
+	}
+	return false;
+}
+
+/** 扫描 `@` 后路径体时在此类字符处停止（`.` 不在内，以便匹配 `foo.ts`） */
+function isAtPathScanTerminator(c: string): boolean {
+	const code = c.charCodeAt(0);
+	if (c === ' ' || c === '\t' || c === '\n' || c === '\r') {
+		return true;
+	}
+	if (code >= 0x2000 && code <= 0x200f) {
+		return true;
+	}
+	if (',;:!?()[]{}<>\'"「」『』【】（）｛｝。，、；：！？'.includes(c)) {
+		return true;
+	}
+	return false;
+}
+
+function heuristicMatchAtPath(text: string, atIndex: number): { path: string; scanEnd: number } | null {
+	if (!isLikelyAtFileStart(text, atIndex)) {
+		return null;
+	}
+	let k = atIndex + 1;
+	let rawFull = '';
+	while (k < text.length) {
+		const c = text[k]!;
+		if (isAtPathScanTerminator(c)) {
+			break;
 		}
+		rawFull += c;
+		k++;
 	}
-	normalizedKnownPathsCache.set(knownPaths, normalized);
-	return normalized;
+	if (rawFull.length === 0) {
+		return null;
+	}
+	const path = peelGluedTextAfterExtension(rawFull);
+	if (!looksLikeFileRefPath(path)) {
+		return null;
+	}
+	return { path, scanEnd: k };
 }
 
 /** 发送给后端的纯文本：与内联 chip 顺序一致 */
@@ -139,7 +198,7 @@ export function segmentsToWireText(segments: ComposerSegment[]): string {
 }
 
 /** 将用户消息解析为 segments（兼容旧版「首行全是 @路径」格式） */
-export function userMessageToSegments(content: string, knownPaths: string[]): ComposerSegment[] {
+export function userMessageToSegments(content: string, _knownPaths?: readonly string[]): ComposerSegment[] {
 	const trimmedStart = content.replace(/^\uFEFF/, '');
 	for (const cmd of WIRE_PARSE_ORDER) {
 		const wire = SLASH_COMMAND_WIRE[cmd];
@@ -152,7 +211,7 @@ export function userMessageToSegments(content: string, knownPaths: string[]): Co
 			} else {
 				rest = rest.replace(/^\s+/, '');
 			}
-			const tailSegs = rest.length > 0 ? wirePlainToSegments(rest, knownPaths) : [];
+			const tailSegs = rest.length > 0 ? wirePlainToSegments(rest) : [];
 			return mergeAdjacentText([{ id: newSegmentId(), kind: 'command', command: cmd }, ...tailSegs]);
 		}
 	}
@@ -168,11 +227,11 @@ export function userMessageToSegments(content: string, knownPaths: string[]): Co
 		}
 		return mergeAdjacentText(parts);
 	}
-	return wirePlainToSegments(content, knownPaths);
+	return wirePlainToSegments(content);
 }
 
 /** 检查字符是否为文件引用的边界字符（路径后应该跟这些字符之一才算有效引用） */
-function isFileRefBoundary(char: string | undefined): boolean {
+export function isFileRefBoundary(char: string | undefined): boolean {
 	if (!char) return true; // 字符串结尾是有效边界
 	const code = char.charCodeAt(0);
 	// 空白类
@@ -183,9 +242,11 @@ function isFileRefBoundary(char: string | undefined): boolean {
 	return false;
 }
 
-/** 按最长路径匹配内联 `@相对路径` */
-export function wirePlainToSegments(text: string, knownPaths: string[]): ComposerSegment[] {
-	const paths = normalizedKnownPaths(knownPaths);
+/**
+ * 按启发式解析内联 `@相对路径`（不依赖全量 knownPaths）。
+ * 发送端已写入合法 wire；渲染端只做展示级切分，避免 O(N) 路径验证。
+ */
+export function wirePlainToSegments(text: string, _knownPaths?: readonly string[]): ComposerSegment[] {
 	const out: ComposerSegment[] = [];
 	let i = 0;
 	let textBuf = '';
@@ -197,13 +258,16 @@ export function wirePlainToSegments(text: string, knownPaths: string[]): Compose
 	};
 	while (i < text.length) {
 		if (text[i] === '@' || text[i] === '\uFF03') {
-			const rest = text.slice(i + 1);
-			const hit = paths.find((p) => rest.startsWith(p));
-			// 只有路径后面是边界字符时才认为是有效的文件引用
-			if (hit && isFileRefBoundary(rest[hit.length])) {
+			const hit = heuristicMatchAtPath(text, i);
+			if (hit) {
 				flush();
-				out.push({ id: newSegmentId(), kind: 'file', path: hit });
-				i += 1 + hit.length;
+				out.push({ id: newSegmentId(), kind: 'file', path: hit.path });
+				const pathStart = i + 1;
+				const junk = text.slice(pathStart + hit.path.length, hit.scanEnd);
+				if (junk) {
+					textBuf += junk;
+				}
+				i = hit.scanEnd;
 				while (text[i] === '\u200c' || text[i] === '\u200b') {
 					i += 1;
 				}

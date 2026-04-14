@@ -40,7 +40,10 @@ export function isReadOnlyAgentTool(name: string): boolean {
 	return (READ_ONLY_AGENT_TOOL_NAMES as readonly string[]).includes(name);
 }
 
-export function agentToolsForComposerMode(mode: 'agent' | 'plan', all: AgentToolDef[] = AGENT_TOOLS): AgentToolDef[] {
+export function agentToolsForComposerMode(
+	mode: 'agent' | 'plan' | 'team',
+	all: AgentToolDef[] = AGENT_TOOLS
+): AgentToolDef[] {
 	if (mode === 'plan') {
 		return all.filter((d) => isReadOnlyAgentTool(d.name) || d.name === 'ask_plan_question');
 	}

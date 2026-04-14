@@ -67,7 +67,11 @@ export async function streamGemini(
 			async () => {
 				const connectAc = new AbortController();
 				const onUserAbort = () => connectAc.abort();
-				options.signal.addEventListener('abort', onUserAbort, { once: true });
+				if (options.signal.aborted) {
+					connectAc.abort();
+				} else {
+					options.signal.addEventListener('abort', onUserAbort, { once: true });
+				}
 				const connectTimer = setTimeout(() => connectAc.abort(), llmSdkResponseHeadTimeoutMs());
 				try {
 					return await model.generateContentStream({ contents }, { signal: connectAc.signal });

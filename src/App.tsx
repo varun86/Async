@@ -110,6 +110,8 @@ import { normWorkspaceRootKey } from './workspaceRootKey';
 import { useAgentFileReview, type AgentFilePreviewState } from './hooks/useAgentFileReview';
 import { useComposer } from './hooks/useComposer';
 import { useEditorTabs, type EditorInlineDiffState, clampEditorTerminalHeight } from './hooks/useEditorTabs';
+import { useTeamSession } from './hooks/useTeamSession';
+import { buildTeamWorkflowItems } from './teamWorkflowItems';
 import { AppWorkspaceWelcome } from './app/AppWorkspaceWelcome';
 import { AgentAgentCenterColumn } from './app/AgentAgentCenterColumn';
 import type { ComposerAnchorSlot } from './ChatComposer';
@@ -144,7 +146,7 @@ import { formatThreadRowSubtitle, threadRowTitle } from './app/threadRowUi';
 const EditorMainPanel = lazy(() => import('./EditorMainPanel').then((m) => ({ default: m.EditorMainPanel })));
 
 type LayoutMode = ShellLayoutMode;
-type AgentRightSidebarView = 'git' | 'plan' | 'file';
+type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team';
 type EditorLeftSidebarView = 'explorer' | 'search' | 'git';
 import { useI18n, type AppLocale } from './i18n';
 import { hideBootSplash } from './bootSplash';
@@ -318,6 +320,8 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 		onStopMcpServer,
 		onRestartMcpServer,
 		applyLoadedSettings,
+		teamSettings,
+		setTeamSettings,
 	} = useSettings(shell, workspace, t);
 
 	const chromeSlice = useMemo(
@@ -420,6 +424,8 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			refreshWorkspaceDiskSkills,
 			mergedAgentCustomization,
 			onChangeMergedAgentCustomization,
+			teamSettings,
+			setTeamSettings,
 			editorSettings,
 			setEditorSettings,
 			mcpServers,
@@ -476,6 +482,8 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 			onStopMcpServer,
 			onRestartMcpServer,
 			applyLoadedSettings,
+			teamSettings,
+			setTeamSettings,
 		]
 	);
 
@@ -513,7 +521,6 @@ function AppMainWorkspaceInner() {
 		workspace,
 		setWorkspace,
 		workspaceFileListRef,
-		workspaceFileListVersion,
 		ensureWorkspaceFileListLoaded,
 		searchFiles,
 		homeRecents,
@@ -585,6 +592,8 @@ function AppMainWorkspaceInner() {
 		onStopMcpServer,
 		onRestartMcpServer,
 		applyLoadedSettings,
+		teamSettings,
+		setTeamSettings,
 	} = useAppShellSettings();
 
 	const {
@@ -677,6 +686,7 @@ function AppMainWorkspaceInner() {
 		setStreaming,
 		setAwaitingReply,
 	} = useStreamingChat();
+	const { applyTeamPayload, getTeamSession, setSelectedTask, abortTeamSession, startTeamSession, restoreTeamSession, markTeamPlanProposalDecided } = useTeamSession();
 	const {
 		agentReviewPendingByThread,
 		setAgentReviewPendingByThread,
@@ -778,6 +788,11 @@ function AppMainWorkspaceInner() {
 		flashComposerAttachErr,
 		resetComposerState,
 	} = useComposer();
+	useEffect(() => {
+		if (composerMode === 'team') {
+			setModelPickerOpen(false);
+		}
+	}, [composerMode]);
 
 	/** 切回正在后台流式回复的线程时，把离屏累积的正文/思考草稿铺回 UI */
 	const flushOffThreadStreamDraftIfNeeded = useCallback(
@@ -806,7 +821,8 @@ function AppMainWorkspaceInner() {
 		refreshThreads,
 		defaultModel,
 		composerMode,
-		ensureWorkspaceFileListLoaded,
+		teamSettings,
+		modelEntries,
 		resendFromUserIndex,
 		setResendFromUserIndex,
 		setInlineResendSegments,
@@ -823,6 +839,7 @@ function AppMainWorkspaceInner() {
 		flashComposerAttachErr,
 		t,
 		clearAgentReviewForThread,
+		startTeamSession,
 		clearPlanQuestion,
 		clearMistakeLimitRequest: () => setMistakeLimitRequest(null),
 		planBuildPendingMarkerRef,
@@ -866,6 +883,7 @@ function AppMainWorkspaceInner() {
 		setPlanFileRelPath,
 		loadMessages,
 		refreshThreads,
+		applyTeamPayload,
 	});
 
 	const [layoutMode, setLayoutMode] = useState<LayoutMode>(() =>
@@ -1821,10 +1839,13 @@ function AppMainWorkspaceInner() {
 	 * 避免 messages 变化后 useEffect 级联触发额外 render 轮次。
 	 */
 	const onMessagesLoaded = useCallback(
-		(msgs: ChatMessage[], threadId: string) => {
+		(msgs: ChatMessage[], threadId: string, extra?: { teamSession?: unknown }) => {
 			restoreFileChangesState(threadId, msgs, threadId);
+			if (extra?.teamSession && typeof extra.teamSession === 'object') {
+				restoreTeamSession(threadId, extra.teamSession as import('./hooks/useTeamSession').TeamSessionSnapshot);
+			}
 		},
-		[restoreFileChangesState]
+		[restoreFileChangesState, restoreTeamSession]
 	);
 
 	useEffect(() => {
@@ -2547,8 +2568,11 @@ function AppMainWorkspaceInner() {
 	onAbortRef.current = abortActiveStream;
 
 	const onAbort = useCallback(async () => {
+		if (currentId) {
+			abortTeamSession(currentId);
+		}
 		return onAbortRef.current();
-	}, []);
+	}, [currentId, abortTeamSession]);
 
 	const onPlanQuestionSubmit = useCallback(
 		(answer: string) => {
@@ -2762,8 +2786,8 @@ function AppMainWorkspaceInner() {
 			editor: editorSettings,
 			indexing: {
 				symbolIndexEnabled: indexingSettings.symbolIndexEnabled,
-				semanticIndexEnabled: indexingSettings.semanticIndexEnabled,
 			},
+			team: teamSettings,
 			mcp: { servers: mcpServers },
 			ui: {
 				colorMode,
@@ -2794,6 +2818,7 @@ function AppMainWorkspaceInner() {
 		indexingSettings,
 		locale,
 		mcpServers,
+		teamSettings,
 		colorMode,
 		appearanceSettings,
 		layoutMode,
@@ -3596,6 +3621,11 @@ function AppMainWorkspaceInner() {
 
 	const showPlanFileEditorChrome =
 		hasConversation && !!currentId && isPlanMdPath(filePath.trim());
+	const teamSession = useMemo(() => getTeamSession(currentId), [getTeamSession, currentId]);
+	const hasActiveTeamSidebarContent = useMemo(
+		() => composerMode === 'team' && buildTeamWorkflowItems(teamSession).length > 0,
+		[composerMode, teamSession]
+	);
 
 	const editorCenterPlanMarkdown = useMemo(() => {
 		if (agentPlanPreviewMarkdown.trim()) {
@@ -3611,6 +3641,11 @@ function AppMainWorkspaceInner() {
 		composerMode === 'plan' &&
 		hasConversation &&
 		(awaitingReply || !!editorCenterPlanMarkdown.trim());
+	const showEditorTeamWorkflowInCenter =
+		layoutMode === 'editor' &&
+		composerMode === 'team' &&
+		hasConversation &&
+		buildTeamWorkflowItems(teamSession).length > 0;
 	const editorCenterPlanCanBuild =
 		!awaitingReply && !!agentPlanEffectivePlan && !!editorPlanBuildModelId.trim() && modelPickerItems.length > 0;
 	const agentPlanSidebarAutopenRef = useRef(false);
@@ -3640,6 +3675,13 @@ function AppMainWorkspaceInner() {
 			setAgentRightSidebarView('git');
 		}
 	}, [agentRightSidebarView, hasAgentPlanSidebarContent]);
+
+	useEffect(() => {
+		if (agentRightSidebarView === 'team' && !hasActiveTeamSidebarContent) {
+			setAgentRightSidebarOpen(false);
+			setAgentRightSidebarView(hasAgentPlanSidebarContent ? 'plan' : 'git');
+		}
+	}, [agentRightSidebarView, hasActiveTeamSidebarContent, hasAgentPlanSidebarContent]);
 
 	useEffect(() => {
 		if (!workspace && agentFilePreview) {
@@ -4289,11 +4331,14 @@ function AppMainWorkspaceInner() {
 	};
 
 	const displayMessages = useMemo(() => {
+		if (composerMode === 'team' && awaitingReply && streaming === '') {
+			return messages;
+		}
 		if (!awaitingReply && streaming === '') {
 			return messages;
 		}
 		return [...messages, { role: 'assistant' as const, content: streaming }];
-	}, [messages, streaming, awaitingReply]);
+	}, [messages, streaming, awaitingReply, composerMode]);
 
 	const lastAssistantMessageIndex = useMemo(() => {
 		let idx = -1;
@@ -4318,20 +4363,6 @@ function AppMainWorkspaceInner() {
 
 	const displayMessagesRef = useRef(displayMessages);
 	displayMessagesRef.current = displayMessages;
-
-	/** 聊天区出现带 @ 的用户消息时再拉全量路径，供历史气泡解析文件芯片 */
-	useEffect(() => {
-		if (!workspace || !shell) {
-			return;
-		}
-		const needsPaths = displayMessages.some(
-			(m) => m.role === 'user' && /[@\uFF03]/.test(m.content)
-		);
-		if (!needsPaths) {
-			return;
-		}
-		void ensureWorkspaceFileListLoaded();
-	}, [workspace, shell, displayMessages, ensureWorkspaceFileListLoaded]);
 
 	/**
 	 * 从 localStorage 恢复「已保留/已撤销全部」或逐文件忽略，绑定当前线程最后一条助手正文。
@@ -4738,6 +4769,8 @@ function AppMainWorkspaceInner() {
 				return t('composer.placeholder.ask');
 			case 'plan':
 				return t('composer.placeholder.plan');
+			case 'team':
+				return t('composer.placeholder.team');
 			case 'debug':
 				return t('composer.placeholder.debug');
 			case 'agent':
@@ -4753,6 +4786,8 @@ function AppMainWorkspaceInner() {
 				return t('composer.followup.ask');
 			case 'plan':
 				return t('composer.followup.plan');
+			case 'team':
+				return t('composer.followup.team');
 			case 'debug':
 				return t('composer.followup.debug');
 			case 'agent':
@@ -4768,6 +4803,46 @@ function AppMainWorkspaceInner() {
 			void onNewThread();
 		}
 	};
+
+	const onSelectTeamTask = useCallback(
+		(taskId: string) => {
+			if (!currentId) {
+				return;
+			}
+			setSelectedTask(currentId, taskId);
+			setAgentRightSidebarView('team');
+			if (layoutMode === 'agent') {
+				setAgentRightSidebarOpen(true);
+			}
+		},
+		[currentId, setSelectedTask, layoutMode]
+	);
+
+	const onTeamPlanApprove = useCallback(
+		(proposalId: string, feedback?: string) => {
+			if (!currentId || !shell) return;
+			markTeamPlanProposalDecided(currentId, proposalId, true);
+			void shell.invoke('team:planApprovalRespond', {
+				proposalId,
+				approved: true,
+				feedbackText: feedback,
+			});
+		},
+		[currentId, markTeamPlanProposalDecided, shell]
+	);
+
+	const onTeamPlanReject = useCallback(
+		(proposalId: string, feedback?: string) => {
+			if (!currentId || !shell) return;
+			markTeamPlanProposalDecided(currentId, proposalId, false);
+			void shell.invoke('team:planApprovalRespond', {
+				proposalId,
+				approved: false,
+				feedbackText: feedback,
+			});
+		},
+		[currentId, markTeamPlanProposalDecided, shell]
+	);
 
 	useEffect(() => {
 		const onResize = () => {
@@ -5020,18 +5095,15 @@ function AppMainWorkspaceInner() {
 		]
 	);
 
-	/** 内联编辑历史用户消息：按需拉全量路径后再解析 @ 引用 */
+	/** 内联编辑历史用户消息：启发式解析 @ 引用（不拉全量路径列表） */
 	const onStartInlineResend = useCallback(
 		(userMessageIndex: number, content: string) => {
 			setPlanQuestion(null);
 			setPlanQuestionRequestId(null);
 			setResendFromUserIndex(userMessageIndex);
-			void (async () => {
-				const paths = await ensureWorkspaceFileListLoaded();
-				setInlineResendSegments(userMessageToSegments(content, paths));
-			})();
+			setInlineResendSegments(userMessageToSegments(content));
 		},
-		[ensureWorkspaceFileListLoaded, setPlanQuestion, setPlanQuestionRequestId]
+		[setPlanQuestion, setPlanQuestionRequestId]
 	);
 
 	const plusMenuAnchorRefForDropdown =
@@ -5319,8 +5391,6 @@ function AppMainWorkspaceInner() {
 		liveAssistantBlocks,
 		workspace,
 		workspaceBasename,
-		workspaceFileListRef,
-		workspaceFileListVersion,
 		revertedFiles,
 		revertedChangeKeys,
 		resendFromUserIndex,
@@ -5371,6 +5441,10 @@ function AppMainWorkspaceInner() {
 		showScrollToBottomButton,
 		scrollMessagesToBottom,
 		agentPlanSummaryCard,
+		teamSession,
+		onSelectTeamExpert: onSelectTeamTask,
+		onTeamPlanApprove,
+		onTeamPlanReject,
 	});
 
 
@@ -5411,6 +5485,8 @@ function AppMainWorkspaceInner() {
 		setCommitMsg,
 		onCommitOnly,
 		onCommitAndPush,
+		teamSession,
+		onSelectTeamExpert: onSelectTeamTask,
 	});
 
 	const editorMainPanelProps = useEditorMainPanelProps({
@@ -5419,6 +5495,7 @@ function AppMainWorkspaceInner() {
 		activeTabId,
 		onCloseTab,
 		showEditorPlanDocumentInCenter,
+		showEditorTeamWorkflowInCenter,
 		planFileRelPath,
 		planFilePath,
 		editorPlanBuildModelId,
@@ -5460,6 +5537,9 @@ function AppMainWorkspaceInner() {
 		setEditorValue,
 		setOpenTabs,
 		onSelectTab,
+		teamSession,
+		selectedTeamTaskId: teamSession?.selectedTaskId ?? null,
+		onSelectTeamTask,
 	});
 
 	const editorLeftSidebarProps = useMemo(
@@ -5714,6 +5794,8 @@ function AppMainWorkspaceInner() {
 			onPickDefaultModel: (id) => void onPickDefaultModel(id),
 			agentCustomization: mergedAgentCustomization,
 			onChangeAgentCustomization: onChangeMergedAgentCustomization,
+			teamSettings,
+			onChangeTeamSettings: setTeamSettings,
 			editorSettings,
 			onChangeEditorSettings: setEditorSettings,
 			onPersistLanguage: (loc) => void onPersistLanguage(loc),

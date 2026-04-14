@@ -69,6 +69,34 @@ export type AgentMemoryExtractionSettings = {
 	minToolCallsBetween?: number;
 };
 
+export type TeamRoleType = 'team_lead' | 'frontend' | 'backend' | 'qa' | 'reviewer' | 'custom';
+export type TeamPresetId = 'engineering' | 'planning' | 'design';
+
+export type TeamExpertConfig = {
+	id: string;
+	name: string;
+	roleType: TeamRoleType;
+	assignmentKey?: string;
+	systemPrompt: string;
+	preferredModelId?: string;
+	allowedTools?: string[];
+	enabled?: boolean;
+};
+
+export type TeamSettings = {
+	experts?: TeamExpertConfig[];
+	useDefaults?: boolean;
+	/** @deprecated 并行度由 Team Lead 的任务依赖与就绪队列决定，保留仅兼容旧配置 */
+	maxParallelExperts?: number;
+	presetId?: TeamPresetId;
+	/** 切换团队模板时按 preset 缓存角色列表（含模型等），切回时可恢复 */
+	presetExpertSnapshots?: Partial<Record<TeamPresetId, TeamExpertConfig[]>>;
+	/** Lead 出方案后先等用户确认再派发专家；默认 true */
+	requirePlanApproval?: boolean;
+	/** 执行前先让评审专家评估需求/方案；默认 true（需有 reviewer 角色） */
+	enablePreflightReview?: boolean;
+};
+
 /** Bash 执行权限三档（与 Composer 下拉、设置页一致） */
 export type ShellPermissionMode = 'always' | 'rules' | 'ask_every_time';
 

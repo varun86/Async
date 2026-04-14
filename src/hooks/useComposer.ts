@@ -12,7 +12,7 @@ function readComposerMode(): ComposerMode {
 	try {
 		if (typeof window === 'undefined') return 'agent';
 		const v = localStorage.getItem(COMPOSER_MODE_KEY);
-		if (v === 'agent' || v === 'plan' || v === 'debug' || v === 'ask') return v;
+		if (v === 'agent' || v === 'plan' || v === 'team' || v === 'debug' || v === 'ask') return v;
 	} catch {
 		/* ignore */
 	}

@@ -190,7 +190,8 @@ async function executeListMcpResources(call: ToolCall): Promise<ToolResult> {
 	return { toolCallId: call.id, name: call.name, content: text || '[]', isError: false };
 }
 
-async function executeReadMcpResource(call: ToolCall): Promise<ToolResult> {
+async function executeReadMcpResource(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
+	throwIfToolAbortRequested(execCtx.signal, call.name, 'readMcpResource:start');
 	const server = String(call.arguments.server ?? '').trim();
 	const uri = String(call.arguments.uri ?? '').trim();
 	if (!server || !uri) {
@@ -219,7 +220,7 @@ async function executeReadMcpResource(call: ToolCall): Promise<ToolResult> {
 		};
 	}
 	try {
-		const raw = await client.readResource(uri);
+		const raw = await client.readResource(uri, execCtx.signal);
 		const text = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
 		const clipped =
 			text.length > MAX_MCP_RESOURCE_READ_CHARS
@@ -227,6 +228,9 @@ async function executeReadMcpResource(call: ToolCall): Promise<ToolResult> {
 				: text;
 		return { toolCallId: call.id, name: call.name, content: clipped, isError: false };
 	} catch (e) {
+		if (e instanceof Error && e.name === 'AbortError') {
+			throw e;
+		}
 		const msg = e instanceof Error ? e.message : String(e);
 		return {
 			toolCallId: call.id,
@@ -237,9 +241,10 @@ async function executeReadMcpResource(call: ToolCall): Promise<ToolResult> {
 	}
 }
 
-async function executeMcpAgentTool(call: ToolCall): Promise<ToolResult> {
+async function executeMcpAgentTool(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
 	try {
-		const raw = await getMcpManager().callTool(call.name, call.arguments);
+		throwIfToolAbortRequested(execCtx.signal, call.name, 'mcpTool:start');
+		const raw = await getMcpManager().callTool(call.name, call.arguments, execCtx.signal);
 		const content = formatMcpToolResultForAgent(raw);
 		return {
 			toolCallId: call.id,
@@ -248,6 +253,9 @@ async function executeMcpAgentTool(call: ToolCall): Promise<ToolResult> {
 			isError: !!raw.isError,
 		};
 	} catch (e) {
+		if (e instanceof Error && e.name === 'AbortError') {
+			throw e;
+		}
 		const msg = e instanceof Error ? e.message : String(e);
 		return {
 			toolCallId: call.id,
@@ -263,14 +271,23 @@ export type ToolExecutionContext = {
 	workspaceRoot?: string | null;
 	workspaceLspManager?: WorkspaceLspManager | null;
 	threadId?: string | null;
+	signal?: AbortSignal;
 };
+
+function throwIfToolAbortRequested(signal: AbortSignal | undefined, toolName: string, phase: string): void {
+	if (!signal?.aborted) {
+		return;
+	}
+	throw new DOMException('Aborted', 'AbortError');
+}
 
 export async function executeTool(
 	call: ToolCall,
 	hooks: ToolExecutionHooks = {},
 	execCtx: ToolExecutionContext = {}
 ): Promise<ToolResult> {
-		try {
+	try {
+		throwIfToolAbortRequested(execCtx.signal, call.name, 'executeTool:start');
 		switch (call.name) {
 			case 'Read':
 				return executeReadFile(call, execCtx);
@@ -294,18 +311,21 @@ export async function executeTool(
 		case 'ListMcpResourcesTool':
 			return await executeListMcpResources(call);
 		case 'ReadMcpResourceTool':
-			return await executeReadMcpResource(call);
+			return await executeReadMcpResource(call, execCtx);
 		case 'TodoWrite':
 			return executeTodoWrite(call, execCtx);
 		case 'ask_plan_question':
 			return await executeAskPlanQuestionTool(call);
 		default:
 			if (getMcpManager().isMcpTool(call.name)) {
-				return await executeMcpAgentTool(call);
+				return await executeMcpAgentTool(call, execCtx);
 			}
 			return { toolCallId: call.id, name: call.name, content: `Unknown tool: ${call.name}`, isError: true };
 		}
 	} catch (e) {
+		if (e instanceof Error && e.name === 'AbortError') {
+			throw e;
+		}
 		return { toolCallId: call.id, name: call.name, content: `Error: ${e instanceof Error ? e.message : String(e)}`, isError: true };
 	}
 }
@@ -751,7 +771,8 @@ function expandUserGlobPatterns(globField: string): string[] {
 
 async function runRipgrep(
 	rgArgs: string[],
-	cwd: string
+	cwd: string,
+	signal?: AbortSignal
 ): Promise<{ stdout: string; stderr: string; code: number }> {
 	try {
 		const r = await execFileAsync('rg', rgArgs, {
@@ -760,9 +781,13 @@ async function runRipgrep(
 			maxBuffer: 20 * 1024 * 1024,
 			timeout: 30_000,
 			encoding: 'utf8',
+			signal,
 		});
 		return { stdout: (r.stdout as string) || '', stderr: (r.stderr as string) || '', code: 0 };
 	} catch (e: unknown) {
+		if (e instanceof Error && e.name === 'AbortError') {
+			throw e;
+		}
 		const err = e as { stdout?: string; stderr?: string; code?: number };
 		const code = typeof err.code === 'number' ? err.code : -1;
 		return {
@@ -788,6 +813,7 @@ function sortGrepFilePathsByMtime(relPaths: string[], baseDir: string): string[]
 }
 
 async function executeGrepTool(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
+	throwIfToolAbortRequested(execCtx.signal, call.name, 'grep:start');
 	const root = requireWorkspace(execCtx);
 	const pattern = String(call.arguments.pattern ?? '');
 	if (!pattern) return { toolCallId: call.id, name: call.name, content: 'Error: pattern is required', isError: true };
@@ -887,7 +913,7 @@ async function executeGrepTool(call: ToolCall, execCtx: ToolExecutionContext): P
 	}
 	rgArgs.push('.');
 
-	const { stdout, stderr, code } = await runRipgrep(rgArgs, searchDirAbs);
+	const { stdout, stderr, code } = await runRipgrep(rgArgs, searchDirAbs, execCtx.signal);
 	if (code === 2 || (code !== 0 && code !== 1)) {
 		return { toolCallId: call.id, name: call.name, content: `Search failed: ${stderr || `exit ${code}`}`, isError: true };
 	}
@@ -964,6 +990,7 @@ const UNIX_REDIRECT: Record<string, string> = {
 };
 
 async function executeCommand(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
+	throwIfToolAbortRequested(execCtx.signal, call.name, 'command:start');
 	const root = requireWorkspace(execCtx);
 	const command = String(call.arguments.command ?? '').trim();
 	if (!command) return { toolCallId: call.id, name: call.name, content: 'Error: command is required', isError: true };
@@ -996,6 +1023,7 @@ async function executeCommand(call: ToolCall, execCtx: ToolExecutionContext): Pr
 			maxBuffer: 5 * 1024 * 1024,
 			timeout: 120_000,
 			encoding: 'utf8',
+			signal: execCtx.signal,
 		});
 		let output = '';
 		if (stdout) output += stdout;
@@ -1006,6 +1034,9 @@ async function executeCommand(call: ToolCall, execCtx: ToolExecutionContext): Pr
 		}
 		return { toolCallId: call.id, name: call.name, content: output, isError: false };
 	} catch (e: unknown) {
+		if (e instanceof Error && e.name === 'AbortError') {
+			throw e;
+		}
 		const err = e as { stdout?: string; stderr?: string; message?: string; code?: number };
 		let output = '';
 		if (err.stdout) output += err.stdout;
@@ -1021,6 +1052,7 @@ async function executeCommand(call: ToolCall, execCtx: ToolExecutionContext): Pr
 const SEVERITY_LABEL: Record<number, string> = { 1: 'error', 2: 'warning', 3: 'info', 4: 'hint' };
 
 async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContext = {}): Promise<ToolResult> {
+	throwIfToolAbortRequested(execCtx.signal, call.name, 'delegate:start');
 	const { task, context, subagentType, runInBackground } = coerceAgentDelegateArgs(call);
 	if (!task) {
 		return {
@@ -1091,6 +1123,7 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 		let errorMsg = '';
 		let agentMemoryAppend = '';
 		let agentMemoryDir: string | null = null;
+		throwIfToolAbortRequested(prevCtx.parentSignal, call.name, 'delegate:runSubAgent:start');
 		if (matchedSubagent?.memoryScope && subagentType) {
 			try {
 				const subWs = prevCtx.options.workspaceRoot ?? null;
@@ -1113,8 +1146,12 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 						modelSelection: prevCtx.options.modelSelection ?? '',
 						memoryDirOverride: agentMemoryDir,
 						label: 'Relevant agent memories',
+						signal: prevCtx.parentSignal,
 					})) ?? '';
-			} catch {
+			} catch (e) {
+				if (e instanceof Error && e.name === 'AbortError') {
+					throw e;
+				}
 				relevantAgentMemories = '';
 			}
 		}
@@ -1217,7 +1254,7 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 				},
 				handlers
 			);
-			if (!errorMsg && agentMemoryDir) {
+			if (!errorMsg && agentMemoryDir && !prevCtx.parentSignal.aborted) {
 				await extractMemoriesToDir({
 					memoryDir: agentMemoryDir,
 					workspaceRootForEntrypoint: null,
@@ -1236,6 +1273,9 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 				});
 			}
 		} catch (e) {
+			if (e instanceof Error && e.name === 'AbortError') {
+				throw e;
+			}
 			errorMsg = String(e);
 		}
 		return { output, errorMsg };
@@ -1461,6 +1501,7 @@ function formatLspCallHierarchyCalls(res: unknown, workspaceRoot: string, op: 'i
 }
 
 async function executeLspTool(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
+	throwIfToolAbortRequested(execCtx.signal, call.name, 'lsp:start');
 	const args = call.arguments;
 	const op = String(args.operation ?? '').trim();
 	const filePathRaw = String(args.filePath ?? args.path ?? '').trim();

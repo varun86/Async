@@ -1,18 +1,15 @@
-import { useCallback, useMemo, useRef, type MutableRefObject } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import type { AgentChatPanelProps } from '../AgentChatPanel';
 
 type OpenAgentConversationFile = AgentChatPanelProps['onOpenAgentConversationFile'];
 
 export type UseAgentChatPanelPropsParams = Omit<
 	AgentChatPanelProps,
-	'layout' | 'onOpenWorkspaceFile' | 'onRunCommand' | 'onOpenAgentConversationFile' | 'workspaceFileList'
+	'layout' | 'onOpenWorkspaceFile' | 'onRunCommand' | 'onOpenAgentConversationFile'
 > & {
 	shell: Window['asyncShell'] | undefined;
 	onExplorerOpenFile: (rel: string) => void | Promise<void>;
 	onAgentConversationOpenFile: AgentChatPanelProps['onOpenAgentConversationFile'];
-	workspaceFileListRef: MutableRefObject<string[]>;
-	/** 与 ref 同步递增，使 stable 分组在按需加载全量路径后重建 */
-	workspaceFileListVersion: number;
 };
 
 export function useAgentChatPanelProps({
@@ -144,7 +141,6 @@ export function useAgentChatPanelProps({
 		t: rest.t,
 		workspace: rest.workspace,
 		workspaceBasename: rest.workspaceBasename,
-		workspaceFileList: rest.workspaceFileListRef.current,
 		dismissedFiles: rest.dismissedFiles,
 		revertedFiles: rest.revertedFiles,
 		revertedChangeKeys: rest.revertedChangeKeys,
@@ -156,8 +152,7 @@ export function useAgentChatPanelProps({
 		firstTokenAtRef: rest.firstTokenAtRef,
 		thoughtSecondsByThread: rest.thoughtSecondsByThread,
 	}), [
-		rest.t, rest.workspace, rest.workspaceBasename, rest.workspaceFileListVersion,
-		rest.workspaceFileListRef,
+		rest.t, rest.workspace, rest.workspaceBasename,
 		rest.dismissedFiles,
 		rest.revertedFiles, rest.revertedChangeKeys,
 		rest.messagesViewportRef, rest.messagesTrackRef, rest.onMessagesScroll,
@@ -198,12 +193,28 @@ export function useAgentChatPanelProps({
 				...composerGroup,
 				...actionGroup,
 				...stableGroup,
+				teamSession: rest.teamSession,
+				onSelectTeamExpert: rest.onSelectTeamExpert,
+				onTeamPlanApprove: rest.onTeamPlanApprove,
+				onTeamPlanReject: rest.onTeamPlanReject,
 				onOpenWorkspaceFile,
 				onOpenAgentConversationFile: stableOnOpenAgentConversationFile,
 				onRunCommand,
 			};
 		},
-		[messageGroup, composerGroup, actionGroup, stableGroup, onOpenWorkspaceFile, stableOnOpenAgentConversationFile, onRunCommand]
+		[
+			messageGroup,
+			composerGroup,
+			actionGroup,
+			stableGroup,
+			rest.teamSession,
+			rest.onSelectTeamExpert,
+			rest.onTeamPlanApprove,
+			rest.onTeamPlanReject,
+			onOpenWorkspaceFile,
+			stableOnOpenAgentConversationFile,
+			onRunCommand,
+		]
 	);
 
 	return result;

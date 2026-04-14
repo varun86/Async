@@ -21,8 +21,11 @@ import {
 import type { AgentFilePreviewState } from './hooks/useAgentFileReview';
 import { AgentGitScmChangedCards } from './GitScmVirtualLists';
 import { useAppShellChrome, useAppShellGit, useAppShellSettings } from './app/appShellContexts';
+import type { TeamSessionState } from './hooks/useTeamSession';
+import { TeamRoleWorkflowPanel } from './TeamRoleWorkflowPanel';
+import { buildTeamWorkflowItems } from './teamWorkflowItems';
 
-type AgentRightSidebarView = 'git' | 'plan' | 'file';
+type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team';
 
 export type AgentRightSidebarProps = {
 	open: boolean;
@@ -66,6 +69,8 @@ export type AgentRightSidebarProps = {
 	setCommitMsg: Dispatch<SetStateAction<string>>;
 	onCommitOnly: () => void;
 	onCommitAndPush: () => void;
+	teamSession: TeamSessionState | null;
+	onSelectTeamExpert: (taskId: string) => void;
 };
 
 type CommitAction = 'commit' | 'commit-push' | 'commit-pr';
@@ -237,13 +242,11 @@ function CommitModal({
 function RightSidebarTabs({
 	t,
 	hasPlan,
-	activeView,
 	openView,
 	closeSidebar,
 }: {
 	t: TFunction;
 	hasPlan: boolean;
-	activeView: AgentRightSidebarView;
 	openView: (view: AgentRightSidebarView) => void;
 	closeSidebar: () => void;
 }) {
@@ -254,7 +257,7 @@ function RightSidebarTabs({
 					type="button"
 					aria-label={t('app.tabPlan')}
 					title={t('app.tabPlan')}
-					className={`ref-right-icon-tab ${activeView === 'plan' ? 'is-active' : ''}`}
+					className="ref-right-icon-tab"
 					onClick={() => openView('plan')}
 				>
 					<IconDoc />
@@ -344,7 +347,6 @@ const AgentRightSidebarPlanPanel = memo(function AgentRightSidebarPlanPanel({
 							<RightSidebarTabs
 								t={t}
 								hasPlan={hasAgentPlanSidebarContent}
-								activeView="plan"
 								openView={openView}
 								closeSidebar={closeSidebar}
 							/>
@@ -481,7 +483,6 @@ const AgentRightSidebarPlanPanel = memo(function AgentRightSidebarPlanPanel({
 						<RightSidebarTabs
 							t={t}
 							hasPlan={hasAgentPlanSidebarContent}
-							activeView="plan"
 							openView={openView}
 							closeSidebar={closeSidebar}
 						/>
@@ -529,7 +530,6 @@ const AgentRightSidebarFilePanel = memo(function AgentRightSidebarFilePanel({
 				<RightSidebarTabs
 					t={t}
 					hasPlan={hasAgentPlanSidebarContent}
-					activeView="file"
 					openView={openView}
 					closeSidebar={closeSidebar}
 				/>
@@ -579,7 +579,6 @@ const AgentRightSidebarFilePanel = memo(function AgentRightSidebarFilePanel({
 				<RightSidebarTabs
 					t={t}
 					hasPlan={hasAgentPlanSidebarContent}
-					activeView="file"
 					openView={openView}
 					closeSidebar={closeSidebar}
 				/>
@@ -672,7 +671,6 @@ const AgentRightSidebarGitPanel = memo(function AgentRightSidebarGitPanel({
 					<RightSidebarTabs
 						t={t}
 						hasPlan={hasAgentPlanSidebarContent}
-						activeView="git"
 						openView={openView}
 						closeSidebar={closeSidebar}
 					/>
@@ -795,6 +793,8 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 	setCommitMsg,
 	onCommitOnly,
 	onCommitAndPush,
+	teamSession,
+	onSelectTeamExpert,
 }: AgentRightSidebarProps) {
 	const { t } = useAppShellChrome();
 
@@ -841,6 +841,40 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 				onRevertAgentFilePreviewHunk={onRevertAgentFilePreviewHunk}
 				agentFilePreviewBusyPatch={agentFilePreviewBusyPatch}
 			/>
+		);
+	} else if (view === 'team') {
+		const workflowItems = buildTeamWorkflowItems(teamSession);
+		content = (
+			<div className="ref-team-sidebar-shell">
+				<button
+					type="button"
+					className="ref-team-sidebar-close"
+					onClick={closeSidebar}
+					aria-label={t('common.close')}
+					title={t('common.close')}
+				>
+					<IconCloseSmall />
+				</button>
+				{workflowItems.length ? (
+					<div className="ref-team-right-sidebar-layout">
+						<TeamRoleWorkflowPanel
+							t={t}
+							session={teamSession}
+							selectedTaskId={teamSession?.selectedTaskId ?? null}
+							onSelectTask={onSelectTeamExpert}
+							layout="agent-sidebar"
+							isVisible={open && view === 'team'}
+						/>
+					</div>
+				) : (
+					<div className="ref-team-sidebar-empty">
+						<div className="ref-agent-plan-status-main">
+							<div className="ref-agent-plan-status-title">{t('composer.mode.team')}</div>
+							<p className="ref-agent-plan-status-body">{t('settings.team.empty')}</p>
+						</div>
+					</div>
+				)}
+			</div>
 		);
 	} else {
 		content = (

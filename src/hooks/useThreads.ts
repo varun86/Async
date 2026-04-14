@@ -188,7 +188,7 @@ export function useThreads(shell: Shell | undefined) {
 	const loadMessagesInflightByIdRef = useRef<Map<string, Promise<void>>>(new Map());
 
 	const loadMessages = useCallback(
-		async (id: string, onLoad?: (msgs: ChatMessage[], threadId: string) => void) => {
+		async (id: string, onLoad?: (msgs: ChatMessage[], threadId: string, extra?: { teamSession?: unknown }) => void) => {
 			if (!shell) return;
 			let inflight = loadMessagesInflightByIdRef.current.get(id);
 			if (!inflight) {
@@ -199,6 +199,7 @@ export function useThreads(shell: Shell | undefined) {
 						const r = (await shell.invoke('threads:messages', id)) as {
 							ok: boolean;
 							messages?: ChatMessage[];
+							teamSession?: unknown;
 						};
 						const tIpcEnd = dev && typeof performance !== 'undefined' ? performance.now() : 0;
 						if (dev && tIpcStart) {
@@ -242,7 +243,7 @@ export function useThreads(shell: Shell | undefined) {
 									}
 									return { messages: incoming, threadId: id };
 								});
-								onLoad?.(incoming, id);
+								onLoad?.(incoming, id, { teamSession: r.teamSession });
 							});
 							await awaitTransitionPaintCommitted();
 							if (dev && typeof performance !== 'undefined') {

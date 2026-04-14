@@ -132,13 +132,13 @@ export class McpManager extends EventEmitter<McpManagerEvents> {
 	}
 
 	/** 调用工具（按规范化名匹配 server，按远端真实 tool name 调用） */
-	async callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+	async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpToolResult> {
 		const resolved = resolveMcpToolInvocation(Array.from(this.clients.values()), name);
 		if (!resolved.ok) {
 			throw new Error(resolved.message);
 		}
 		const client = resolved.client as McpClient;
-		return client.callTool(resolved.toolName, args);
+		return client.callTool(resolved.toolName, args, signal);
 	}
 
 	/** 判断工具名是否为 MCP 工具 */

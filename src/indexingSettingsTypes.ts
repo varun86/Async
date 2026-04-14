@@ -2,19 +2,16 @@
 
 export type IndexingSettingsWire = {
 	symbolIndexEnabled?: boolean;
-	semanticIndexEnabled?: boolean;
 	/** 已废弃：曾用于关闭 TS LSP；现由主进程按需为 Agent 启动，读入时忽略 */
 	tsLspEnabled?: boolean;
 };
 
 export type IndexingSettingsState = {
 	symbolIndexEnabled: boolean;
-	semanticIndexEnabled: boolean;
 };
 
 export function normalizeIndexingSettings(raw?: IndexingSettingsWire | null): IndexingSettingsState {
 	return {
 		symbolIndexEnabled: raw?.symbolIndexEnabled !== false,
-		semanticIndexEnabled: raw?.semanticIndexEnabled !== false,
 	};
 }

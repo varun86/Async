@@ -6,7 +6,8 @@ import { getIndexedWorkspaceFilesIfFresh, listWorkspaceRelativeFiles } from '../
 import type { ComposerMode } from './composerMode.js';
 
 /**
- * 与渲染端 `wirePlainToSegments` 一致：按最长路径匹配内联 `@相对路径`。
+ * 主进程侧：用索引中的相对路径对文本做 `@` 前缀匹配（验证存在性）。
+ * 渲染端 `wirePlainToSegments` 为启发式展示，不依赖全量列表。
  */
 export function collectAtWorkspacePathsInText(text: string, knownRelativePaths: string[]): string[] {
 	const paths = [...new Set(knownRelativePaths.map((p) => p.replace(/\\/g, '/')))].sort(
@@ -98,7 +99,7 @@ function expandUserTextWithWorkspaceFiles(text: string, workspaceRoot: string | 
 }
 
 export function modeExpandsWorkspaceFileContext(mode: ComposerMode): boolean {
-	return mode === 'agent' || mode === 'plan' || mode === 'debug' || mode === 'ask';
+	return mode === 'agent' || mode === 'plan' || mode === 'team' || mode === 'debug' || mode === 'ask';
 }
 
 const ASSET_EXTS = new Set([

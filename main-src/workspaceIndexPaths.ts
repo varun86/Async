@@ -11,7 +11,3 @@ export function getWorkspaceFilesIndexPath(root: string): string {
 export function getWorkspaceSymbolsIndexPath(root: string): string {
 	return path.join(getWorkspaceIndexDir(root), 'symbols.json');
 }
-
-export function getWorkspaceSemanticIndexPath(root: string): string {
-	return path.join(getWorkspaceIndexDir(root), 'semantic.json');
-}

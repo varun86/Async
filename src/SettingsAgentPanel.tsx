@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useI18n } from './i18n';
+import type { AppLocale } from './i18n';
 import type {
 	AgentCommand,
 	AgentCustomization,
@@ -10,6 +11,7 @@ import type {
 	AgentSkill,
 	AgentSubagent,
 } from './agentSettingsTypes';
+import { createAutoReplyLanguageRule } from './autoReplyLanguageRule';
 import { defaultAgentCustomization, isWorkspaceDiskImportedSkill } from './agentSettingsTypes';
 import { VoidSelect } from './VoidSelect';
 import { buildSlashCommandListRows } from './composerSlashCommands';
@@ -101,6 +103,7 @@ type AgentLibraryFilter = 'all' | 'user' | 'project';
 type Props = {
 	value: AgentCustomization;
 	onChange: (next: AgentCustomization) => void;
+	locale: AppLocale;
 	workspaceOpen: boolean;
 	/** 新建 Skill：打开对话并由模型引导编写 SKILL.md */
 	onOpenSkillCreator?: () => void | Promise<void>;
@@ -120,6 +123,7 @@ function itemMatchesLibraryFilter(item: { origin?: AgentItemOrigin }, filter: Ag
 export function SettingsAgentPanel({
 	value,
 	onChange,
+	locale,
 	workspaceOpen,
 	onOpenSkillCreator,
 	onOpenWorkspaceSkillFile,
@@ -131,6 +135,7 @@ export function SettingsAgentPanel({
 	const skills = v.skills ?? [];
 	const subagents = v.subagents ?? [];
 	const commands = v.commands ?? [];
+	const autoReplyLanguageRule = useMemo(() => createAutoReplyLanguageRule(locale, locale), [locale]);
 
 	const [libraryFilter, setLibraryFilter] = useState<AgentLibraryFilter>('all');
 	const reorderEnabled = libraryFilter === 'all';
@@ -322,6 +327,45 @@ export function SettingsAgentPanel({
 					</button>
 				</div>
 				<p className="ref-settings-agent-section-desc">{t('agentSettings.rulesDesc')}</p>
+				{libraryFilter !== 'project' ? (
+					<ul className="ref-settings-agent-list">
+						<li className="ref-settings-agent-item">
+							<div className="ref-settings-agent-item-head">
+								<span className="ref-settings-agent-drag-handle" aria-hidden>
+									<IconDrag />
+								</span>
+								<button
+									type="button"
+									className="ref-settings-toggle ref-settings-toggle--sm is-on"
+									role="switch"
+									aria-checked="true"
+									disabled
+									title={t('agentSettings.autoLanguageRuleBadge')}
+								>
+									<span className="ref-settings-toggle-knob" />
+								</button>
+								<span className="ref-settings-agent-origin-badge ref-settings-agent-origin-badge--user">
+									{t('agentSettings.autoLanguageRuleBadge')}
+								</span>
+								<input
+									className="ref-settings-agent-item-name"
+									value={autoReplyLanguageRule.name}
+									readOnly
+									aria-label={t('agentSettings.ruleNameAria')}
+								/>
+							</div>
+							<div className="ref-settings-field ref-settings-field--compact">
+								<p className="ref-settings-proxy-hint ref-settings-field-footnote">
+									{t('agentSettings.autoLanguageRuleHint')}
+								</p>
+							</div>
+							<label className="ref-settings-field ref-settings-field--compact">
+								<span>{t('agentSettings.ruleBody')}</span>
+								<textarea rows={3} value={autoReplyLanguageRule.content} readOnly />
+							</label>
+						</li>
+					</ul>
+				) : null}
 				<ul className="ref-settings-agent-list">
 					{rules.filter((r) => itemMatchesLibraryFilter(r, libraryFilter)).map((r) => {
 						const collapsed = collapsedRules.has(r.id);

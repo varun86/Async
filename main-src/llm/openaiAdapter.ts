@@ -63,9 +63,22 @@ export async function streamOpenAICompatible(
 	let buffer = '';
 	let inThinking = false;
 	let usage: TurnTokenUsage | undefined;
+	let activeStream: { controller?: { abort?: () => void } } | null = null;
 
 	const timeoutAc = new AbortController();
-	options.signal.addEventListener('abort', () => timeoutAc.abort(), { once: true });
+	const onAbort = () => {
+		timeoutAc.abort();
+		try {
+			activeStream?.controller?.abort?.();
+		} catch {
+			/* ignore */
+		}
+	};
+	if (options.signal.aborted) {
+		timeoutAc.abort();
+	} else {
+		options.signal.addEventListener('abort', onAbort, { once: true });
+	}
 
 	const timeoutConfig = resolveStreamTimeouts(settings);
 	const timeoutMgr = createStreamTimeoutManager(timeoutConfig, () => timeoutAc.abort());
@@ -88,6 +101,7 @@ export async function streamOpenAICompatible(
 				),
 			{ signal: options.signal }
 		);
+		activeStream = stream as { controller?: { abort?: () => void } };
 
 		for await (const chunk of stream) {
 			if (timeoutAc.signal.aborted) {
@@ -193,5 +207,8 @@ export async function streamOpenAICompatible(
 			return;
 		}
 		handlers.onError(formatLlmSdkError(e));
+	} finally {
+		activeStream = null;
+		options.signal.removeEventListener('abort', onAbort);
 	}
 }

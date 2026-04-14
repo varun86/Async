@@ -3,7 +3,7 @@ import { AgentChatPanel, type AgentChatPanelProps } from '../AgentChatPanel';
 import { IconDoc, IconGitSCM } from '../icons';
 import type { TFunction } from '../i18n';
 
-export type AgentRightSidebarView = 'git' | 'plan' | 'file';
+export type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team';
 
 export type AgentAgentCenterColumnProps = {
 	t: TFunction;

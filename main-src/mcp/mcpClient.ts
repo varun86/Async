@@ -111,8 +111,11 @@ export class McpClient extends EventEmitter<McpClientEvents> implements McpClien
 		};
 	}
 
-	private reqOpts(): RequestOptions {
-		return { timeout: this.config.timeout ?? DEFAULT_TIMEOUT };
+	private reqOpts(signal?: AbortSignal): RequestOptions {
+		return {
+			timeout: this.config.timeout ?? DEFAULT_TIMEOUT,
+			...(signal ? { signal } : {}),
+		};
 	}
 
 	private async closeSdk(): Promise<void> {
@@ -240,19 +243,19 @@ export class McpClient extends EventEmitter<McpClientEvents> implements McpClien
 		this.removeAllListeners();
 	}
 
-	async callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+	async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpToolResult> {
 		if (this.status !== 'connected' || !this.sdkClient) {
 			throw new Error(`Server ${this.config.name} is not connected`);
 		}
-		const result = await this.sdkClient.callTool({ name, arguments: args }, undefined, this.reqOpts());
+		const result = await this.sdkClient.callTool({ name, arguments: args }, undefined, this.reqOpts(signal));
 		return result as McpToolResult;
 	}
 
-	async readResource(uri: string): Promise<unknown> {
+	async readResource(uri: string, signal?: AbortSignal): Promise<unknown> {
 		if (this.status !== 'connected' || !this.sdkClient) {
 			throw new Error(`Server ${this.config.name} is not connected`);
 		}
-		return this.sdkClient.readResource({ uri }, this.reqOpts());
+		return this.sdkClient.readResource({ uri }, this.reqOpts(signal));
 	}
 
 	async getPrompt(name: string, args?: Record<string, string>): Promise<unknown> {

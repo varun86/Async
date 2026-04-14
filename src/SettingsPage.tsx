@@ -7,7 +7,7 @@ import {
 	type UserModelEntry,
 } from './modelCatalog';
 import { LLM_PROVIDER_OPTIONS, type ModelRequestParadigm } from './llmProvider';
-import type { AgentCustomization } from './agentSettingsTypes';
+import type { AgentCustomization, TeamSettings } from './agentSettingsTypes';
 import type { AppAppearanceSettings } from './appearanceSettings';
 import type { EditorSettings } from './EditorSettingsPanel';
 import type { AppColorMode, ThemeTransitionOrigin } from './colorMode';
@@ -26,12 +26,14 @@ const SettingsMcpPanel = lazy(() => import('./SettingsMcpPanel').then((m) => ({ 
 const SettingsAppearancePanel = lazy(() => import('./SettingsAppearancePanel').then((m) => ({ default: m.SettingsAppearancePanel })));
 const SettingsUsageStatsPanel = lazy(() => import('./SettingsUsageStatsPanel').then((m) => ({ default: m.SettingsUsageStatsPanel })));
 const SettingsAutoUpdatePanel = lazy(() => import('./SettingsAutoUpdatePanel').then((m) => ({ default: m.SettingsAutoUpdatePanel })));
+const SettingsTeamPanel = lazy(() => import('./SettingsTeamPanel').then((m) => ({ default: m.SettingsTeamPanel })));
 
 export type SettingsNavId =
 	| 'general'
 	| 'appearance'
 	| 'editor'
 	| 'plan'
+	| 'team'
 	| 'agents'
 	| 'tab'
 	| 'models'
@@ -62,6 +64,7 @@ function navItemsForT(t: (key: string) => string): NavItem[] {
 		{ id: 'autoUpdate', label: t('settings.nav.autoUpdate') },
 		{ id: 'tools', label: t('settings.nav.tools') },
 		{ id: 'plan', label: t('settings.nav.plan') },
+		{ id: 'team', label: t('settings.nav.team') },
 		{ id: 'tab', label: t('settings.nav.tab'), soon: true },
 		{ id: 'cloud', label: t('settings.nav.cloud'), soon: true },
 		{ id: 'plugins', label: t('settings.nav.plugins'), soon: true },
@@ -297,6 +300,8 @@ function navIcon(id: SettingsNavId) {
 			return <IconTabs />;
 		case 'plan':
 			return <IconBarChart />;
+		case 'team':
+			return <IconBotNav />;
 		default:
 			return <IconGear />;
 	}
@@ -332,6 +337,8 @@ type Props = {
 	onPickDefaultModel: (id: string) => void;
 	agentCustomization: AgentCustomization;
 	onChangeAgentCustomization: (v: AgentCustomization) => void;
+	teamSettings: TeamSettings;
+	onChangeTeamSettings: (v: TeamSettings) => void;
 	/** 打开 Skill Creator：新建对话并发送引导消息 */
 	onOpenSkillCreator?: () => void | Promise<void>;
 	/** 在编辑器中打开工作区内的 SKILL.md（设置里磁盘技能卡片） */
@@ -376,6 +383,8 @@ export function SettingsPage({
 	onPickDefaultModel,
 	agentCustomization,
 	onChangeAgentCustomization,
+	teamSettings,
+	onChangeTeamSettings,
 	onOpenSkillCreator,
 	onOpenWorkspaceSkillFile,
 	onDeleteWorkspaceSkillDisk,
@@ -629,6 +638,7 @@ export function SettingsPage({
 								{nav === 'indexing' ? t('settings.title.indexing') : null}
 								{nav === 'autoUpdate' ? t('settings.title.autoUpdate') : null}
 								{nav === 'plan' ? t('settings.title.usage') : null}
+								{nav === 'team' ? t('settings.title.team') : null}
 								{nav !== 'general' &&
 								nav !== 'appearance' &&
 								nav !== 'agents' &&
@@ -638,7 +648,8 @@ export function SettingsPage({
 								nav !== 'tools' &&
 								nav !== 'indexing' &&
 								nav !== 'autoUpdate' &&
-								nav !== 'plan'
+								nav !== 'plan' &&
+								nav !== 'team'
 									? t('settings.title.comingSoon')
 									: null}
 							</h1>
@@ -915,6 +926,7 @@ export function SettingsPage({
 								<SettingsAgentPanel
 									value={agentCustomization}
 									onChange={onChangeAgentCustomization}
+									locale={locale}
 									workspaceOpen={workspaceOpen}
 									onOpenSkillCreator={onOpenSkillCreator}
 									onOpenWorkspaceSkillFile={onOpenWorkspaceSkillFile}
@@ -956,6 +968,16 @@ export function SettingsPage({
 								<SettingsUsageStatsPanel shell={shell} modelEntries={modelEntries} modelProviders={modelProviders} />
 							</Suspense>
 						) : null}
+						{nav === 'team' ? (
+							<Suspense fallback={<SettingsPanelSkeleton />}>
+								<SettingsTeamPanel
+									value={teamSettings}
+									onChange={onChangeTeamSettings}
+									modelEntries={modelEntries}
+									modelProviders={modelProviders}
+								/>
+							</Suspense>
+						) : null}
 
 						{nav === 'tools' ? (
 							<Suspense fallback={<SettingsPanelSkeleton />}>
@@ -979,7 +1001,8 @@ export function SettingsPage({
 						nav !== 'tools' &&
 						nav !== 'indexing' &&
 						nav !== 'autoUpdate' &&
-						nav !== 'plan' ? (
+						nav !== 'plan' &&
+						nav !== 'team' ? (
 							<div className="ref-settings-panel">
 								<p className="ref-settings-lead">{t('settings.comingCategory')}</p>
 							</div>

@@ -8,8 +8,10 @@ import {
 	type SetStateAction,
 } from 'react';
 import type { ComposerMode } from '../ComposerPlusMenu';
+import type { TeamSettings } from '../agentSettingsTypes';
 import { userMessageToSegments, type ComposerSegment } from '../composerSegments';
 import { applyLiveAgentChatPayload, type LiveAgentBlocksState } from '../liveAgentBlocks';
+import type { UserModelEntry } from '../modelCatalog';
 import {
 	type AgentPendingPatch,
 	type ChatPlanExecutePayload,
@@ -17,6 +19,7 @@ import {
 	type TurnTokenUsage,
 } from '../ipcTypes';
 import { parseQuestions, parsePlanDocument, toPlanMd, generatePlanFilename, type ParsedPlan, type PlanQuestion } from '../planParser';
+import { findTeamRolesMissingModels } from '../teamModelValidation';
 import { flattenAssistantTextPartsForSearch } from '../agentStructuredMessage';
 import { clearPersistedAgentFileChanges } from '../agentFileChangesPersist';
 import { translateChatError, type TFunction } from '../i18n';
@@ -40,7 +43,8 @@ type StreamingSendRuntime = {
 	refreshThreads: () => Promise<unknown> | void;
 	defaultModel: string;
 	composerMode: ComposerMode;
-	ensureWorkspaceFileListLoaded: () => Promise<string[]>;
+	teamSettings?: TeamSettings;
+	modelEntries: UserModelEntry[];
 	resendFromUserIndex: number | null;
 	setResendFromUserIndex: Dispatch<SetStateAction<number | null>>;
 	setInlineResendSegments: Dispatch<SetStateAction<ComposerSegment[]>>;
@@ -57,6 +61,7 @@ type StreamingSendRuntime = {
 	flashComposerAttachErr: (msg: string) => void;
 	t: TFunction;
 	clearAgentReviewForThread: (threadId: string) => void;
+	startTeamSession: (threadId: string, userRequest: string) => void;
 	clearPlanQuestion: () => void;
 	clearMistakeLimitRequest: () => void;
 	planBuildPendingMarkerRef: MutableRefObject<{ threadId: string; pathKey: string } | null>;
@@ -106,6 +111,7 @@ type StreamingSubscriptionRuntime = {
 	setPlanFileRelPath: Dispatch<SetStateAction<string | null>>;
 	loadMessages: (threadId: string) => Promise<unknown>;
 	refreshThreads: () => Promise<unknown> | void;
+	applyTeamPayload: (payload: ChatStreamPayload) => void;
 };
 
 function escapeSubAgentXmlText(s: string): string {
@@ -269,6 +275,17 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 			rt.flashComposerAttachErr(rt.t('app.noModelSelected'));
 			return;
 		}
+		const effectiveMode = opts?.modeOverride ?? rt.composerMode;
+		if (effectiveMode === 'team') {
+			const missingRoles = findTeamRolesMissingModels(rt.teamSettings, rt.modelEntries);
+			if (missingRoles.length > 0) {
+				const roles = missingRoles
+					.map((role) => role.name.trim() || rt.t(`settings.team.role.${role.roleType}`))
+					.join('、');
+				rt.flashComposerAttachErr(rt.t('team.sendMissingRoleModels', { roles }));
+				return;
+			}
+		}
 
 		rt.clearPlanQuestion();
 
@@ -279,6 +296,9 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 		}
 
 		rt.clearAgentReviewForThread(targetThreadId);
+		if (effectiveMode === 'team') {
+			rt.startTeamSession(targetThreadId, text);
+		}
 		if (rt.resendFromUserIndex !== null) {
 			const resendIdx = rt.resendFromUserIndex;
 			rt.setInlineResendSegments([]);
@@ -308,19 +328,20 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 					threadId: targetThreadId,
 					visibleIndex: resendIdx,
 					text,
-					mode: opts?.modeOverride ?? rt.composerMode,
+					mode: effectiveMode,
 					modelId: effectiveModelId,
 					streamNonce,
-				})) as { ok?: boolean };
+				})) as { ok?: boolean; error?: string };
 
 				if (!result?.ok) {
 					rt.clearInFlightIpcRouting(targetThreadId);
 					rt.resetStreamingSession({ clearThread: false });
 					rt.streamStartedAtRef.current = null;
 					rt.setResendFromUserIndex(resendIdx);
-					const paths = await rt.ensureWorkspaceFileListLoaded();
-					rt.setInlineResendSegments(userMessageToSegments(text, paths));
-					rt.flashComposerAttachErr(rt.t('app.chatSendFailed'));
+					rt.setInlineResendSegments(userMessageToSegments(text));
+					if (result?.error !== 'aborted') {
+						rt.flashComposerAttachErr(rt.t('app.chatSendFailed'));
+					}
 					void rt.loadMessages(targetThreadId);
 				} else {
 					void rt.refreshThreads();
@@ -330,9 +351,11 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 				rt.resetStreamingSession({ clearThread: false });
 				rt.streamStartedAtRef.current = null;
 				rt.setResendFromUserIndex(resendIdx);
-				const paths = await rt.ensureWorkspaceFileListLoaded();
-				rt.setInlineResendSegments(userMessageToSegments(text, paths));
-				rt.flashComposerAttachErr(e instanceof Error ? e.message : String(e));
+				rt.setInlineResendSegments(userMessageToSegments(text));
+				const msg = e instanceof Error ? e.message : String(e);
+				if (!/abort/i.test(msg)) {
+					rt.flashComposerAttachErr(msg);
+				}
 				void rt.loadMessages(targetThreadId);
 			}
 			return;
@@ -342,7 +365,7 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 			const sendResult = (await rt.shell.invoke('chat:send', {
 				threadId: targetThreadId,
 				text,
-				mode: opts?.modeOverride ?? rt.composerMode,
+				mode: effectiveMode,
 				modelId: effectiveModelId,
 				planExecute: opts?.planExecute,
 				streamNonce,
@@ -354,6 +377,10 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 				rt.streamStartedAtRef.current = null;
 				rt.clearStreamingToolPreviewNow();
 				rt.resetLiveAgentBlocks();
+				if (sendResult?.error === 'aborted') {
+					void rt.loadMessages(targetThreadId);
+					return;
+				}
 				if (sendResult?.error === 'no-model') {
 					rt.flashComposerAttachErr(rt.t('app.noModelSelected'));
 				} else {
@@ -375,7 +402,10 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 			rt.streamStartedAtRef.current = null;
 			rt.clearStreamingToolPreviewNow();
 			rt.resetLiveAgentBlocks();
-			rt.flashComposerAttachErr(e instanceof Error ? e.message : String(e));
+			const msg = e instanceof Error ? e.message : String(e);
+			if (!/abort/i.test(msg)) {
+				rt.flashComposerAttachErr(msg);
+			}
 			void rt.loadMessages(targetThreadId);
 		}
 	}, []);
@@ -430,6 +460,10 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 			}
 
 			const visible = payload.threadId === rt.currentIdRef.current;
+			if ('teamRoleScope' in payload && payload.teamRoleScope) {
+				rt.applyTeamPayload(payload);
+				return;
+			}
 			const draftRow = () => {
 				const m = rt.offThreadStreamDraftsRef.current;
 				if (!m[payload.threadId]) {
@@ -455,7 +489,7 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 			};
 
 			const trackLiveBlocks =
-				(rt.composerMode === 'agent' || rt.composerMode === 'plan') && visible;
+				(rt.composerMode === 'agent' || rt.composerMode === 'plan' || rt.composerMode === 'team') && visible;
 			const applyToolInputDeltaUi = (p: { name: string; partialJson: string; index: number }) => {
 				if (!visible) {
 					return;
@@ -637,6 +671,19 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 					? rt.t('agent.subAgentBg.done', { preview })
 					: rt.t('agent.subAgentBg.fail', { preview });
 				rt.showTransientToast(payload.success, text, 6500);
+			} else if (
+				payload.type === 'team_phase' ||
+				payload.type === 'team_task_created' ||
+				payload.type === 'team_expert_started' ||
+				payload.type === 'team_expert_progress' ||
+				payload.type === 'team_expert_done' ||
+				payload.type === 'team_review' ||
+				payload.type === 'team_plan_summary' ||
+				payload.type === 'team_preflight_review' ||
+				payload.type === 'team_plan_proposed' ||
+				payload.type === 'team_plan_decision'
+			) {
+				rt.applyTeamPayload(payload);
 			} else if (payload.type === 'done') {
 				rt.recordThoughtSeconds(payload.threadId, 0.5);
 				if (payload.usage) {

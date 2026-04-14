@@ -22,6 +22,28 @@ export type FileState = {
 	touchCount: number;
 };
 
+export type TeamSessionSnapshotTask = {
+	id: string;
+	expertId: string;
+	expertAssignmentKey?: string;
+	expertName: string;
+	roleType: string;
+	description: string;
+	status: string;
+	dependencies: string[];
+	acceptanceCriteria: string[];
+	result?: string;
+};
+
+export type TeamSessionSnapshot = {
+	phase: 'planning' | 'executing' | 'reviewing' | 'delivering';
+	tasks: TeamSessionSnapshotTask[];
+	planSummary: string;
+	leaderMessage: string;
+	reviewSummary: string;
+	reviewVerdict: 'approved' | 'revision_needed' | null;
+};
+
 export type ThreadRecord = {
 	id: string;
 	title: string;
@@ -39,6 +61,7 @@ export type ThreadRecord = {
 	memoryExtractionToolBaseline?: number;
 	plan?: ThreadPlan;
 	executedPlanFileKeys?: string[];
+	teamSession?: TeamSessionSnapshot;
 };
 
 export type PlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'skipped';
@@ -324,6 +347,21 @@ export function updateLastAssistant(threadId: string, fullContent: string): void
 	}
 	thread.updatedAt = Date.now();
 	save();
+}
+
+export function saveTeamSession(threadId: string, snapshot: TeamSessionSnapshot): void {
+	const thread = getThread(threadId);
+	if (!thread) {
+		return;
+	}
+	thread.teamSession = snapshot;
+	thread.updatedAt = Date.now();
+	save();
+}
+
+export function getTeamSession(threadId: string): TeamSessionSnapshot | null {
+	const thread = getThread(threadId);
+	return thread?.teamSession ?? null;
 }
 
 export function appendToLastAssistant(threadId: string, suffix: string): void {

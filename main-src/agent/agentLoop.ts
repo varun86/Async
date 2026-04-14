@@ -103,6 +103,14 @@ function yieldForToolInputStreamUi(toolName: string): Promise<void> {
 	});
 }
 
+const DEFAULT_MAX_STREAMING_TOOL_ARG_CHARS = 2_000_000;
+
+function maxStreamingToolArgChars(): number {
+	const raw = process.env.ASYNC_MAX_STREAMING_TOOL_ARG_CHARS?.trim();
+	const n = raw ? Number.parseInt(raw, 10) : NaN;
+	return Number.isFinite(n) && n > 10_000 ? n : DEFAULT_MAX_STREAMING_TOOL_ARG_CHARS;
+}
+
 /**
  * 与 Claude Code `query.ts` 的 `maxTurns?: number` 一致：未配置时为 `null`（不限制）。
  */
@@ -285,7 +293,7 @@ function appendMcpToolsSystemHint(
 	composerMode: ComposerMode,
 	settings: ShellSettings
 ): string {
-	if (composerMode !== 'agent') {
+	if (composerMode !== 'agent' && composerMode !== 'team') {
 		return systemContent;
 	}
 	const mcpTools = filterMcpToolsByDenyPrefixes(
@@ -310,7 +318,7 @@ function appendMcpToolsSystemHint(
  * 为工具会话准备 MCP 连接：Agent 需要动态工具；Plan 仅需连接以便 ListMcpResourcesTool / ReadMcpResourceTool。
  */
 async function prepareMcpConnectionsForSession(composerMode: ComposerMode): Promise<void> {
-	if (composerMode !== 'agent' && composerMode !== 'plan') {
+	if (composerMode !== 'agent' && composerMode !== 'plan' && composerMode !== 'team') {
 		return;
 	}
 	const mcpT0 = Date.now();
@@ -499,6 +507,7 @@ async function runOpenAILoop(
 	type TurnTc = { id: string; name: string; arguments: string };
 
 	const toolDeltaBatcher = createToolInputDeltaBatcher((p) => handlers.onToolInputDelta?.(p));
+	const maxToolArgChars = maxStreamingToolArgChars();
 
 	async function handleMistakeLimitBeforeRound(): Promise<boolean> {
 		if (!mistakeLimitEnabled || consecutiveToolFailures < threshold) {
@@ -575,6 +584,7 @@ async function runOpenAILoop(
 			workspaceRoot: options.workspaceRoot ?? null,
 			workspaceLspManager: options.workspaceLspManager ?? null,
 			threadId: options.threadId ?? null,
+			signal: options.signal,
 		});
 		console.log(`[AgentLoop] tool=${tc.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
 		if (mistakeLimitEnabled) {
@@ -643,7 +653,21 @@ async function runOpenAILoop(
 		// 每轮创建独立 AbortController，叠加在外部 signal 之上，用于超时自动中止
 		const roundAc = new AbortController();
 		const roundSignal = roundAc.signal;
-		options.signal.addEventListener('abort', () => roundAc.abort(), { once: true });
+		let activeStream: { controller?: { abort?: () => void } } | null = null;
+		const onOuterAbort = () => {
+			roundAc.abort();
+			try {
+				activeStream?.controller?.abort?.();
+			} catch {
+				/* ignore */
+			}
+		};
+		// 修复竞态：若 signal 已 aborted，直接同步 abort roundAc
+		if (options.signal.aborted) {
+			roundAc.abort();
+		} else {
+			options.signal.addEventListener('abort', onOuterAbort, { once: true });
+		}
 
 		const timeoutMgr = createStreamTimeoutManager(streamTimeoutConfig, () => roundAc.abort());
 		timeoutMgr.start();
@@ -666,6 +690,7 @@ async function runOpenAILoop(
 					),
 				{ signal: options.signal }
 			);
+			activeStream = stream as { controller?: { abort?: () => void } };
 
 			for await (const chunk of stream) {
 				if (roundSignal.aborted) break;
@@ -711,6 +736,12 @@ async function runOpenAILoop(
 						if (tc.function?.name) row.name = tc.function.name;
 						if (tc.function?.arguments) {
 							row.arguments += tc.function.arguments;
+							const effectiveToolName = row.name || inferOpenAIToolNameFromPartialArguments(row.arguments) || '(pending)';
+							if (row.arguments.length > maxToolArgChars) {
+								throw new Error(
+									`Streaming tool arguments exceeded safe limit (${maxToolArgChars} chars) for ${effectiveToolName}.`
+								);
+							}
 						}
 						if (!row.arguments || !handlers.onToolInputDelta) continue;
 						const effectiveName = row.name || inferOpenAIToolNameFromPartialArguments(row.arguments);
@@ -740,6 +771,9 @@ async function runOpenAILoop(
 			synthesizeMissingOpenAIToolResults(conversation, turnToolCalls, errText);
 			handlers.onError(errText);
 			return;
+		} finally {
+			activeStream = null;
+			options.signal.removeEventListener('abort', onOuterAbort);
 		}
 		timeoutMgr.stop();
 		console.log(`[AgentLoop] round ${round} — stream done (${Date.now() - roundStartAt}ms), finishReason=${turnFinishReason}, toolCalls=${turnToolCalls.filter(tc => tc.name).length}, textLen=${turnText.length}`);
@@ -890,6 +924,7 @@ async function runAnthropicLoop(
 	let outputRecoveryCountA = 0;
 
 	type TurnTu = { id: string; name: string; input: string };
+	const maxToolArgChars = maxStreamingToolArgChars();
 
 	async function handleMistakeLimitBeforeRoundAnthropic(): Promise<boolean> {
 		if (!mistakeLimitEnabled || consecutiveToolFailures < threshold) {
@@ -966,6 +1001,7 @@ async function runAnthropicLoop(
 			workspaceRoot: options.workspaceRoot ?? null,
 			workspaceLspManager: options.workspaceLspManager ?? null,
 			threadId: options.threadId ?? null,
+			signal: options.signal,
 		});
 		console.log(`[AgentLoop/A] tool=${tu.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
 		if (mistakeLimitEnabled) {
@@ -1044,7 +1080,20 @@ async function runAnthropicLoop(
 
 		const roundAcA = new AbortController();
 		const roundSignalA = roundAcA.signal;
-		options.signal.addEventListener('abort', () => roundAcA.abort(), { once: true });
+		let activeStreamA: { abort?: () => void } | null = null;
+		const onOuterAbortA = () => {
+			roundAcA.abort();
+			try {
+				activeStreamA?.abort?.();
+			} catch {
+				/* ignore */
+			}
+		};
+		if (options.signal.aborted) {
+			roundAcA.abort();
+		} else {
+			options.signal.addEventListener('abort', onOuterAbortA, { once: true });
+		}
 
 		const timeoutMgrA = createStreamTimeoutManager(streamTimeoutConfigA, () => roundAcA.abort());
 		timeoutMgrA.start();
@@ -1074,6 +1123,7 @@ async function runAnthropicLoop(
 				},
 				{ signal: options.signal }
 			);
+			activeStreamA = stream as { abort?: () => void };
 
 			for await (const ev of stream) {
 				if (roundSignalA.aborted) break;
@@ -1122,6 +1172,11 @@ async function runAnthropicLoop(
 						if (currentBlockIdx >= 0 && turnToolUses[currentBlockIdx]) {
 							turnToolUses[currentBlockIdx]!.input += ev.delta.partial_json;
 							const tu = turnToolUses[currentBlockIdx]!;
+							if (tu.input.length > maxToolArgChars) {
+								throw new Error(
+									`Streaming tool arguments exceeded safe limit (${maxToolArgChars} chars) for ${tu.name || '(pending)'}.`
+								);
+							}
 							if (tu.name && shouldEmitToolInputDelta(tu.name)) {
 								toolDeltaBatcherA.queue({
 									name: tu.name,
@@ -1155,6 +1210,9 @@ async function runAnthropicLoop(
 			synthesizeMissingAnthropicToolResults(conversation, turnToolUses, errTextA);
 			handlers.onError(errTextA);
 			return;
+		} finally {
+			activeStreamA = null;
+			options.signal.removeEventListener('abort', onOuterAbortA);
 		}
 		timeoutMgrA.stop();
 		console.log(`[AgentLoop/A] round ${round} — stream done (${Date.now() - roundStartAtA}ms), stopReason=${turnStopReason}, toolUses=${turnToolUses.length}, textLen=${turnText.length}`);

@@ -158,6 +158,8 @@ function ActivityRow({
 	const readLink = item.agentReadLink;
 	const hasResultCard = Boolean(item.resultLines && item.resultLines.length > 0 && item.resultKind);
 	const isPlainCommandResult = item.resultKind === 'plain' && hasResultCard;
+	const resultLines = item.resultLines ?? [];
+	const resultKind = item.resultKind ?? 'plain';
 	const [expandedResult, setExpandedResult] = useState(false);
 	const onToggleResult = useCallback(() => {
 		setExpandedResult((v) => !v);
@@ -240,8 +242,8 @@ function ActivityRow({
 					) : null}
 					{hasResultCard && (!isPlainCommandResult || expandedResult) ? (
 						<AgentResultCard
-							lines={item.resultLines}
-							kind={item.resultKind}
+							lines={resultLines}
+							kind={resultKind}
 							readSourcePath={item.agentReadLink?.path}
 							onOpenFile={onOpenFile}
 							animateLineReveal={animateLineReveal}

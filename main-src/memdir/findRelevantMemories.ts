@@ -24,6 +24,12 @@ export type RuntimeMemoryModel = {
 	thinkingLevel?: ThinkingLevel;
 };
 
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) {
+		throw new DOMException('Aborted', 'AbortError');
+	}
+}
+
 const MAX_SELECTED = 5;
 const MAX_MEMORY_LINES = 120;
 const MAX_MEMORY_BYTES = 12_000;
@@ -127,13 +133,15 @@ function parseSelectedFilenames(raw: string, validFilenames: Set<string>): strin
 async function selectRelevantMemoriesWithRuntimeModel(
 	runtime: RuntimeMemoryModel,
 	query: string,
-	memories: MemoryHeader[]
+	memories: MemoryHeader[],
+	signal?: AbortSignal
 ): Promise<string[]> {
 	const manifest = formatMemoryManifest(memories);
 	const userPrompt = `Query: ${query}\n\nAvailable memories:\n${manifest}`;
 	const validFilenames = new Set(memories.map((m) => m.filename));
 
 	try {
+		throwIfAborted(signal);
 		if (runtime.paradigm === 'openai-compatible') {
 			const proxyRaw = runtime.requestProxyUrl?.trim() ?? '';
 			const httpAgent = proxyRaw ? new HttpsProxyAgent(proxyRaw) : undefined;
@@ -151,7 +159,7 @@ async function selectRelevantMemoriesWithRuntimeModel(
 					{ role: 'system', content: SELECT_MEMORIES_SYSTEM_PROMPT },
 					{ role: 'user', content: userPrompt },
 				],
-			});
+			}, { signal });
 			return parseSelectedFilenames(extractTextContent(resp.choices[0]?.message?.content ?? ''), validFilenames);
 		}
 
@@ -166,7 +174,7 @@ async function selectRelevantMemoriesWithRuntimeModel(
 				max_tokens: 256,
 				temperature: 0,
 				messages: [{ role: 'user', content: userPrompt }],
-			});
+			}, { signal });
 			const text = resp.content
 				.map((block) => (block.type === 'text' ? block.text : ''))
 				.join('\n');
@@ -179,7 +187,7 @@ async function selectRelevantMemoriesWithRuntimeModel(
 			systemInstruction: SELECT_MEMORIES_SYSTEM_PROMPT,
 			generationConfig: { temperature: 0, maxOutputTokens: 256 },
 		});
-		const resp = await model.generateContent(userPrompt);
+		const resp = await model.generateContent(userPrompt, { signal });
 		return parseSelectedFilenames(resp.response.text(), validFilenames);
 	} catch {
 		return [];
@@ -213,13 +221,15 @@ export async function findRelevantMemoriesInDir(
 	query: string,
 	memoryDir: string,
 	runtime: RuntimeMemoryModel | null,
-	alreadySurfaced: ReadonlySet<string> = new Set()
+	alreadySurfaced: ReadonlySet<string> = new Set(),
+	signal?: AbortSignal
 ): Promise<RelevantMemory[]> {
+	throwIfAborted(signal);
 	const memories = (await scanMemoryFiles(memoryDir)).filter((m) => !alreadySurfaced.has(m.filePath));
 	if (memories.length === 0) {
 		return [];
 	}
-	const selectedByModel = runtime ? await selectRelevantMemoriesWithRuntimeModel(runtime, query, memories) : [];
+	const selectedByModel = runtime ? await selectRelevantMemoriesWithRuntimeModel(runtime, query, memories, signal) : [];
 	const selectedFilenames =
 		selectedByModel.length > 0
 			? selectedByModel
@@ -291,7 +301,9 @@ export async function buildRelevantMemoryContextBlock(params: {
 	alreadySurfaced?: ReadonlySet<string>;
 	memoryDirOverride?: string;
 	label?: string;
+	signal?: AbortSignal;
 }): Promise<string> {
+	throwIfAborted(params.signal);
 	const resolved = resolveModelRequest(params.settings, params.modelSelection);
 	const runtime = resolved.ok
 		? {
@@ -306,10 +318,17 @@ export async function buildRelevantMemoryContextBlock(params: {
 	if (!memoryDir) {
 		return '';
 	}
-	const selected = await findRelevantMemoriesInDir(params.query, memoryDir, runtime, params.alreadySurfaced ?? new Set());
+	const selected = await findRelevantMemoriesInDir(
+		params.query,
+		memoryDir,
+		runtime,
+		params.alreadySurfaced ?? new Set(),
+		params.signal
+	);
 	if (selected.length === 0) {
 		return '';
 	}
+	throwIfAborted(params.signal);
 	const read = await Promise.all(selected.map((m) => readMemoryForContext(m.path, m.mtimeMs)));
 	const memories = read.filter((m): m is NonNullable<typeof m> => m !== null);
 	if (memories.length === 0) {

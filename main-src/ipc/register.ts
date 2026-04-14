@@ -18,7 +18,6 @@ import {
 import {
 	ensureWorkspaceFileIndex,
 	searchWorkspaceFiles,
-	prewarmWorkspaceFileIndex,
 	setWorkspaceFileIndexReadyBroadcaster,
 	acquireWorkspaceFileIndexRef,
 	releaseWorkspaceFileIndexRef,
@@ -74,6 +73,7 @@ import {
 	getExecutedPlanFileKeys,
 	markPlanFileExecuted,
 	incrementThreadAgentToolCallCount,
+	saveTeamSession,
 	type ChatMessage,
 } from '../threadStore.js';
 import { compressForSend } from '../agent/conversationCompress.js';
@@ -100,6 +100,7 @@ import {
 import { countLineChangesBetweenTexts, countDiffLinesInChunk } from '../diffLineCount.js';
 import { recordAgentLineDelta, recordTokenUsageEvent, getUsageStatsForDataDir } from '../workspaceUsageStats.js';
 import { runAgentLoop } from '../agent/agentLoop.js';
+import { runTeamSession } from '../agent/teamOrchestrator.js';
 import {
 	createMistakeLimitReachedHandler,
 	resolveMistakeLimitRecovery,
@@ -111,6 +112,10 @@ import {
 	abortPlanQuestionWaitersForThread,
 	resolvePlanQuestionTool,
 } from '../agent/planQuestionTool.js';
+import {
+	abortTeamPlanApprovalForThread,
+	resolveTeamPlanApproval,
+} from '../agent/teamPlanApprovalTool.js';
 import { loadClaudeWorkspaceSkills, prepareUserTurnForChat } from '../llm/agentMessagePrep.js';
 import {
 	buildSkillCreatorSystemAppend,
@@ -149,12 +154,6 @@ import {
 	getWorkspaceSymbolIndexStatsForRoot,
 	scheduleWorkspaceSymbolFullRebuild,
 } from '../workspaceSymbolIndex.js';
-import {
-	buildSemanticContextBlock,
-	clearWorkspaceSemanticIndex,
-	getWorkspaceSemanticIndexStatsForRoot,
-	scheduleWorkspaceSemanticRebuild,
-} from '../workspaceSemanticIndex.js';
 import { getGitContextBlock, clearGitContextCacheForRoot } from '../gitContext.js';
 import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.js';
 import { ensureMemoryDirExists, loadMemoryPrompt } from '../memdir/memdir.js';
@@ -217,18 +216,29 @@ function appendSystemBlock(base: string | undefined, block: string): string {
 	return base && base.trim() ? `${base}\n\n---\n${trimmed}` : trimmed;
 }
 
-/** 主进程控制台：排查从 IPC 发送到 AgentLoop 首条日志之间的阶段性耗时 */
 function logChatPipelineLatency(
-	channel: string,
-	threadId: string,
-	epochMs: number,
-	phase: string,
-	extra?: Record<string, string | number | boolean | null | undefined>
+	_channel: string,
+	_threadId: string,
+	_epochMs: number,
+	_phase: string,
+	_extra?: Record<string, string | number | boolean | null | undefined>
 ): void {
-	const delta = Date.now() - epochMs;
-	const tail =
-		extra && Object.keys(extra).length > 0 ? ` ${JSON.stringify(extra)}` : '';
-	console.log(`[${channel}] thread=${threadId} +${delta}ms ${phase}${tail}`);
+	/* intentionally quiet — was used for main-process chat pipeline latency tracing */
+}
+
+function startThreadMemDiag(
+	_threadId: string,
+	_signal: AbortSignal,
+	_phaseRef: { current: string }
+): () => void {
+	return () => {};
+}
+
+function throwIfAbortRequested(signal: AbortSignal | undefined, _threadId: string, _phase: string): void {
+	if (!signal?.aborted) {
+		return;
+	}
+	throw new DOMException('Aborted', 'AbortError');
 }
 
 async function appendMemoryAndRetrievalContext(params: {
@@ -240,8 +250,12 @@ async function appendMemoryAndRetrievalContext(params: {
 	userText: string;
 	atPaths: string[];
 	modelSelection: string;
+	signal?: AbortSignal;
 }): Promise<string> {
 	let next = params.base ?? '';
+	if (params.signal?.aborted) {
+		return next;
+	}
 
 	if ((params.mode === 'agent' || params.mode === 'debug') && params.root) {
 		const memoryPrompt = await loadMemoryPrompt(params.root);
@@ -253,22 +267,13 @@ async function appendMemoryAndRetrievalContext(params: {
 	if (modeExpandsWorkspaceFileContext(params.mode) && params.userText.trim().length > 8) {
 		const recentPaths = Object.keys(getThread(params.threadId)?.fileStates ?? {});
 		const enrichedQuery = buildEnrichedQuery(params.userText, getThread(params.threadId)?.messages ?? []);
-		const sem = await buildSemanticContextBlock(
-			enrichedQuery,
-			6,
-			recentPaths,
-			params.atPaths.length > 0 ? params.atPaths : undefined,
-			params.root
-		);
-		if (sem) {
-			next = appendSystemBlock(next, sem);
-		}
 		if (params.root) {
 			const relevantMemories = await buildRelevantMemoryContextBlock({
 				query: enrichedQuery,
 				settings: params.settings,
 				modelSelection: params.modelSelection,
 				workspaceRoot: params.root,
+				signal: params.signal,
 			});
 			if (relevantMemories) {
 				next = appendSystemBlock(next, relevantMemories);
@@ -287,12 +292,12 @@ async function appendMemoryAndRetrievalContext(params: {
 }
 
 const abortByThread = new Map<string, AbortController>();
+const preflightAbortByThread = new Map<string, AbortController>();
 const agentRevertSnapshotsByThread = new Map<string, Map<string, string | null>>();
 /** 工具执行前用户确认：approvalId → resolve(allowed) */
 const toolApprovalWaiters = new Map<string, (approved: boolean) => void>();
 /** 连续失败后恢复：recoveryId → resolve(decision) */
 const mistakeLimitWaiters = new Map<string, (d: MistakeLimitDecision) => void>();
-
 function activeUsageStatsDir(): string | null {
 	return resolveUsageStatsDataDir(getSettings());
 }
@@ -391,11 +396,14 @@ function runChatStream(
 
 	void (async () => {
 		const streamLatencyT0 = Date.now();
+		const phaseRef = { current: 'bootstrap' };
+		const stopMemDiag = startThreadMemDiag(threadId, ac.signal, phaseRef);
 		try {
 			logChatPipelineLatency('chat:stream', threadId, streamLatencyT0, 'runChatStream async entered', {
 				mode: String(mode),
 				msgCount: messages.length,
 			});
+			phaseRef.current = 'resolveModelRequest';
 			const settings = getSettings();
 			const workspaceRoot = getWorkspaceRootForWebContents(win.webContents);
 			const workspaceLspManager = getWorkspaceLspManagerForWebContents(win.webContents);
@@ -440,7 +448,42 @@ function runChatStream(
 					: {}),
 				thinkingLevel,
 			};
+			if (mode === 'team') {
+				phaseRef.current = 'runTeamSession';
+				await runTeamSession({
+					settings,
+					threadId,
+					messages,
+					modelSelection,
+					resolvedModel: resolved,
+					agentSystemAppend,
+					signal: ac.signal,
+					thinkingLevel,
+					workspaceRoot,
+					workspaceLspManager,
+					emit: (evt) => send(evt),
+					onDone: (full, usage, teamSnapshot) => {
+						updateLastAssistant(threadId, full);
+						accumulateTokenUsage(threadId, usage?.inputTokens, usage?.outputTokens);
+						recordTurnTokenUsageStats(modelSelection, mode, usage);
+						if (teamSnapshot) {
+							saveTeamSession(threadId, teamSnapshot);
+						}
+						queueExtractMemories({
+							threadId,
+							workspaceRoot,
+							settings,
+							modelSelection,
+						});
+						send({ threadId, type: 'done', text: full, usage });
+					},
+					onError: (message) => emitStreamError(message),
+				});
+				return;
+			}
+
 			const compressStarted = Date.now();
+			phaseRef.current = 'compressForSend';
 			const compressResult = await compressForSend(
 				messages,
 				settings,
@@ -517,6 +560,7 @@ function runChatStream(
 				const expandMode = mode as import('../llm/composerMode.js').ComposerMode;
 				const doAtExpand = modeExpandsWorkspaceFileContext(expandMode);
 				const expandStarted = Date.now();
+				phaseRef.current = 'expandWorkspaceRefs';
 				const messagesForAgent = doAtExpand
 					? cloneMessagesWithExpandedLastUser(sendMessages, workspaceRoot)
 					: sendMessages;
@@ -525,6 +569,7 @@ function runChatStream(
 					didExpand: doAtExpand,
 				});
 				logChatPipelineLatency('chat:stream', threadId, streamLatencyT0, 'before runAgentLoop');
+				phaseRef.current = 'runAgentLoop';
 				await runAgentLoop(
 					settings,
 					messagesForAgent,
@@ -609,8 +654,9 @@ function runChatStream(
 			return;
 		}
 
-		logChatPipelineLatency('chat:stream', threadId, streamLatencyT0, 'before streamChatUnified (non-agent path)');
-		await streamChatUnified(
+			logChatPipelineLatency('chat:stream', threadId, streamLatencyT0, 'before streamChatUnified (non-agent path)');
+			phaseRef.current = 'streamChatUnified';
+			await streamChatUnified(
 			settings,
 			sendMessages,
 			{
@@ -662,10 +708,12 @@ function runChatStream(
 			}
 		);
 		} catch (e) {
+			phaseRef.current = 'error';
 			try {
 				emitStreamError(formatLlmSdkError(e));
 			} catch { /* window may be destroyed */ }
 		} finally {
+			stopMemDiag();
 			abortByThread.delete(threadId);
 		}
 	})();
@@ -1062,14 +1110,6 @@ export function registerIpc(): void {
 		}
 	);
 
-	ipcMain.handle('workspace:prewarmFileIndex', (event) => {
-		const root = senderWorkspaceRoot(event);
-		if (root) {
-			prewarmWorkspaceFileIndex(root);
-		}
-		return { ok: true as const };
-	});
-
 	const COMPOSER_ATTACH_MAX_BYTES = 8 * 1024 * 1024;
 
 	ipcMain.handle(
@@ -1125,9 +1165,6 @@ export function registerIpc(): void {
 		const idx = next.indexing;
 		if (idx?.symbolIndexEnabled === false) {
 			clearWorkspaceSymbolIndex();
-		}
-		if (idx?.semanticIndexEnabled === false) {
-			clearWorkspaceSemanticIndex();
 		}
 		const syncedColorMode = next.ui?.colorMode;
 		if (syncedColorMode === 'light' || syncedColorMode === 'dark' || syncedColorMode === 'system') {
@@ -1242,7 +1279,6 @@ export function registerIpc(): void {
 		const r = senderWorkspaceRoot(event);
 		const w = getWorkspaceFileIndexLiveStatsForRoot(r);
 		const sym = getWorkspaceSymbolIndexStatsForRoot(r);
-		const sem = getWorkspaceSemanticIndexStatsForRoot(r);
 		return {
 			ok: true as const,
 			workspaceRoot: w.root,
@@ -1250,8 +1286,6 @@ export function registerIpc(): void {
 			fileCount: w.fileCount,
 			symbolUniqueNames: sym.uniqueNames,
 			symbolIndexedFiles: sym.filesWithSymbols,
-			semanticChunks: sem.chunks,
-			semanticBusy: sem.busy,
 		};
 	});
 
@@ -1288,18 +1322,15 @@ export function registerIpc(): void {
 		};
 	});
 
-	ipcMain.handle('workspace:indexing:rebuild', async (event, payload: { target?: 'symbols' | 'semantic' | 'all' }) => {
+	ipcMain.handle('workspace:indexing:rebuild', async (event, payload: { target?: 'symbols' }) => {
 		const root = senderWorkspaceRoot(event);
 		if (!root) {
 			return { ok: false as const, error: 'no-workspace' as const };
 		}
 		const files = await ensureWorkspaceFileIndex(root);
-		const t = payload?.target ?? 'all';
-		if (t === 'symbols' || t === 'all') {
+		const t = payload?.target ?? 'symbols';
+		if (t === 'symbols') {
 			scheduleWorkspaceSymbolFullRebuild(root, files);
-		}
-		if (t === 'semantic' || t === 'all') {
-			scheduleWorkspaceSemanticRebuild(root, files);
 		}
 		return { ok: true as const };
 	});
@@ -1452,6 +1483,7 @@ export function registerIpc(): void {
 		return {
 			ok: true as const,
 			messages: t.messages.filter((m) => m.role !== 'system'),
+			teamSession: t.teamSession ?? null,
 		};
 	});
 
@@ -1592,23 +1624,28 @@ export function registerIpc(): void {
 				mode: String(mode),
 				streamNonce: typeof streamNonce === 'number' ? streamNonce : -1,
 			});
+			const preflightAc = new AbortController();
+			preflightAbortByThread.get(threadId)?.abort();
+			preflightAbortByThread.set(threadId, preflightAc);
 
-			const settings = getSettings();
-			const root = senderWorkspaceRoot(event);
-			let workspaceFiles: string[] = [];
-			if (root) {
-				try {
-					workspaceFiles = await ensureWorkspaceFileIndex(root);
-				} catch {
-					workspaceFiles = [];
+			try {
+				const settings = getSettings();
+				const root = senderWorkspaceRoot(event);
+				let workspaceFiles: string[] = [];
+				if (root) {
+					try {
+						workspaceFiles = await ensureWorkspaceFileIndex(root, preflightAc.signal);
+					} catch {
+						workspaceFiles = [];
+					}
 				}
-			}
-			logChatPipelineLatency('chat:ipc', threadId, chatSendLatencyT0, 'after ensureWorkspaceFileIndex', {
-				fileCount: workspaceFiles.length,
-				hasRoot: Boolean(root),
-			});
-			const projectAgent = readWorkspaceAgentProjectSlice(root);
-			const agentForTurn = mergeAgentWithProjectSlice(settings.agent, projectAgent);
+				throwIfAbortRequested(preflightAc.signal, threadId, 'ensureWorkspaceFileIndex');
+				logChatPipelineLatency('chat:ipc', threadId, chatSendLatencyT0, 'after ensureWorkspaceFileIndex', {
+					fileCount: workspaceFiles.length,
+					hasRoot: Boolean(root),
+				});
+				const projectAgent = readWorkspaceAgentProjectSlice(root);
+				const agentForTurn = mergeAgentWithProjectSlice(settings.agent, projectAgent);
 
 			const skillIn = payload.skillCreator;
 			if (skillIn && typeof skillIn.userNote === 'string') {
@@ -1618,7 +1655,13 @@ export function registerIpc(): void {
 				if (scope === 'project' && !root) {
 					return { ok: false as const, error: 'no-workspace' as const };
 				}
-				const prepared = prepareUserTurnForChat(skillIn.userNote, agentForTurn, root, workspaceFiles);
+				const prepared = prepareUserTurnForChat(
+					skillIn.userNote,
+					agentForTurn,
+					root,
+					workspaceFiles,
+					settings.language === 'en' ? 'en' : 'zh-CN'
+				);
 				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
 				const visible = formatSkillCreatorUserBubble(scope, lang, skillIn.userNote);
 				const skillBlock = buildSkillCreatorSystemAppend(scope, lang, root);
@@ -1644,7 +1687,9 @@ export function registerIpc(): void {
 					userText: prepared.userText,
 					atPaths: prepared.atPaths,
 					modelSelection,
+					signal: preflightAc.signal,
 				});
+				throwIfAbortRequested(preflightAc.signal, threadId, 'skillCreator preflight');
 				finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute, root);
 				const t = appendMessage(threadId, { role: 'user', content: visible });
 				runChatStream(win, threadId, t.messages, creatorAgentMode, modelSelection, finalSystemAppend, streamNonce);
@@ -1656,7 +1701,13 @@ export function registerIpc(): void {
 				const creatorAgentMode: ComposerMode = 'agent';
 				const ruleScope: AgentRuleScope =
 					ruleIn.ruleScope === 'glob' || ruleIn.ruleScope === 'manual' ? ruleIn.ruleScope : 'always';
-				const prepared = prepareUserTurnForChat(ruleIn.userNote, agentForTurn, root, workspaceFiles);
+				const prepared = prepareUserTurnForChat(
+					ruleIn.userNote,
+					agentForTurn,
+					root,
+					workspaceFiles,
+					settings.language === 'en' ? 'en' : 'zh-CN'
+				);
 				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
 				const visible = formatRuleCreatorUserBubble(ruleScope, ruleIn.globPattern, lang, ruleIn.userNote);
 				const ruleBlock = buildRuleCreatorSystemAppend(ruleScope, ruleIn.globPattern, lang, root);
@@ -1682,7 +1733,9 @@ export function registerIpc(): void {
 					userText: prepared.userText,
 					atPaths: prepared.atPaths,
 					modelSelection,
+					signal: preflightAc.signal,
 				});
+				throwIfAbortRequested(preflightAc.signal, threadId, 'ruleCreator preflight');
 				finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute, root);
 				finalSystemAppend = appendRuleCreatorPathLock(
 					finalSystemAppend,
@@ -1701,7 +1754,13 @@ export function registerIpc(): void {
 				if (scope === 'project' && !root) {
 					return { ok: false as const, error: 'no-workspace' as const };
 				}
-				const prepared = prepareUserTurnForChat(subIn.userNote, agentForTurn, root, workspaceFiles);
+				const prepared = prepareUserTurnForChat(
+					subIn.userNote,
+					agentForTurn,
+					root,
+					workspaceFiles,
+					settings.language === 'en' ? 'en' : 'zh-CN'
+				);
 				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
 				const visible = formatSubagentCreatorUserBubble(scope, lang, subIn.userNote);
 				const subBlock = buildSubagentCreatorSystemAppend(scope, lang, root);
@@ -1727,7 +1786,9 @@ export function registerIpc(): void {
 					userText: prepared.userText,
 					atPaths: prepared.atPaths,
 					modelSelection,
+					signal: preflightAc.signal,
 				});
+				throwIfAbortRequested(preflightAc.signal, threadId, 'subagentCreator preflight');
 				finalSystemAppend = appendPlanExecuteToSystem(finalSystemAppend, payload.planExecute, root);
 				const t = appendMessage(threadId, { role: 'user', content: visible });
 				runChatStream(win, threadId, t.messages, creatorAgentMode, modelSelection, finalSystemAppend, streamNonce);
@@ -1738,15 +1799,16 @@ export function registerIpc(): void {
 				text,
 				agentForTurn,
 				root,
-				workspaceFiles
+				workspaceFiles,
+				settings.language === 'en' ? 'en' : 'zh-CN'
 			);
 
 			let finalSystemAppend = agentSystemAppend;
-			if (root && (mode === 'plan' || mode === 'ask')) {
+			if (root && (mode === 'plan' || mode === 'ask' || mode === 'team')) {
 				const wsLine = `## Current workspace\nWorkspace root (absolute): \`${root.replace(/\\/g, '/')}\`\nUser file references with \`@\` are relative to this root.`;
 				finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${wsLine}` : wsLine;
 			}
-			if ((mode === 'plan' || mode === 'ask') && workspaceFiles.length > 0) {
+			if ((mode === 'plan' || mode === 'ask' || mode === 'team') && workspaceFiles.length > 0) {
 				const tree = buildWorkspaceTreeSummary(workspaceFiles);
 				if (tree) {
 					finalSystemAppend = appendSystemBlock(finalSystemAppend, tree);
@@ -1761,7 +1823,9 @@ export function registerIpc(): void {
 				userText,
 				atPaths,
 				modelSelection,
+				signal: preflightAc.signal,
 			});
+			throwIfAbortRequested(preflightAc.signal, threadId, 'chat preflight');
 			logChatPipelineLatency('chat:ipc', threadId, chatSendLatencyT0, 'after appendMemoryAndRetrievalContext', {
 				mode: String(mode),
 			});
@@ -1775,6 +1839,16 @@ export function registerIpc(): void {
 			runChatStream(win, threadId, t.messages, mode, modelSelection, finalSystemAppend, streamNonce);
 
 			return { ok: true as const };
+			} catch (e) {
+				if (preflightAc.signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
+					return { ok: false as const, error: 'aborted' as const };
+				}
+				throw e;
+			} finally {
+				if (preflightAbortByThread.get(threadId) === preflightAc) {
+					preflightAbortByThread.delete(threadId);
+				}
+			}
 		}
 	);
 
@@ -1810,27 +1884,37 @@ export function registerIpc(): void {
 			if (!Number.isInteger(visibleIndex) || visibleIndex < 0) {
 				return { ok: false as const, error: 'bad-index' as const };
 			}
+			const preflightAc = new AbortController();
+			preflightAbortByThread.get(threadId)?.abort();
+			preflightAbortByThread.set(threadId, preflightAc);
 			try {
 				const settings = getSettings();
 				const root = senderWorkspaceRoot(event);
 				let workspaceFiles: string[] = [];
 				if (root) {
 					try {
-						workspaceFiles = await ensureWorkspaceFileIndex(root);
+						workspaceFiles = await ensureWorkspaceFileIndex(root, preflightAc.signal);
 					} catch {
 						workspaceFiles = [];
 					}
 				}
+				throwIfAbortRequested(preflightAc.signal, threadId, 'editResend ensureWorkspaceFileIndex');
 				const projectAgent = readWorkspaceAgentProjectSlice(root);
 				const agentForTurn = mergeAgentWithProjectSlice(settings.agent, projectAgent);
-				const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(trimmed, agentForTurn, root, workspaceFiles);
+				const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(
+					trimmed,
+					agentForTurn,
+					root,
+					workspaceFiles,
+					settings.language === 'en' ? 'en' : 'zh-CN'
+				);
 
 				let finalSystemAppend = agentSystemAppend;
-				if (root && (mode === 'plan' || mode === 'ask')) {
+				if (root && (mode === 'plan' || mode === 'ask' || mode === 'team')) {
 					const wsLine = `## Current workspace\nWorkspace root (absolute): \`${root.replace(/\\/g, '/')}\`\nUser file references with \`@\` are relative to this root.`;
 					finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${wsLine}` : wsLine;
 				}
-				if ((mode === 'plan' || mode === 'ask') && workspaceFiles.length > 0) {
+				if ((mode === 'plan' || mode === 'ask' || mode === 'team') && workspaceFiles.length > 0) {
 					const tree = buildWorkspaceTreeSummary(workspaceFiles);
 					if (tree) {
 						finalSystemAppend = appendSystemBlock(finalSystemAppend, tree);
@@ -1845,19 +1929,31 @@ export function registerIpc(): void {
 					userText,
 					atPaths,
 					modelSelection,
+					signal: preflightAc.signal,
 				});
+				throwIfAbortRequested(preflightAc.signal, threadId, 'editResend preflight');
 
 				const t = replaceFromUserVisibleIndex(threadId, visibleIndex, userText);
 				runChatStream(win, threadId, t.messages, mode, modelSelection, finalSystemAppend, streamNonce);
 				return { ok: true as const };
-			} catch {
+			} catch (e) {
+				if (preflightAc.signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
+					return { ok: false as const, error: 'aborted' as const };
+				}
 				return { ok: false as const, error: 'replace-failed' as const };
+			} finally {
+				if (preflightAbortByThread.get(threadId) === preflightAc) {
+					preflightAbortByThread.delete(threadId);
+				}
 			}
 		}
 	);
 
 	ipcMain.handle('chat:abort', (_e, threadId: string) => {
 		abortPlanQuestionWaitersForThread(threadId);
+		abortTeamPlanApprovalForThread(threadId);
+		preflightAbortByThread.get(threadId)?.abort();
+		preflightAbortByThread.delete(threadId);
 		abortByThread.get(threadId)?.abort();
 		abortByThread.delete(threadId);
 		const prefix = `ta-${threadId}-`;
@@ -1898,6 +1994,22 @@ export function registerIpc(): void {
 			const ok = resolvePlanQuestionTool(requestId, {
 				skipped: Boolean(payload?.skipped),
 				answerText: typeof payload?.answerText === 'string' ? payload.answerText : undefined,
+			});
+			return ok ? ({ ok: true as const } as const) : ({ ok: false as const, error: 'unknown request' as const });
+		}
+	);
+
+	ipcMain.handle(
+		'team:planApprovalRespond',
+		(
+			_e,
+			payload: { proposalId?: string; approved?: boolean; feedbackText?: string }
+		) => {
+			const proposalId = String(payload?.proposalId ?? '');
+			if (!proposalId) return { ok: false as const, error: 'missing proposalId' as const };
+			const ok = resolveTeamPlanApproval(proposalId, {
+				approved: Boolean(payload?.approved),
+				feedbackText: typeof payload?.feedbackText === 'string' ? payload.feedbackText : undefined,
 			});
 			return ok ? ({ ok: true as const } as const) : ({ ok: false as const, error: 'unknown request' as const });
 		}
@@ -2416,30 +2528,17 @@ ipcMain.handle(
 		if (!root) {
 			return { ok: false as const, error: 'No workspace' };
 		}
-		const dev = process.env.NODE_ENV !== 'production';
-		const tStart = dev ? performance.now() : 0;
 		return await gitService.withGitWorkspaceRootAsync(root, async () => {
 			try {
-				const tProbe0 = dev ? performance.now() : 0;
 				const probe = await gitService.gitProbeContext();
-				const tProbe1 = dev ? performance.now() : 0;
-				if (dev) {
-					console.log(`[perf][git][main] fullStatus probe=${(tProbe1 - tProbe0).toFixed(1)}ms root=${root}`);
-				}
 				if (!probe.ok) {
 					return { ok: false as const, error: probe.message };
 				}
 				const gitTop = probe.topLevel;
-				const tGit0 = dev ? performance.now() : 0;
 				const [porcelain, branchListPack] = await Promise.all([
 					gitService.gitStatusPorcelain(),
 					gitService.gitListLocalBranches(),
 				]);
-				const tGit1 = dev ? performance.now() : 0;
-				if (dev) {
-					console.log(`[perf][git][main] fullStatus gitCmds=${(tGit1 - tGit0).toFixed(1)}ms`);
-				}
-				const tParse0 = dev ? performance.now() : 0;
 				const lines = porcelain ? porcelain.split('\n').filter(Boolean) : [];
 				const rawPathStatus = gitService.parseGitPathStatus(lines);
 				const rawOrdered = gitService.listPorcelainPaths(lines);
@@ -2464,26 +2563,13 @@ ipcMain.handle(
 				const current = branchListPack.current;
 				let previews: Record<string, gitService.DiffPreview> = {};
 				if (changedPaths.length > 0) {
-					const tDiff0 = dev ? performance.now() : 0;
 					const fullDiffRaw = await gitService.gitDiffHeadUnified(root);
-					const tDiff1 = dev ? performance.now() : 0;
 					previews = await gitService.buildDiffPreviewsMap(
 						changedPaths,
 						fullDiffRaw,
 						root,
 						gitTop,
 						{ maxChars: 4_000 }
-					);
-					if (dev) {
-						console.log(
-							`[perf][git][main] fullStatus diff=${(tDiff1 - tDiff0).toFixed(1)}ms bytes=${fullDiffRaw.length} previewKeys=${Object.keys(previews).length}`
-						);
-					}
-				}
-				if (dev) {
-					const tDone = performance.now();
-					console.log(
-						`[perf][git][main] fullStatus parse=${(tDone - tParse0).toFixed(1)}ms lines=${lines.length} changed=${changedPaths.length} total=${(tDone - tStart).toFixed(1)}ms`
 					);
 				}
 				return {
@@ -2556,30 +2642,14 @@ ipcMain.handle(
 			return { ok: false as const, error: 'No workspace' };
 		}
 		const list = Array.isArray(relPaths) ? relPaths : [];
-		const dev = process.env.NODE_ENV !== 'production';
-		const tStart = dev ? performance.now() : 0;
 		try {
 			return await gitService.withGitWorkspaceRootAsync(root, async () => {
-				const tProbe0 = dev ? performance.now() : 0;
 				const probe = await gitService.gitProbeContext();
-				const tProbe1 = dev ? performance.now() : 0;
-				if (dev) {
-					console.log(`[perf][git][main] diffPreviews probe=${(tProbe1 - tProbe0).toFixed(1)}ms paths=${list.length}`);
-				}
 				if (!probe.ok) {
 					return { ok: false as const, error: probe.message };
 				}
-				const tDiff0 = dev ? performance.now() : 0;
 				const fullDiffRaw = await gitService.gitDiffHeadUnified(root);
-				const tDiff1 = dev ? performance.now() : 0;
-				const tBuild0 = dev ? performance.now() : 0;
 				const previews = await gitService.buildDiffPreviewsMap(list, fullDiffRaw, root, probe.topLevel, { maxChars: 4_000 });
-				if (dev) {
-					const tDone = performance.now();
-					console.log(
-						`[perf][git][main] diffPreviews diff=${(tDiff1 - tDiff0).toFixed(1)}ms build=${(tDone - tBuild0).toFixed(1)}ms bytes=${fullDiffRaw.length} keys=${Object.keys(previews).length} total=${(tDone - tStart).toFixed(1)}ms`
-					);
-				}
 				return { ok: true as const, previews };
 			});
 		} catch (e) {

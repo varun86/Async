@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import chokidar from 'chokidar';
 import {
 	indexWorkspaceSourceFile,
@@ -8,8 +10,17 @@ import {
 	removeWorkspaceSymbolsUnderPrefix,
 	clearWorkspaceSymbolIndexForRoot,
 } from './workspaceSymbolIndex.js';
-import { clearWorkspaceSemanticIndexForRoot } from './workspaceSemanticIndex.js';
 import { getWorkspaceFilesIndexPath } from './workspaceIndexPaths.js';
+
+const execFileAsync = promisify(execFile);
+const AUTO_ATTACH_WORKSPACE_FILE_WATCHER = process.env.ASYNC_ENABLE_WORKSPACE_FILE_WATCHER === '1';
+
+function throwIfAborted(signal?: AbortSignal, _phase?: string, _rootNorm?: string): void {
+	if (!signal?.aborted) {
+		return;
+	}
+	throw new DOMException('Aborted', 'AbortError');
+}
 
 /** 遍历时跳过的目录名（小写比较） */
 const SKIP_DIR_NAMES = new Set([
@@ -36,8 +47,16 @@ const SKIP_DIR_NAMES = new Set([
 	'local settings',
 ]);
 
+const SKIP_RELATIVE_PREFIXES = [
+	'.async/index/',
+	'.async/memory/',
+	'.async/composer-drops/',
+	'.async/agent-memory/',
+	'.async/agent-memory-local/',
+];
+
 /** 单工作区最大文件条数（提高上限以适配大型 monorepo） */
-export const MAX_WORKSPACE_FILES = 50_000;
+export const MAX_WORKSPACE_FILES = 5000;
 
 type FileIndexBucket = {
 	rootNorm: string;
@@ -100,7 +119,6 @@ export function releaseWorkspaceFileIndexRef(rootAbs: string): void {
 	destroyBucket(b);
 	buckets.delete(rootNorm);
 	clearWorkspaceSymbolIndexForRoot(rootNorm);
-	clearWorkspaceSemanticIndexForRoot(rootNorm);
 }
 
 function destroyBucket(b: FileIndexBucket): void {
@@ -147,7 +165,7 @@ export function registerKnownWorkspaceRelPath(relPath: string, rootAbs: string):
 		return;
 	}
 	const norm = relPath.replace(/\\/g, '/').replace(/^\/+/, '').trim();
-	if (!norm || norm.includes('..')) {
+	if (!norm || norm.includes('..') || shouldIgnoreRelativePath(norm)) {
 		return;
 	}
 	b.relPathSet.add(norm);
@@ -219,7 +237,27 @@ function normalizeRel(rootNorm: string, absPath: string): string | null {
 	if (!rel || rel.startsWith('..')) {
 		return null;
 	}
+	if (shouldIgnoreRelativePath(rel)) {
+		return null;
+	}
 	return rel;
+}
+
+function shouldIgnoreRelativePath(relPath: string): boolean {
+	const rel = relPath.replace(/\\/g, '/').replace(/^\/+/, '').trim();
+	if (!rel) {
+		return true;
+	}
+	if (SKIP_RELATIVE_PREFIXES.some((prefix) => rel === prefix.slice(0, -1) || rel.startsWith(prefix))) {
+		return true;
+	}
+	const parts = rel.split('/');
+	for (const part of parts) {
+		if (part && SKIP_DIR_NAMES.has(part.toLowerCase())) {
+			return true;
+		}
+	}
+	return false;
 }
 
 function shouldIgnoreAbsolutePath(absPath: string): boolean {
@@ -283,21 +321,49 @@ export function listWorkspaceRelativeFiles(rootAbs: string): string[] {
 	return out;
 }
 
-async function scanFullAsync(rootNorm: string): Promise<string[]> {
+/** 限制 scanFullAsync 中并发 readdir 的数量，避免大型项目淹没 Node.js 事件循环 */
+const SCAN_READDIR_CONCURRENCY = 8;
+
+async function scanFullAsync(rootNorm: string, signal?: AbortSignal): Promise<string[]> {
 	const out: string[] = [];
 
+	// 简单信号量：限制同时发出的 fsp.readdir 数量
+	let permits = SCAN_READDIR_CONCURRENCY;
+	const waitQueue: Array<() => void> = [];
+	const acquirePermit = (): Promise<void> => {
+		if (permits > 0) {
+			permits--;
+			return Promise.resolve();
+		}
+		return new Promise<void>((res) => waitQueue.push(res));
+	};
+	const releasePermit = (): void => {
+		const next = waitQueue.shift();
+		if (next) {
+			next();
+		} else {
+			permits++;
+		}
+	};
+
 	async function processDir(absDir: string): Promise<void> {
+		throwIfAborted(signal, 'scanFullAsync:processDir:start', rootNorm);
 		if (out.length >= MAX_WORKSPACE_FILES) {
 			return;
 		}
+		await acquirePermit();
+		throwIfAborted(signal, 'scanFullAsync:afterAcquirePermit', rootNorm);
 		let entries: fs.Dirent[];
 		try {
 			entries = await fsp.readdir(absDir, { withFileTypes: true });
 		} catch {
+			releasePermit();
 			return;
 		}
+		releasePermit();
 		const subdirs: string[] = [];
 		for (const ent of entries) {
+			throwIfAborted(signal, 'scanFullAsync:walkEntries', rootNorm);
 			if (out.length >= MAX_WORKSPACE_FILES) {
 				return;
 			}
@@ -321,6 +387,7 @@ async function scanFullAsync(rootNorm: string): Promise<string[]> {
 	}
 
 	try {
+		throwIfAborted(signal, 'scanFullAsync:stat', rootNorm);
 		const st = await fsp.stat(rootNorm);
 		if (!st.isDirectory()) {
 			return [];
@@ -330,8 +397,97 @@ async function scanFullAsync(rootNorm: string): Promise<string[]> {
 	}
 
 	await processDir(rootNorm);
+	throwIfAborted(signal, 'scanFullAsync:afterProcessDir', rootNorm);
 	out.sort((a, c) => a.localeCompare(c, undefined, { sensitivity: 'base' }));
 	return out;
+}
+
+/** 尝试从上次持久化的缓存（.async/index/files.json）加载文件列表，避免冷启动全量扫描 */
+async function tryLoadPersistedFileIndex(rootNorm: string): Promise<string[] | null> {
+	const target = getWorkspaceFilesIndexPath(rootNorm);
+	try {
+		const raw = await fsp.readFile(target, 'utf8');
+		const parsed = JSON.parse(raw) as {
+			version?: number;
+			root?: string;
+			files?: unknown;
+		};
+		if (
+			parsed.version === 1 &&
+			typeof parsed.root === 'string' &&
+			path.normalize(parsed.root) === rootNorm &&
+			Array.isArray(parsed.files) &&
+			parsed.files.length > 0 &&
+			typeof parsed.files[0] === 'string'
+		) {
+			const files = (parsed.files as string[])
+				.map((item) => item.replace(/\\/g, '/').replace(/^\/+/, '').trim())
+				.filter((item) => item && !item.startsWith('..'))
+				.filter((item) => !shouldIgnoreRelativePath(item));
+			const filteredOut = parsed.files.length - files.length;
+			if (filteredOut > 0) {
+				try {
+					await fsp.writeFile(
+						target,
+						JSON.stringify(
+							{
+								version: 1,
+								root: rootNorm,
+								generatedAt: new Date().toISOString(),
+								files,
+							},
+							null,
+							2
+						),
+						'utf8'
+					);
+				} catch {
+					/* ignore cache rewrite failures */
+				}
+			}
+			return files;
+		}
+	} catch {
+		/* 缓存不存在或损坏，正常降级 */
+	}
+	return null;
+}
+
+/**
+ * 通过 `git ls-files` 获取工作区文件列表（~50ms），作为 filesystem 全量扫描的替代。
+ * 同时拉取追踪文件和未追踪文件（遵守 .gitignore）。
+ * 非 git 仓库或 git 不可用时返回 null，由调用方降级到 scanFullAsync。
+ */
+async function getFilesViaGit(rootNorm: string, signal?: AbortSignal): Promise<string[] | null> {
+	try {
+		throwIfAborted(signal, 'gitLsFiles:start', rootNorm);
+		const [tracked, untracked] = await Promise.all([
+			execFileAsync('git', ['-c', 'core.quotepath=false', 'ls-files', '--recurse-submodules', '-z'], {
+				cwd: rootNorm,
+				maxBuffer: 100 * 1024 * 1024,
+				signal,
+			}).then(({ stdout }) => stdout.split('\0').filter(Boolean)),
+			execFileAsync('git', ['-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard', '-z'], {
+				cwd: rootNorm,
+				maxBuffer: 50 * 1024 * 1024,
+				signal,
+			})
+				.then(({ stdout }) => stdout.split('\0').filter(Boolean))
+				.catch(() => [] as string[]),
+		]);
+		throwIfAborted(signal, 'gitLsFiles:afterExec', rootNorm);
+		const all = [...tracked, ...untracked]
+			.map((item) => item.replace(/\\/g, '/').replace(/^\/+/, '').trim())
+			.filter((item) => item && !item.startsWith('..'))
+			.filter((item) => !shouldIgnoreRelativePath(item));
+		if (all.length === 0) {
+			return null;
+		}
+		return all.slice(0, MAX_WORKSPACE_FILES);
+	} catch {
+		// 非 git 仓库或 git 未安装，降级到 scanFullAsync
+		return null;
+	}
 }
 
 function sortedFromSet(b: FileIndexBucket): string[] {
@@ -672,12 +828,8 @@ export async function searchWorkspaceFiles(
 	return top.map((s) => relPathToSearchItem(s.path));
 }
 
-/** 后台构建文件索引，避免用户首次输入 @ 时才触发整库扫描 */
-export function prewarmWorkspaceFileIndex(rootAbs: string): void {
-	void ensureWorkspaceFileIndex(rootAbs).catch(() => {});
-}
 
-export async function ensureWorkspaceFileIndex(rootAbs: string): Promise<string[]> {
+export async function ensureWorkspaceFileIndex(rootAbs: string, signal?: AbortSignal): Promise<string[]> {
 	const rootNorm = path.normalize(path.resolve(rootAbs));
 	const b = getBucket(rootNorm);
 
@@ -690,20 +842,48 @@ export async function ensureWorkspaceFileIndex(rootAbs: string): Promise<string[
 	}
 
 	b.inFlightRefresh = (async () => {
-		const t0 = Date.now();
-		const list = await scanFullAsync(rootNorm);
-		console.log(`[fileIndex] scan done: ${list.length} files in ${Date.now() - t0}ms`);
-		b.relPathSet = new Set(list);
-		b.sortedPathsSnapshot = list;
-		attachWatcher(b);
-		console.log(`[fileIndex] watcher attached: +${Date.now() - t0}ms`);
-		schedulePersistWorkspaceFileIndex(b);
-		try {
-			notifyFileIndexReady?.(rootNorm);
-		} catch {
-			/* ignore */
+		const finalize = (sorted: string[], persist: boolean) => {
+			b.relPathSet = new Set(sorted);
+			b.sortedPathsSnapshot = sorted;
+			if (AUTO_ATTACH_WORKSPACE_FILE_WATCHER) {
+				attachWatcher(b);
+			} else {
+				stopWatcherOnly(b);
+			}
+			if (persist) {
+				schedulePersistWorkspaceFileIndex(b);
+			}
+			try {
+				notifyFileIndexReady?.(rootNorm);
+			} catch {
+				/* ignore */
+			}
+			return sorted;
+		};
+
+		// 1. 磁盘缓存（上次会话结果，读 JSON 文件，近乎瞬时）
+		throwIfAborted(signal, 'ensureWorkspaceFileIndex:beforeCache', rootNorm);
+		const cached = await tryLoadPersistedFileIndex(rootNorm);
+		if (cached) {
+			console.log(`[fileIndex] loaded ${cached.length} files from cache`);
+			return finalize(cached, false);
 		}
-		return sortedFromSet(b);
+
+		// 2. git ls-files（~50ms，覆盖绝大多数 git 仓库场景）
+		throwIfAborted(signal, 'ensureWorkspaceFileIndex:beforeGitLsFiles', rootNorm);
+		const gitFiles = await getFilesViaGit(rootNorm, signal);
+		if (gitFiles) {
+			const sorted = gitFiles.sort((a, c) => a.localeCompare(c, undefined, { sensitivity: 'base' }));
+			console.log(`[fileIndex] git ls-files: ${sorted.length} files`);
+			return finalize(sorted, true);
+		}
+
+		// 3. 兜底：全量 filesystem 扫描（非 git 仓库）
+		const t0 = Date.now();
+		throwIfAborted(signal, 'ensureWorkspaceFileIndex:beforeFullScan', rootNorm);
+		const list = await scanFullAsync(rootNorm, signal);
+		console.log(`[fileIndex] scan done: ${list.length} files in ${Date.now() - t0}ms`);
+		return finalize(list, true);
 	})();
 
 	try {

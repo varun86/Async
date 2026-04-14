@@ -92,9 +92,22 @@ export async function streamAnthropic(
 
 	let full = '';
 	let usage: TurnTokenUsage | undefined;
+	let activeStream: { abort?: () => void } | null = null;
 
 	const timeoutAc = new AbortController();
-	options.signal.addEventListener('abort', () => timeoutAc.abort(), { once: true });
+	const onAbort = () => {
+		timeoutAc.abort();
+		try {
+			activeStream?.abort?.();
+		} catch {
+			/* ignore */
+		}
+	};
+	if (options.signal.aborted) {
+		timeoutAc.abort();
+	} else {
+		options.signal.addEventListener('abort', onAbort, { once: true });
+	}
 
 	const timeoutConfig = resolveStreamTimeouts(settings);
 	const timeoutMgr = createStreamTimeoutManager(timeoutConfig, () => timeoutAc.abort());
@@ -119,6 +132,7 @@ export async function streamAnthropic(
 			},
 			{ signal: options.signal }
 		);
+		activeStream = stream as { abort?: () => void };
 
 		for await (const ev of stream) {
 			if (timeoutAc.signal.aborted) {
@@ -165,5 +179,8 @@ export async function streamAnthropic(
 			return;
 		}
 		handlers.onError(formatLlmSdkError(e));
+	} finally {
+		activeStream = null;
+		options.signal.removeEventListener('abort', onAbort);
 	}
 }
