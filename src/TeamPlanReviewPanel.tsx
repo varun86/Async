@@ -2,20 +2,23 @@ import { useState } from 'react';
 import { ChatMarkdown } from './ChatMarkdown';
 import { useI18n } from './i18n';
 import type { TeamPlanProposalState } from './hooks/useTeamSession';
+import { normalizeTeamLeaderText } from './teamChatTimeline';
 
 type Props = {
 	proposal: TeamPlanProposalState;
 	onApprove: (feedback?: string) => void;
 	onReject: (feedback?: string) => void;
+	hideSummary?: boolean;
 };
 
-export function TeamPlanReviewPanel({ proposal, onApprove, onReject }: Props) {
+export function TeamPlanReviewPanel({ proposal, onApprove, onReject, hideSummary = false }: Props) {
 	const { t } = useI18n();
 	const [showPreflight, setShowPreflight] = useState(true);
 	const [showTasks, setShowTasks] = useState(true);
 	const [feedback, setFeedback] = useState('');
 	const decided = !proposal.awaitingApproval;
 	const needsClarification = proposal.preflightVerdict === 'needs_clarification';
+	const summary = normalizeTeamLeaderText(proposal.summary);
 	const decisionLabel =
 		proposal.decision === 'approved'
 			? t('team.plan.decisionApproved')
@@ -41,9 +44,9 @@ export function TeamPlanReviewPanel({ proposal, onApprove, onReject }: Props) {
 			</div>
 
 			<div className="ref-plan-review-body">
-				{proposal.summary.trim() ? (
+				{!hideSummary && summary ? (
 					<div className="ref-plan-review-overview">
-						<ChatMarkdown content={proposal.summary} />
+						<ChatMarkdown content={summary} />
 					</div>
 				) : null}
 

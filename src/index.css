@@ -4047,6 +4047,25 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	overflow: hidden;
 }
 
+.ref-animated-height-reveal {
+	overflow: hidden;
+	opacity: 0;
+	transform: translateY(-2px);
+	transition-property: height, opacity, transform;
+	transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+	will-change: height, transform;
+}
+
+.ref-animated-height-reveal.is-open,
+.ref-animated-height-reveal.is-animating {
+	opacity: 1;
+	transform: translateY(0);
+}
+
+.ref-animated-height-reveal-inner {
+	min-height: 0;
+}
+
 .ref-agent-activity {
 	display: flex;
 	flex-direction: column;
@@ -4067,7 +4086,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 }
 
 /* 命令行整行可点：指针手势；箭头紧跟命令文字右侧，摘要靠右；不可拖选 */
-.ref-agent-activity-main--cmd-toggle {
+.ref-agent-activity-main--toggle {
 	cursor: pointer;
 	outline: none;
 	border-radius: 6px;
@@ -4077,13 +4096,13 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	user-select: none;
 }
 
-.ref-agent-activity-main--cmd-toggle,
-.ref-agent-activity-main--cmd-toggle * {
+.ref-agent-activity-main--toggle,
+.ref-agent-activity-main--toggle * {
 	-webkit-user-select: none;
 	user-select: none;
 }
 
-.ref-agent-activity-cmd-inline {
+.ref-agent-activity-inline {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
@@ -4093,20 +4112,20 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 }
 
 /* 摘要紧跟箭头：不用全局 summary 的 margin-left，间距交给 cmd-inline 的 gap */
-.ref-agent-activity-cmd-inline .ref-agent-activity-summary,
-.ref-activity-group-row-cmd-inline .ref-agent-activity-summary {
+.ref-agent-activity-inline .ref-agent-activity-summary,
+.ref-activity-group-row-inline .ref-agent-activity-summary {
 	margin-left: 0;
 }
 
-.ref-agent-activity-cmd-inline > :first-child {
+.ref-agent-activity-inline > :first-child {
 	min-width: 0;
 }
 
-.ref-agent-activity-main--cmd-toggle:hover {
+.ref-agent-activity-main--toggle:hover {
 	background: color-mix(in srgb, var(--void-bg-3) 50%, transparent);
 }
 
-.ref-agent-activity-main--cmd-toggle:focus-visible {
+.ref-agent-activity-main--toggle:focus-visible {
 	outline: 2px solid var(--void-ring, #818cf8);
 	outline-offset: 1px;
 }
@@ -4136,8 +4155,8 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	transition: opacity 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
 
-.ref-agent-activity-main--cmd-toggle:hover .ref-activity-inline-chevron,
-.ref-activity-group-row-top--cmd-toggle:hover .ref-activity-inline-chevron,
+.ref-agent-activity-main--toggle:hover .ref-activity-inline-chevron,
+.ref-activity-group-row-top--toggle:hover .ref-activity-inline-chevron,
 .ref-activity-inline-chevron.is-open {
 	opacity: 0.95;
 	color: var(--void-fg-2, #b0b0b0);
@@ -4429,7 +4448,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	min-width: 0;
 }
 
-.ref-activity-group-row-top--cmd-toggle {
+.ref-activity-group-row-top--toggle {
 	align-items: center;
 	cursor: pointer;
 	outline: none;
@@ -4440,32 +4459,32 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	user-select: none;
 }
 
-.ref-activity-group-row-top--cmd-toggle,
-.ref-activity-group-row-top--cmd-toggle * {
+.ref-activity-group-row-top--toggle,
+.ref-activity-group-row-top--toggle * {
 	-webkit-user-select: none;
 	user-select: none;
 }
 
-.ref-activity-group-row-top--cmd-toggle:hover {
+.ref-activity-group-row-top--toggle:hover {
 	background: color-mix(in srgb, var(--void-bg-3) 50%, transparent);
 }
 
-.ref-activity-group-row-top--cmd-toggle:focus-visible {
+.ref-activity-group-row-top--toggle:focus-visible {
 	outline: 2px solid var(--void-ring, #818cf8);
 	outline-offset: 1px;
 }
 
-.ref-activity-group-row-top--cmd-toggle .ref-activity-group-row-dot-wrap {
+.ref-activity-group-row-top--toggle .ref-activity-group-row-dot-wrap {
 	align-self: center;
 }
 
-.ref-activity-group-row-main--cmd-head {
+.ref-activity-group-row-main--toggle-head {
 	flex-wrap: nowrap;
 	align-items: center;
 	gap: 8px;
 }
 
-.ref-activity-group-row-cmd-inline {
+.ref-activity-group-row-inline {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
@@ -4474,7 +4493,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	max-width: 100%;
 }
 
-.ref-activity-group-row-cmd-inline > :first-child {
+.ref-activity-group-row-inline > :first-child {
 	min-width: 0;
 }
 

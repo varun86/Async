@@ -26,6 +26,7 @@ import { ToolApprovalInlineCard, type ToolApprovalPayload } from './ToolApproval
 import { AgentMistakeLimitDialog, type MistakeLimitPayload } from './AgentMistakeLimitDialog';
 import { PlanReviewPanel } from './PlanReviewPanel';
 import { TeamPlanReviewPanel } from './TeamPlanReviewPanel';
+import { TeamRoleAvatar } from './TeamRoleAvatar';
 import { ComposerThoughtBlock } from './ComposerThoughtBlock';
 import { UserMessageRich } from './UserMessageRich';
 import {
@@ -46,6 +47,7 @@ import { type ParsedPlan, type PlanQuestion } from './planParser';
 import { type ChatMessage } from './threadTypes';
 import type { TeamSessionState } from './hooks/useTeamSession';
 import { buildTeamWorkflowItems } from './teamWorkflowItems';
+import { buildTeamLeaderTimeline, shouldHideTeamPlanProposalSummary } from './teamChatTimeline';
 
 type SharedComposerProps = Omit<
 	ComponentProps<typeof ChatComposer>,
@@ -751,12 +753,12 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		return nodes;
 	};
 
-	const buildTeamLeaderRow = (): ReactNode | null => {
+	const buildTeamLeaderRow = (contentOverride?: string): ReactNode | null => {
 		if (!teamSession || composerMode !== 'team' || !hasConversation) {
 			return null;
 		}
 		const workflow = teamSession.leaderWorkflow;
-		const content = teamSession.leaderMessage || '';
+		const content = contentOverride ?? teamSession.leaderMessage ?? '';
 		const lastAssistantContent =
 			[...displayMessages].reverse().find((message) => message.role === 'assistant')?.content?.trim() || '';
 		const hasLiveBlocks = (workflow?.liveBlocks.blocks.length ?? 0) > 0;
@@ -810,34 +812,69 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		);
 	};
 
+	const buildHistoricalTeamLeaderRow = (
+		content: string,
+		rowKey: string,
+		rowIndex: number
+	): ReactNode => (
+		<div
+			key={`row-${conversationRenderKey}-${rowKey}`}
+			className="ref-msg-row-measure ref-msg-row-measure--team-leader"
+			data-msg-index={String(rowIndex)}
+		>
+			<div className="ref-msg-slot ref-msg-slot--assistant">
+				<div className="ref-msg-assistant-body">
+					<ChatMarkdown
+						content={content}
+						agentUi
+						workspaceRoot={workspace}
+						onOpenAgentFile={onOpenAgentConversationFile}
+						onRunCommand={onRunCommand}
+						revertedPaths={revertedFiles}
+						revertedChangeKeys={revertedChangeKeys}
+						skipPlanTodo
+					/>
+				</div>
+			</div>
+		</div>
+	);
+
 	const buildTeamTimelineRows = (): ReactNode[] => {
 		const nodes = buildFlatMessageList();
 		if (!teamSession || composerMode !== 'team' || !hasConversation) {
 			return nodes;
 		}
 		const workflowItems = buildTeamWorkflowItems(teamSession);
-		const leaderRow = buildTeamLeaderRow();
+		const leaderTimeline = buildTeamLeaderTimeline(teamSession, displayMessages);
+		let syntheticIndex = displayMessages.length;
+		const nextSyntheticIndex = () => syntheticIndex++;
+		const leaderHistoryRows = leaderTimeline.history.map((content, idx) =>
+			buildHistoricalTeamLeaderRow(content, `team-leader-history-${idx}`, nextSyntheticIndex())
+		);
+		const leaderRow = buildTeamLeaderRow(leaderTimeline.current);
 		const planProposal = teamSession.planProposal;
+		const hidePlanProposalSummary = shouldHideTeamPlanProposalSummary(planProposal, leaderTimeline);
 		const planProposalRow: ReactNode | null = planProposal ? (
 			<div
 				key={`row-${conversationRenderKey}-team-plan-proposal`}
 				className="ref-msg-row-measure ref-msg-row-measure--team-plan"
-				data-msg-index={String(displayMessages.length)}
+				data-msg-index={String(nextSyntheticIndex())}
 			>
 				<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-plan">
 					<TeamPlanReviewPanel
 						proposal={planProposal}
+						hideSummary={hidePlanProposalSummary}
 						onApprove={(fb) => onTeamPlanApprove(planProposal.proposalId, fb)}
 						onReject={(fb) => onTeamPlanReject(planProposal.proposalId, fb)}
 					/>
 				</div>
 			</div>
 		) : null;
-		const timelineItemRows = workflowItems.map((item, idx) => (
+		const timelineItemRows = workflowItems.map((item) => (
 			<div
 				key={`row-${conversationRenderKey}-team-item-${item.id}`}
 				className="ref-msg-row-measure ref-msg-row-measure--team-item"
-				data-msg-index={String(displayMessages.length + 1 + idx)}
+				data-msg-index={String(nextSyntheticIndex())}
 			>
 				<div className="ref-msg-slot ref-msg-slot--assistant ref-msg-slot--team-item">
 					<button
@@ -845,9 +882,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 						className={`ref-team-timeline-item ${teamSession.selectedTaskId === item.id ? 'is-active' : ''}`}
 						onClick={() => onSelectTeamExpert(item.id)}
 					>
-						<span className={`ref-team-expert-avatar ref-team-expert-avatar--${item.roleType}`}>
-							{item.expertName.slice(0, 1).toUpperCase()}
-						</span>
+						<TeamRoleAvatar roleType={item.roleType} assignmentKey={item.expertAssignmentKey} />
 						<span className="ref-team-timeline-item-copy">
 							<span className="ref-team-timeline-item-meta">
 								{t(`team.timeline.role.${item.roleKind}`)}
@@ -871,26 +906,36 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 
 		if (isTrailingDeliveryMessage) {
 			const trailingAssistant = nodes.pop();
-			if (leaderRow) {
+			if (leaderTimeline.placeCurrentAfterCards) {
+				nodes.push(...leaderHistoryRows);
+			} else if (leaderRow) {
 				nodes.push(leaderRow);
 			}
 			if (planProposalRow) {
 				nodes.push(planProposalRow);
 			}
 			nodes.push(...timelineItemRows);
+			if (leaderTimeline.placeCurrentAfterCards && leaderRow) {
+				nodes.push(leaderRow);
+			}
 			if (trailingAssistant) {
 				nodes.push(trailingAssistant);
 			}
 			return nodes;
 		}
 
-		if (leaderRow) {
+		if (leaderTimeline.placeCurrentAfterCards) {
+			nodes.push(...leaderHistoryRows);
+		} else if (leaderRow) {
 			nodes.push(leaderRow);
 		}
 		if (planProposalRow) {
 			nodes.push(planProposalRow);
 		}
 		nodes.push(...timelineItemRows);
+		if (leaderTimeline.placeCurrentAfterCards && leaderRow) {
+			nodes.push(leaderRow);
+		}
 		return nodes;
 	};
 

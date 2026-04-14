@@ -317,10 +317,12 @@ function mutateRoleWorkflowPayload(
 			const q = payload.question;
 			const optionLines = q.options.map((o) => `- ${o.label}`).join('\n');
 			const content = `**${q.text}**\n\n${optionLines}`;
-			const nextMessage: ChatMessage = { role: 'assistant', content };
-			const lastMessage = workflow.messages[workflow.messages.length - 1];
-			if (!(lastMessage?.role === nextMessage.role && lastMessage?.content === nextMessage.content)) {
-				workflow.messages = [...workflow.messages, nextMessage];
+			if (!isLead) {
+				const nextMessage: ChatMessage = { role: 'assistant', content };
+				const lastMessage = workflow.messages[workflow.messages.length - 1];
+				if (!(lastMessage?.role === nextMessage.role && lastMessage?.content === nextMessage.content)) {
+					workflow.messages = [...workflow.messages, nextMessage];
+				}
 			}
 			workflow.awaitingReply = true;
 			workflow.lastUpdatedAt = Date.now();
@@ -530,7 +532,7 @@ export function useTeamSession() {
 				case 'team_plan_proposed':
 					session.planProposal = {
 						proposalId: payload.proposalId,
-						summary: payload.summary,
+						summary: extractTeamLeadNarrative(payload.summary) || normalizeTeamSummary(payload.summary),
 						tasks: payload.tasks.map((t) => ({
 							expert: t.expert,
 							expertName: t.expertName,

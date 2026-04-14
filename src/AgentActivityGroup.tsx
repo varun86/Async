@@ -16,6 +16,7 @@ import {
 	type KeyboardEvent,
 } from 'react';
 import type { ActivityGroupSegment, ActivitySegment } from './agentChatSegments';
+import { AnimatedHeightReveal } from './AnimatedHeightReveal';
 import { AgentResultCard } from './AgentResultCard';
 
 type Props = {
@@ -157,38 +158,38 @@ function ActivityRow({
 }) {
 	const readLink = item.agentReadLink;
 	const hasResultCard = Boolean(item.resultLines && item.resultLines.length > 0 && item.resultKind);
-	const isPlainCommandResult = item.resultKind === 'plain' && hasResultCard;
+	const hasExpandableBody = Boolean(item.detail || hasResultCard);
 	const resultLines = item.resultLines ?? [];
 	const resultKind = item.resultKind ?? 'plain';
-	const [expandedResult, setExpandedResult] = useState(false);
-	const onToggleResult = useCallback(() => {
-		setExpandedResult((v) => !v);
+	const [expandedBody, setExpandedBody] = useState(false);
+	const onToggleBody = useCallback(() => {
+		setExpandedBody((v) => !v);
 	}, []);
 	const onToggleKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
-			onToggleResult();
+			onToggleBody();
 		}
-	}, [onToggleResult]);
+	}, [onToggleBody]);
 	return (
 		<div className={`ref-activity-group-row ref-activity-group-row--${item.status}`}>
 			<div
-				className={`ref-activity-group-row-top${isPlainCommandResult ? ' ref-activity-group-row-top--cmd-toggle' : ''}`}
-				role={isPlainCommandResult ? 'button' : undefined}
-				tabIndex={isPlainCommandResult ? 0 : undefined}
-				aria-expanded={isPlainCommandResult ? expandedResult : undefined}
-				aria-label={isPlainCommandResult ? (expandedResult ? '收起命令结果' : '展开命令结果') : undefined}
-				onClick={isPlainCommandResult ? onToggleResult : undefined}
-				onKeyDown={isPlainCommandResult ? onToggleKeyDown : undefined}
+				className={`ref-activity-group-row-top${hasExpandableBody ? ' ref-activity-group-row-top--toggle' : ''}`}
+				role={hasExpandableBody ? 'button' : undefined}
+				tabIndex={hasExpandableBody ? 0 : undefined}
+				aria-expanded={hasExpandableBody ? expandedBody : undefined}
+				aria-label={hasExpandableBody ? (expandedBody ? '收起详情' : '展开详情') : undefined}
+				onClick={hasExpandableBody ? onToggleBody : undefined}
+				onKeyDown={hasExpandableBody ? onToggleKeyDown : undefined}
 			>
 				<span className="ref-activity-group-row-dot-wrap" aria-hidden>
 					<span className="ref-activity-group-row-dot" />
 				</span>
 				<div
-					className={`ref-activity-group-row-main${isPlainCommandResult ? ' ref-activity-group-row-main--cmd-head' : ''}`}
+					className={`ref-activity-group-row-main${hasExpandableBody ? ' ref-activity-group-row-main--toggle-head' : ''}`}
 				>
-					{isPlainCommandResult ? (
-						<span className="ref-activity-group-row-cmd-inline">
+					{hasExpandableBody ? (
+						<span className="ref-activity-group-row-inline">
 							{readLink && onOpenFile ? (
 								<button
 									type="button"
@@ -204,10 +205,10 @@ function ActivityRow({
 								<span>{item.text}</span>
 							)}
 							<span
-								className={`ref-activity-inline-chevron${expandedResult ? ' is-open' : ''}`}
+								className={`ref-activity-inline-chevron${expandedBody ? ' is-open' : ''}`}
 								aria-hidden
 							>
-								<InlineChevron open={expandedResult} />
+								<InlineChevron open={expandedBody} />
 							</span>
 							{item.summary ? (
 								<span className="ref-agent-activity-summary">{item.summary}</span>
@@ -217,13 +218,16 @@ function ActivityRow({
 						<>
 							<span className="ref-activity-group-row-text-cluster">
 								{readLink && onOpenFile ? (
-									<button
-										type="button"
-										className="ref-agent-activity-ref-link"
-										onClick={() => onOpenFile(readLink.path, readLink.startLine, readLink.endLine)}
-									>
-										{item.text}
-									</button>
+								<button
+									type="button"
+									className="ref-agent-activity-ref-link"
+									onClick={(e) => {
+										e.stopPropagation();
+										onOpenFile(readLink.path, readLink.startLine, readLink.endLine);
+									}}
+								>
+									{item.text}
+								</button>
 								) : (
 									<span>{item.text}</span>
 								)}
@@ -235,23 +239,25 @@ function ActivityRow({
 					)}
 				</div>
 			</div>
-			{item.detail || hasResultCard ? (
-				<div className="ref-activity-group-row-rest">
-					{item.detail ? (
+			{hasExpandableBody ? (
+				<AnimatedHeightReveal open={expandedBody}>
+					<div className="ref-activity-group-row-rest">
+						{item.detail ? (
 						<pre className="ref-agent-activity-detail">{item.detail}</pre>
 					) : null}
-					{hasResultCard && (!isPlainCommandResult || expandedResult) ? (
+						{hasResultCard ? (
 						<AgentResultCard
 							lines={resultLines}
 							kind={resultKind}
 							readSourcePath={item.agentReadLink?.path}
 							onOpenFile={onOpenFile}
 							animateLineReveal={animateLineReveal}
-							forceExpanded={isPlainCommandResult ? true : undefined}
-							hideToggleChrome={isPlainCommandResult}
+							forceExpanded
+							hideToggleChrome
 						/>
 					) : null}
-				</div>
+					</div>
+				</AnimatedHeightReveal>
 			) : null}
 		</div>
 	);
