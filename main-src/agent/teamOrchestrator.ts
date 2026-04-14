@@ -296,8 +296,23 @@ function stripTrailingRawJson(text: string): string {
 	return lines.slice(0, rawJsonStart).join('\n').trim();
 }
 
+const MODE_MARKER_VARIANTS = ['MODE: ANSWER', 'MODE:ANSWER', 'MODE: PLAN', 'MODE:PLAN'];
+
+function isStreamingModeMarkerPrefix(text: string): boolean {
+	const trimmed = text.trimStart();
+	if (!trimmed || trimmed.includes('\n')) {
+		return false;
+	}
+	const up = trimmed.toUpperCase();
+	return MODE_MARKER_VARIANTS.some((v) => v.startsWith(up));
+}
+
 function extractTeamLeadNarrative(text: string): string {
-	const normalized = String(text ?? '').trim();
+	const raw = String(text ?? '');
+	if (isStreamingModeMarkerPrefix(raw)) {
+		return '';
+	}
+	const normalized = raw.trim();
 	if (!normalized) {
 		return '';
 	}
