@@ -371,9 +371,14 @@ function mutateRoleWorkflowPayload(
 			return true;
 		case 'done': {
 			const leaderNarrative = isLead ? extractTeamLeadNarrative(payload.text) : '';
+			const leaderFallback = isLead
+				? stripTeamModeMarkers(payload.text).trim()
+				: '';
 			const nextMessage: ChatMessage = {
 				role: 'assistant',
-				content: isLead ? leaderNarrative || session.leaderMessage || payload.text : payload.text,
+				content: isLead
+					? leaderNarrative || session.leaderMessage || leaderFallback
+					: payload.text,
 			};
 			const lastMessage = workflow.messages[workflow.messages.length - 1];
 			if (!(lastMessage?.role === nextMessage.role && lastMessage?.content === nextMessage.content)) {
@@ -631,11 +636,14 @@ export function useTeamSession() {
 					}
 					break;
 				}
-				case 'team_plan_summary':
-					session.planSummary = payload.summary;
-					session.leaderMessage = normalizeLeaderTimelineText(payload.summary) || session.leaderMessage;
+				case 'team_plan_summary': {
+					const normalizedPlanSummary =
+						normalizeLeaderTimelineText(payload.summary) || normalizeTeamSummary(payload.summary);
+					session.planSummary = normalizedPlanSummary || session.planSummary;
+					session.leaderMessage = normalizedPlanSummary || session.leaderMessage;
 					appendLeaderTimelineEntry(session, session.leaderMessage);
 					break;
+				}
 				case 'team_review':
 					session.reviewVerdict = payload.verdict;
 					session.reviewSummary = normalizeTeamSummary(payload.summary);

@@ -29,10 +29,10 @@ function stripTrailingRawJson(text: string): string {
 	return lines.slice(0, rawJsonStart).join('\n').trim();
 }
 
-const TEAM_LEAD_MODE_MARKER_RE = /^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*(?:ANSWER|PLAN|CLARIFY)\s*(?:[*_`]+)?\s*\n?/i;
+const TEAM_LEAD_MODE_MARKER_RE = /^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*[A-Z_]+\s*(?:[*_`]+)?\s*\n?/i;
 const TEAM_LEAD_MODE_MARKER_LINE_RE =
-	/^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*(?:ANSWER|PLAN|CLARIFY)\s*(?:[*_`]+)?\s*$/gim;
-const TEAM_LEAD_MODE_MARKER_INLINE_RE = /\bMODE\s*:\s*(?:ANSWER|PLAN|CLARIFY)\b/gi;
+	/^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*[A-Z_]+\s*(?:[*_`]+)?\s*$/gim;
+const TEAM_LEAD_MODE_MARKER_INLINE_RE = /\bMODE\s*:\s*[A-Z_]+\b/gi;
 
 export function stripTeamModeMarkers(text: string): string {
 	return String(text ?? '')

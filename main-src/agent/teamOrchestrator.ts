@@ -227,14 +227,14 @@ function buildReviewerWorkflowTask(
 
 function normalizeTeamAgentSummary(raw: string, fallback: string): string {
 	const flattened = stripLeadModeMarker(flattenAssistantTextPartsForSearch(raw))
-		.replace(/\bMODE\s*:\s*(?:ANSWER|PLAN|CLARIFY)\b/gi, '')
+		.replace(/\bMODE\s*:\s*[A-Z_]+\b/gi, '')
 		.replace(/\n[ \t]+\n/g, '\n\n')
 		.trim();
 	if (flattened) {
 		return flattened;
 	}
 	const trimmed = stripLeadModeMarker(raw)
-		.replace(/\bMODE\s*:\s*(?:ANSWER|PLAN|CLARIFY)\b/gi, '')
+		.replace(/\bMODE\s*:\s*[A-Z_]+\b/gi, '')
 		.replace(/\n[ \t]+\n/g, '\n\n')
 		.trim();
 	return trimmed || fallback;
@@ -345,7 +345,7 @@ function stripTrailingRawJson(text: string): string {
 	return lines.slice(0, rawJsonStart).join('\n').trim();
 }
 
-const TEAM_LEAD_MODE_PREFIX_RE = /^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*(?:ANSWER|PLAN|CLARIFY)\s*(?:[*_`]+)?\s*$/i;
+const TEAM_LEAD_MODE_PREFIX_RE = /^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*[A-Z_]+\s*(?:[*_`]+)?\s*$/i;
 const TEAM_LEAD_MODE_EXTRACT_RE = /^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*(ANSWER|PLAN|CLARIFY)\b/i;
 const MODE_MARKER_VARIANTS = [
 	'MODE: ANSWER',
@@ -375,7 +375,7 @@ function extractTeamLeadNarrative(text: string): string {
 		return '';
 	}
 	const withoutMode = stripLeadModeMarker(normalized)
-		.replace(/\bMODE\s*:\s*(?:ANSWER|PLAN|CLARIFY)\b/gi, '')
+		.replace(/\bMODE\s*:\s*[A-Z_]+\b/gi, '')
 		.replace(/\n[ \t]+\n/g, '\n\n')
 		.trim();
 	const withoutFence = stripFencedBlocks(withoutMode);
@@ -504,14 +504,32 @@ function buildDependencyHandoffSection(
 	return items.length > 0 ? items.join('\n\n') : 'None.';
 }
 
+function buildFullPlanBreakdown(task: TeamTask, allTasks: TeamTask[]): string {
+	if (!allTasks || allTasks.length === 0) {
+		return '(no other specialists assigned)';
+	}
+	return allTasks
+		.map((other, index) => {
+			const marker = other.id === task.id ? ' ← YOU' : '';
+			const deps = other.dependencies?.length
+				? ` (depends on: ${other.dependencies
+						.map((depId) => allTasks.find((candidate) => candidate.id === depId)?.expertName ?? depId)
+						.join(', ')})`
+				: '';
+			return `${index + 1}. ${other.expertName} (${other.roleType})${marker}${deps}\n   ${other.description}`;
+		})
+		.join('\n');
+}
+
 export function buildSpecialistTaskPacket(params: {
 	task: TeamTask;
 	expert: TeamExpertRuntimeProfile;
 	userRequest: string;
 	planSummary: string;
 	completedTasksById: Map<string, TeamTask>;
+	allTasks?: TeamTask[];
 }): string {
-	const { task, expert, userRequest, planSummary, completedTasksById } = params;
+	const { task, expert, userRequest, planSummary, completedTasksById, allTasks } = params;
 	return [
 		'You are a specialist working under a Team Lead.',
 		'You are receiving a focused assignment packet instead of the full chat transcript.',
@@ -523,6 +541,9 @@ export function buildSpecialistTaskPacket(params: {
 		'',
 		'## Team Lead Plan Summary',
 		clampTeamPacketText(planSummary),
+		'',
+		'## Full Plan Breakdown',
+		buildFullPlanBreakdown(task, allTasks ?? [task]),
 		'',
 		'## Your Role',
 		`${expert.name} (${expert.roleType})`,
@@ -842,8 +863,8 @@ function parseLeadMode(text: string): LeadPlanMode {
 
 function stripLeadModeMarker(text: string): string {
 	return String(text ?? '')
-		.replace(/^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*(?:ANSWER|PLAN|CLARIFY)\s*(?:[*_`]+)?\s*\n?/i, '')
-		.replace(/^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*(?:ANSWER|PLAN|CLARIFY)\s*(?:[*_`]+)?\s*$/gim, '')
+		.replace(/^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*[A-Z_]+\s*(?:[*_`]+)?\s*\n?/i, '')
+		.replace(/^\s*(?:[*_`>#-]+\s*)*MODE\s*:\s*[A-Z_]+\s*(?:[*_`]+)?\s*$/gim, '')
 		.trim();
 }
 
@@ -1458,6 +1479,7 @@ async function runOneSpecialist(params: {
 	userRequest: string;
 	planSummary: string;
 	completedTasksById: Map<string, TeamTask>;
+	allTasks: TeamTask[];
 	modelSelection: string;
 	resolvedModel: TeamOrchestratorInput['resolvedModel'];
 	signal: AbortSignal;
@@ -1470,7 +1492,8 @@ async function runOneSpecialist(params: {
 	emit: (evt: TeamEmit) => void;
 }): Promise<{ success: boolean; text: string }> {
 	const {
-		settings, task, expert, userRequest, planSummary, completedTasksById, modelSelection, resolvedModel,
+		settings, task, expert, userRequest, planSummary, completedTasksById, allTasks,
+		modelSelection, resolvedModel,
 		signal, thinkingLevel, workspaceRoot, workspaceLspManager, toolHooks, baseTools,
 		threadId, emit,
 	} = params;
@@ -1484,6 +1507,7 @@ async function runOneSpecialist(params: {
 				userRequest,
 				planSummary,
 				completedTasksById,
+				allTasks,
 			}),
 		},
 	];
@@ -2009,6 +2033,7 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 						emit({ threadId, type: 'team_expert_started', taskId: task.id, expertId: task.expertId });
 						const result = await runOneSpecialist({
 							settings, task, expert, userRequest: effectiveUserText, planSummary, completedTasksById,
+							allTasks: plannedTasks,
 							modelSelection, resolvedModel,
 							signal, thinkingLevel, workspaceRoot, workspaceLspManager, toolHooks,
 							baseTools: baseTeamTools, threadId, emit,

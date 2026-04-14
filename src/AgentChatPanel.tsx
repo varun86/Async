@@ -846,6 +846,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			roleKind: 'specialist' | 'reviewer';
 			expertName: string;
 			description: string;
+			acceptanceCriteria?: string[];
 			status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'revision';
 		},
 		rowIndex: number
@@ -866,6 +867,13 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 						<span className="ref-team-timeline-item-meta">{t(`team.timeline.role.${item.roleKind}`)}</span>
 						<span className="ref-team-timeline-item-title">{item.expertName}</span>
 						<span className="ref-team-timeline-item-body">{item.description}</span>
+						{item.acceptanceCriteria && item.acceptanceCriteria.length > 0 ? (
+							<ul className="ref-team-timeline-item-criteria">
+								{item.acceptanceCriteria.map((criterion, idx) => (
+									<li key={idx}>{criterion}</li>
+								))}
+							</ul>
+						) : null}
 					</span>
 					<span className={`ref-team-expert-status ref-team-expert-status--${item.status}`}>
 						{item.status === 'in_progress' ? <span className="ref-team-pulse" /> : null}

@@ -2625,8 +2625,8 @@ function AppMainWorkspaceInner() {
 		if (composerMode === 'team') {
 			const liveTeamSession = getTeamSession(currentIdRef.current);
 			return {
-				question: liveTeamSession?.pendingQuestion ?? null,
-				requestId: liveTeamSession?.pendingQuestionRequestId ?? null,
+				question: liveTeamSession?.pendingQuestion ?? planQuestion,
+				requestId: liveTeamSession?.pendingQuestionRequestId ?? planQuestionRequestId,
 			};
 		}
 		return {
@@ -3733,7 +3733,7 @@ function AppMainWorkspaceInner() {
 			resendFromUserIndex !== null
 				? null
 				: composerMode === 'team'
-					? teamSession?.pendingQuestion ?? null
+					? teamSession?.pendingQuestion ?? planQuestion
 					: planQuestion,
 		[composerMode, teamSession, planQuestion, resendFromUserIndex]
 	);
