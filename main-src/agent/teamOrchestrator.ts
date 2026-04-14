@@ -8,6 +8,7 @@ import type { AgentToolDef } from './agentTools.js';
 import { resolveTeamExpertProfiles, type TeamExpertRuntimeProfile } from './teamExpertProfiles.js';
 import { resolveModelRequest, type ResolvedModelRequest } from '../llm/modelResolve.js';
 import { getTeamPreset } from '../../src/teamPresetCatalog.js';
+import { buildAutoReplyLanguageRuleBlock } from '../../src/autoReplyLanguageRule.js';
 import { flattenAssistantTextPartsForSearch } from '../../src/agentStructuredMessage.js';
 import {
 	buildTeamPlanProposalId,
@@ -228,6 +229,13 @@ function normalizeTeamAgentSummary(raw: string, fallback: string): string {
 	}
 	const trimmed = raw.trim();
 	return trimmed || fallback;
+}
+
+function appendTeamLanguageRule(settings: ShellSettings, prompt?: string): string {
+	const lang = settings.language === 'en' ? 'en' : 'zh-CN';
+	const ruleBlock = buildAutoReplyLanguageRuleBlock(lang, lang);
+	const extra = String(prompt ?? '').trim();
+	return extra ? `${ruleBlock}\n\n---\n\n${extra}` : ruleBlock;
 }
 
 export type TeamOrchestratorInput = {
@@ -555,7 +563,7 @@ async function llmPlanTasks(params: {
 		signal,
 		composerMode: 'ask',
 		toolPoolOverride: [],
-		agentSystemAppend: teamLead.systemPrompt,
+		agentSystemAppend: appendTeamLanguageRule(settings, teamLead.systemPrompt),
 		thinkingLevel: thinkingLevel === 'off' ? 'off' : 'low',
 		workspaceRoot: workspaceRoot ?? null,
 		workspaceLspManager: null,
@@ -816,7 +824,7 @@ async function runPreflightReviewerAgent(params: {
 		signal,
 		composerMode: 'agent',
 		toolPoolOverride: specializedTools,
-		agentSystemAppend: reviewer.systemPrompt,
+		agentSystemAppend: appendTeamLanguageRule(settings, reviewer.systemPrompt),
 		thinkingLevel,
 		workspaceRoot,
 		workspaceLspManager,
@@ -956,7 +964,7 @@ async function runReviewerAgent(params: {
 		signal,
 		composerMode: 'agent',
 		toolPoolOverride: specializedTools,
-		agentSystemAppend: reviewer.systemPrompt,
+		agentSystemAppend: appendTeamLanguageRule(settings, reviewer.systemPrompt),
 		thinkingLevel,
 		workspaceRoot,
 		workspaceLspManager,
@@ -1103,7 +1111,7 @@ async function runOneSpecialist(params: {
 		signal,
 		composerMode: 'agent',
 		toolPoolOverride: specializedToolPool,
-		agentSystemAppend: expert.systemPrompt,
+		agentSystemAppend: appendTeamLanguageRule(settings, expert.systemPrompt),
 		thinkingLevel,
 		workspaceRoot,
 		workspaceLspManager,

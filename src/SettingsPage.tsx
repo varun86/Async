@@ -926,6 +926,7 @@ export function SettingsPage({
 								<SettingsAgentPanel
 									value={agentCustomization}
 									onChange={onChangeAgentCustomization}
+									locale={locale}
 									workspaceOpen={workspaceOpen}
 									onOpenSkillCreator={onOpenSkillCreator}
 									onOpenWorkspaceSkillFile={onOpenWorkspaceSkillFile}

@@ -868,6 +868,9 @@ export const messagesEn: Record<string, string> = {
 	'agentSettings.rulesDesc':
 		'Always: every chat. Glob: when @ paths match your pattern. Manual: when the message contains @rule:name or @rule:uuid (markers are stripped).',
 	'agentSettings.ruleNameAria': 'Rule name',
+	'agentSettings.autoLanguageRuleBadge': 'Auto',
+	'agentSettings.autoLanguageRuleHint':
+		'Derived from Display language and always injected as an Always rule.',
 	'agentSettings.scope': 'Scope',
 	'agentSettings.scopeAlways': 'Always',
 	'agentSettings.scopeGlob': 'Glob (path match)',

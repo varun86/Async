@@ -1655,7 +1655,13 @@ export function registerIpc(): void {
 				if (scope === 'project' && !root) {
 					return { ok: false as const, error: 'no-workspace' as const };
 				}
-				const prepared = prepareUserTurnForChat(skillIn.userNote, agentForTurn, root, workspaceFiles);
+				const prepared = prepareUserTurnForChat(
+					skillIn.userNote,
+					agentForTurn,
+					root,
+					workspaceFiles,
+					settings.language === 'en' ? 'en' : 'zh-CN'
+				);
 				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
 				const visible = formatSkillCreatorUserBubble(scope, lang, skillIn.userNote);
 				const skillBlock = buildSkillCreatorSystemAppend(scope, lang, root);
@@ -1695,7 +1701,13 @@ export function registerIpc(): void {
 				const creatorAgentMode: ComposerMode = 'agent';
 				const ruleScope: AgentRuleScope =
 					ruleIn.ruleScope === 'glob' || ruleIn.ruleScope === 'manual' ? ruleIn.ruleScope : 'always';
-				const prepared = prepareUserTurnForChat(ruleIn.userNote, agentForTurn, root, workspaceFiles);
+				const prepared = prepareUserTurnForChat(
+					ruleIn.userNote,
+					agentForTurn,
+					root,
+					workspaceFiles,
+					settings.language === 'en' ? 'en' : 'zh-CN'
+				);
 				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
 				const visible = formatRuleCreatorUserBubble(ruleScope, ruleIn.globPattern, lang, ruleIn.userNote);
 				const ruleBlock = buildRuleCreatorSystemAppend(ruleScope, ruleIn.globPattern, lang, root);
@@ -1742,7 +1754,13 @@ export function registerIpc(): void {
 				if (scope === 'project' && !root) {
 					return { ok: false as const, error: 'no-workspace' as const };
 				}
-				const prepared = prepareUserTurnForChat(subIn.userNote, agentForTurn, root, workspaceFiles);
+				const prepared = prepareUserTurnForChat(
+					subIn.userNote,
+					agentForTurn,
+					root,
+					workspaceFiles,
+					settings.language === 'en' ? 'en' : 'zh-CN'
+				);
 				const lang = settings.language === 'en' ? 'en' : 'zh-CN';
 				const visible = formatSubagentCreatorUserBubble(scope, lang, subIn.userNote);
 				const subBlock = buildSubagentCreatorSystemAppend(scope, lang, root);
@@ -1781,7 +1799,8 @@ export function registerIpc(): void {
 				text,
 				agentForTurn,
 				root,
-				workspaceFiles
+				workspaceFiles,
+				settings.language === 'en' ? 'en' : 'zh-CN'
 			);
 
 			let finalSystemAppend = agentSystemAppend;
@@ -1882,7 +1901,13 @@ export function registerIpc(): void {
 				throwIfAbortRequested(preflightAc.signal, threadId, 'editResend ensureWorkspaceFileIndex');
 				const projectAgent = readWorkspaceAgentProjectSlice(root);
 				const agentForTurn = mergeAgentWithProjectSlice(settings.agent, projectAgent);
-				const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(trimmed, agentForTurn, root, workspaceFiles);
+				const { userText, agentSystemAppend, atPaths } = prepareUserTurnForChat(
+					trimmed,
+					agentForTurn,
+					root,
+					workspaceFiles,
+					settings.language === 'en' ? 'en' : 'zh-CN'
+				);
 
 				let finalSystemAppend = agentSystemAppend;
 				if (root && (mode === 'plan' || mode === 'ask' || mode === 'team')) {

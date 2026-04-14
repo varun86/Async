@@ -865,6 +865,8 @@ export const messagesZhCN: Record<string, string> = {
 	'agentSettings.rulesDesc':
 		'Always：每轮对话；Glob：@ 路径匹配 glob 时；Manual：消息中含 @rule: 名称或 uuid 时注入（标记会从正文去掉）。',
 	'agentSettings.ruleNameAria': '规则名称',
+	'agentSettings.autoLanguageRuleBadge': '自动',
+	'agentSettings.autoLanguageRuleHint': '由「界面语言」自动生成，并会作为 Always 规则始终注入。',
 	'agentSettings.scope': '作用域',
 	'agentSettings.scopeAlways': 'Always',
 	'agentSettings.scopeGlob': 'Glob（路径匹配）',

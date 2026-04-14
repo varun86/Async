@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { minimatch } from 'minimatch';
 import type { AgentCustomization, AgentCommand, AgentSkill, AgentRule } from '../agentSettingsTypes.js';
+import { buildAutoReplyLanguageRuleBlock } from '../../src/autoReplyLanguageRule.js';
 import { collectAtWorkspacePathsInText } from './workspaceContextExpand.js';
 
 const MAX_MARKDOWN_IMPORT_CHARS = 120_000;
@@ -314,6 +315,7 @@ export function buildAgentSystemAppend(opts: {
 	atPaths: string[];
 	skillSystemBlock: string;
 	thirdPartyRules: string;
+	uiLanguage: 'zh-CN' | 'en';
 	/** 来自 `@rule:` 的 Manual 规则块（已含标题） */
 	manualRuleBlocks?: string[];
 }): string {
@@ -348,6 +350,8 @@ export function buildAgentSystemAppend(opts: {
 		parts.push(opts.skillSystemBlock.trim());
 	}
 
+	parts.push(buildAutoReplyLanguageRuleBlock(opts.uiLanguage, opts.uiLanguage));
+
 	const subs = (agent?.subagents ?? []).filter((s) => s.enabled !== false);
 	if (subs.length > 0) {
 		const body = subs
@@ -381,7 +385,8 @@ export function prepareUserTurnForChat(
 	rawText: string,
 	agent: AgentCustomization | undefined,
 	workspaceRoot: string | null,
-	workspaceFiles: string[]
+	workspaceFiles: string[],
+	uiLanguage: 'zh-CN' | 'en'
 ): PreparedUserTurn {
 	const afterCmd = applySlashCommands(rawText, agent?.commands);
 	const { userText: afterManual, manualBlocks } = applyManualRuleInvocations(afterCmd, agent?.rules);
@@ -398,6 +403,7 @@ export function prepareUserTurnForChat(
 		atPaths,
 		skillSystemBlock,
 		thirdPartyRules: thirdPartyMerged,
+		uiLanguage,
 		manualRuleBlocks: manualBlocks,
 	});
 	return { userText, agentSystemAppend, atPaths };
