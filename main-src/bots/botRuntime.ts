@@ -36,6 +36,7 @@ import { mergeAgentWithProjectSlice, readWorkspaceAgentProjectSlice } from '../w
 import { resolveToolPermissionFromRules } from '../agent/toolPermissionModel.js';
 import { isSafeShellCommandForAutoApprove } from '../agent/toolApprovalGate.js';
 import { getShellPermissionMode } from '../../src/shellPermissionMode.js';
+import type { BotTodoListItem } from './platforms/common.js';
 
 export type BotInboundMessage = {
 	conversationKey: string;
@@ -162,6 +163,56 @@ function workerThreadMapKey(root: string | null | undefined, mode: BotComposerMo
 	return `${normalizeWorkspaceKey(root)}::${mode}`;
 }
 
+function extractBotTodosFromArgs(args: Record<string, unknown>): BotTodoListItem[] {
+	const rawTodos = args.todos;
+	if (!Array.isArray(rawTodos)) {
+		return [];
+	}
+	return rawTodos
+		.map((todo) => {
+			const item = todo && typeof todo === 'object' ? (todo as Record<string, unknown>) : {};
+			const statusRaw = String(item.status ?? '').trim();
+			const status =
+				statusRaw === 'completed' || statusRaw === 'in_progress' || statusRaw === 'pending'
+					? statusRaw
+					: 'pending';
+			return {
+				content: String(item.content ?? '').trim(),
+				status,
+				activeForm: String(item.activeForm ?? '').trim() || undefined,
+			} satisfies BotTodoListItem;
+		})
+		.filter((todo) => todo.content);
+}
+
+function describeBotToolActivity(name: string, args: Record<string, unknown>): string | undefined {
+	switch (name) {
+		case 'TodoWrite': {
+			const todos = extractBotTodosFromArgs(args);
+			const active = todos.find((todo) => todo.status === 'in_progress');
+			return active?.activeForm || active?.content || `更新任务列表（${todos.length} 项）`;
+		}
+		case 'Browser': {
+			const action = String(args.action ?? '').trim();
+			return action ? `浏览器：${action}` : '正在操作内置浏览器';
+		}
+		case 'Bash': {
+			const command = String(args.command ?? '').trim();
+			return command ? `执行命令：${command.slice(0, 80)}` : '执行命令';
+		}
+		case 'run_async_task': {
+			const task = String(args.task ?? '').trim();
+			const mode = String(args.mode ?? '').trim();
+			if (mode) {
+				return `派发内部会话（${mode}）`;
+			}
+			return task ? `派发内部会话：${task.slice(0, 60)}` : '派发内部会话';
+		}
+		default:
+			return undefined;
+	}
+}
+
 function collectAvailableWorkspaceRoots(integration: BotIntegrationConfig): string[] {
 	const out: string[] = [];
 	const seen = new Set<string>();
@@ -251,7 +302,8 @@ type RunBotOrchestratorArgs = {
 	workspaceLspManager: WorkspaceLspManager;
 	signal: AbortSignal;
 	onStreamDelta?: (fullText: string) => void;
-	onToolStatus?: (name: string, state: 'running' | 'completed' | 'error') => void;
+	onToolStatus?: (name: string, state: 'running' | 'completed' | 'error', detail?: string) => void;
+	onTodoUpdate?: (todos: BotTodoListItem[]) => void;
 };
 
 type RunBotAsyncTaskArgs = {
@@ -264,7 +316,8 @@ type RunBotAsyncTaskArgs = {
 	workspaceLspManager: WorkspaceLspManager;
 	signal: AbortSignal;
 	onInnerTextDelta?: (fullText: string) => void;
-	onInnerToolStatus?: (name: string, state: 'running' | 'completed' | 'error') => void;
+	onInnerToolStatus?: (name: string, state: 'running' | 'completed' | 'error', detail?: string) => void;
+	onInnerTodoUpdate?: (todos: BotTodoListItem[]) => void;
 };
 
 const BOT_TOOL_DEFS: AgentToolDef[] = [
@@ -616,7 +669,20 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 							return;
 						}
 						if (evt.type === 'tool_call') {
-							args.onInnerToolStatus?.(evt.name, 'running');
+							let parsedArgs: Record<string, unknown> = {};
+							try {
+								parsedArgs = JSON.parse(evt.args) as Record<string, unknown>;
+							} catch {
+								parsedArgs = {};
+							}
+							if (evt.name === 'TodoWrite') {
+								args.onInnerTodoUpdate?.(extractBotTodosFromArgs(parsedArgs));
+							}
+							args.onInnerToolStatus?.(evt.name, 'running', describeBotToolActivity(evt.name, parsedArgs));
+							return;
+						}
+						if (evt.type === 'tool_progress') {
+							args.onInnerToolStatus?.(evt.name, 'running', evt.detail || evt.phase);
 							return;
 						}
 						if (evt.type === 'tool_result') {
@@ -683,8 +749,14 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 							innerStreamFull += text;
 							args.onInnerTextDelta?.(innerStreamFull);
 						},
-						onToolCall: (name) => {
-							args.onInnerToolStatus?.(name, 'running');
+						onToolProgress: (payload) => {
+							args.onInnerToolStatus?.(payload.name, 'running', payload.detail || payload.phase);
+						},
+						onToolCall: (name, toolArgs) => {
+							if (name === 'TodoWrite') {
+								args.onInnerTodoUpdate?.(extractBotTodosFromArgs(toolArgs));
+							}
+							args.onInnerToolStatus?.(name, 'running', describeBotToolActivity(name, toolArgs));
 						},
 						onToolResult: (name, _result, success) => {
 							incrementThreadAgentToolCallCount(threadId);
@@ -844,6 +916,7 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 					signal,
 					onInnerTextDelta: args.onStreamDelta,
 					onInnerToolStatus: args.onToolStatus,
+					onInnerTodoUpdate: args.onTodoUpdate,
 				});
 				return {
 					toolCallId: call.id,
@@ -910,8 +983,14 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 					full = streamFull;
 					args.onStreamDelta?.(streamFull);
 				},
-				onToolCall: (name) => {
-					args.onToolStatus?.(name, 'running');
+				onToolProgress: (payload) => {
+					args.onToolStatus?.(payload.name, 'running', payload.detail || payload.phase);
+				},
+				onToolCall: (name, toolArgs) => {
+					if (name === 'TodoWrite') {
+						args.onTodoUpdate?.(extractBotTodosFromArgs(toolArgs));
+					}
+					args.onToolStatus?.(name, 'running', describeBotToolActivity(name, toolArgs));
 				},
 				onToolResult: (name, _result, success) => {
 					args.onToolStatus?.(name, success ? 'completed' : 'error');

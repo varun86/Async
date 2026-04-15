@@ -71,7 +71,9 @@ class BotController {
 		const run = async () => {
 			const ac = new AbortController();
 			const stream = message.streamReply;
-			let streamStarted = false;
+			if (stream) {
+				await stream.onStart().catch(() => {});
+			}
 			try {
 				const text = await runBotOrchestratorTurn({
 					settings: this.getSettings(),
@@ -82,32 +84,29 @@ class BotController {
 					signal: ac.signal,
 					onStreamDelta: stream
 						? (fullText) => {
-								if (!streamStarted) {
-									streamStarted = true;
-									stream.onStart().catch(() => {});
-								}
 								stream.onDelta(fullText).catch(() => {});
 						  }
 						: undefined,
+					onTodoUpdate: stream
+						? (todos) => {
+								stream.onTodoUpdate(todos);
+						  }
+						: undefined,
 					onToolStatus: stream
-						? (name, state) => {
-								if (!streamStarted) {
-									streamStarted = true;
-									stream.onStart().catch(() => {});
-								}
-								stream.onToolStatus(name, state);
+						? (name, state, detail) => {
+								stream.onToolStatus(name, state, detail);
 						  }
 						: undefined,
 				});
 				const displayText = extractBotReplyText(text || '');
-				if (streamStarted) {
+				if (stream) {
 					await stream!.onDone(displayText || '已完成，但没有返回可展示的文本结果。');
 				} else {
 					await message.reply(displayText || '已完成，但没有返回可展示的文本结果。');
 				}
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : String(error);
-				if (streamStarted) {
+				if (stream) {
 					await stream!.onError(msg).catch(() => {});
 				} else {
 					await message.reply(`机器人执行失败：${msg}`);

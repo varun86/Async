@@ -10,6 +10,7 @@
  */
 
 import { requestJson } from './common.js';
+import type { BotTodoListItem } from './common.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -184,6 +185,7 @@ const MAX_ELEMENT_SIZE = 25_000; // 28KB limit, leave margin
 export type ToolStatusEntry = {
 	name: string;
 	state: 'running' | 'completed' | 'error';
+	detail?: string;
 };
 
 export class FeishuStreamingSession {
@@ -202,6 +204,7 @@ export class FeishuStreamingSession {
 	private throttleTimer: ReturnType<typeof setTimeout> | null = null;
 	private pendingUpdate: string | null = null;
 	private toolStatuses: ToolStatusEntry[] = [];
+	private todos: BotTodoListItem[] = [];
 
 	constructor(client: FeishuCardKitClient) {
 		this.client = client;
@@ -252,14 +255,30 @@ export class FeishuStreamingSession {
 		await this.startPromise;
 	}
 
-	setToolStatus(name: string, state: 'running' | 'completed' | 'error'): void {
+	setToolStatus(name: string, state: 'running' | 'completed' | 'error', detail?: string): void {
 		if (this.closed || this.closing || this.failed) return;
 		const existing = this.toolStatuses.find((t) => t.name === name);
 		if (existing) {
 			existing.state = state;
+			existing.detail = detail;
 		} else {
-			this.toolStatuses.push({ name, state });
+			this.toolStatuses.push({ name, state, detail });
 		}
+		if (this.cardId) {
+			this.scheduleUpdate();
+		}
+	}
+
+	setTodos(todos: BotTodoListItem[]): void {
+		if (this.closed || this.closing || this.failed) return;
+		this.todos = todos.map((todo) => ({
+			content: String(todo.content ?? '').trim(),
+			status:
+				todo.status === 'completed' || todo.status === 'in_progress' || todo.status === 'pending'
+					? todo.status
+					: 'pending',
+			activeForm: String(todo.activeForm ?? '').trim() || undefined,
+		}));
 		if (this.cardId) {
 			this.scheduleUpdate();
 		}
@@ -322,20 +341,53 @@ export class FeishuStreamingSession {
 	}
 
 	private buildContent(): string {
-		let text = this.currentText || '⏳ 正在思考...';
-		const toolBlock = this.buildToolStatusBlock();
-		if (toolBlock) {
-			text = text + '\n\n---\n' + toolBlock;
+		const sections: string[] = [];
+		const hasVisibleOutput = this.currentText.trim().length > 0;
+		const progressBlock = this.buildToolStatusBlock();
+		if (!hasVisibleOutput && progressBlock) {
+			sections.push(`### 执行进度\n${progressBlock}`);
 		}
-		return text;
+		const todoBlock = this.buildTodoBlock();
+		if (todoBlock) {
+			sections.push(`### TODO\n${todoBlock}`);
+		}
+		sections.push(`### 输出\n${this.currentText || '⏳ 正在思考...'}`);
+		return sections.join('\n\n');
 	}
 
 	private buildToolStatusBlock(): string {
-		if (this.toolStatuses.length === 0) return '';
+		if (this.toolStatuses.length === 0) return '⏳ 正在思考...';
 		const icons: Record<string, string> = { running: '🔄', completed: '✅', error: '❌' };
-		return this.toolStatuses
-			.map((t) => `${icons[t.state] ?? '❔'} \`${t.name}\``)
-			.join('  ');
+		const latest = this.toolStatuses[this.toolStatuses.length - 1];
+		const currentLine = latest?.detail?.trim()
+			? `当前：${latest.detail.trim()}`
+			: latest
+				? `当前：${icons[latest.state] ?? '❔'} ${latest.name}`
+				: '';
+		const history = this.toolStatuses
+			.slice(-6)
+			.map((t) => `- ${icons[t.state] ?? '❔'} \`${t.name}\`${t.detail?.trim() ? `：${t.detail.trim()}` : ''}`)
+			.join('\n');
+		return [currentLine, history].filter(Boolean).join('\n');
+	}
+
+	private buildTodoBlock(): string {
+		if (this.todos.length === 0) return '';
+		const iconByStatus: Record<BotTodoListItem['status'], string> = {
+			pending: '⬜',
+			in_progress: '⏳',
+			completed: '✅',
+		};
+		return this.todos
+			.slice(0, 8)
+			.map((todo) => {
+				const label =
+					todo.status === 'in_progress' && todo.activeForm?.trim()
+						? todo.activeForm.trim()
+						: todo.content;
+				return `- ${iconByStatus[todo.status]} ${label}`;
+			})
+			.join('\n');
 	}
 
 	private buildSummary(): string {

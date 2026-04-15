@@ -298,7 +298,8 @@ describe('FeishuStreamingSession', () => {
 
 		const updateCall = requestJsonMock.mock.calls[3];
 		expect(updateCall[0]).toContain('/cardkit/v1/cards/card_race/elements/content/content');
-		expect(updateCall[1].body.content).toBe('Final answer.');
+		expect(updateCall[1].body.content).toContain('### 输出');
+		expect(updateCall[1].body.content).toContain('Final answer.');
 
 		const closeCall = requestJsonMock.mock.calls[4];
 		expect(closeCall[0]).toContain('/cardkit/v1/cards/card_race/settings');
@@ -324,7 +325,8 @@ describe('FeishuStreamingSession', () => {
 		expect(requestJsonMock.mock.calls.length).toBeGreaterThan(3);
 		const lastApiCall = requestJsonMock.mock.calls[requestJsonMock.mock.calls.length - 1];
 		expect(lastApiCall[0]).toContain('/elements/content/content');
-		expect(lastApiCall[1].body.content).toBe('Hello world!');
+		expect(lastApiCall[1].body.content).toContain('### 输出');
+		expect(lastApiCall[1].body.content).toContain('Hello world!');
 	});
 
 	it('update() does nothing when session is not active', async () => {
@@ -342,7 +344,6 @@ describe('FeishuStreamingSession', () => {
 		await session.start('chat_1');
 		requestJsonMock.mockResolvedValue(okResponse());
 
-		session.update('Working...');
 		session.setToolStatus('Read', 'running');
 
 		await vi.advanceTimersByTimeAsync(150);
@@ -350,9 +351,49 @@ describe('FeishuStreamingSession', () => {
 		const updateCalls = requestJsonMock.mock.calls.slice(3);
 		expect(updateCalls.length).toBeGreaterThan(0);
 		const sentContent = updateCalls[updateCalls.length - 1][1].body.content as string;
-		expect(sentContent).toContain('Working...');
-		expect(sentContent).toContain('---');
+		expect(sentContent).toContain('### 执行进度');
 		expect(sentContent).toContain('`Read`');
+		expect(sentContent).toContain('⏳ 正在思考...');
+	});
+
+	it('hides tool status block after visible output starts', async () => {
+		const session = new FeishuStreamingSession(client);
+		await session.start('chat_1');
+		requestJsonMock.mockResolvedValue(okResponse());
+
+		session.setToolStatus('Read', 'running');
+		session.update('Working...');
+
+		await vi.advanceTimersByTimeAsync(150);
+
+		const updateCalls = requestJsonMock.mock.calls.slice(3);
+		const sentContent = updateCalls[updateCalls.length - 1][1].body.content as string;
+		expect(sentContent).toContain('### 输出');
+		expect(sentContent).toContain('Working...');
+		expect(sentContent).not.toContain('### 执行进度');
+		expect(sentContent).not.toContain('`Read`');
+	});
+
+	it('renders todo items in a dedicated block', async () => {
+		const session = new FeishuStreamingSession(client);
+		await session.start('chat_1');
+		requestJsonMock.mockResolvedValue(okResponse());
+
+		session.setTodos([
+			{ content: 'Inspect workspace', status: 'completed' },
+			{ content: 'Trace settings flow', status: 'in_progress', activeForm: 'Tracing settings flow' },
+			{ content: 'Write fix', status: 'pending' },
+		]);
+		session.update('Collecting details...');
+
+		await vi.advanceTimersByTimeAsync(150);
+
+		const updateCalls = requestJsonMock.mock.calls.slice(3);
+		const sentContent = updateCalls[updateCalls.length - 1][1].body.content as string;
+		expect(sentContent).toContain('### TODO');
+		expect(sentContent).toContain('✅ Inspect workspace');
+		expect(sentContent).toContain('⏳ Tracing settings flow');
+		expect(sentContent).toContain('⬜ Write fix');
 	});
 
 	it('setToolStatus updates existing tool state', async () => {
@@ -385,7 +426,8 @@ describe('FeishuStreamingSession', () => {
 
 		// First: update element with final content
 		expect(closeCalls[0][0]).toContain('/elements/content/content');
-		expect(closeCalls[0][1].body.content).toBe('Final answer.');
+		expect(closeCalls[0][1].body.content).toContain('### 输出');
+		expect(closeCalls[0][1].body.content).toContain('Final answer.');
 
 		// Second: close streaming
 		expect(closeCalls[1][0]).toContain('/settings');
@@ -438,7 +480,8 @@ describe('FeishuStreamingSession', () => {
 		const closeCalls = requestJsonMock.mock.calls.slice(3);
 		// Should have: updateElement (with 'Final.') + closeStreaming
 		expect(closeCalls.length).toBe(2);
-		expect(closeCalls[0][1].body.content).toBe('Final.');
+		expect(closeCalls[0][1].body.content).toContain('### 输出');
+		expect(closeCalls[0][1].body.content).toContain('Final.');
 
 		// Advance timer to verify no late update fires
 		const countAfterClose = requestJsonMock.mock.calls.length;

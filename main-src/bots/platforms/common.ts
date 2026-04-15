@@ -4,10 +4,17 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
 import type { BotInboundMessage } from '../botRuntime.js';
 
+export type BotTodoListItem = {
+	content: string;
+	status: 'pending' | 'in_progress' | 'completed';
+	activeForm?: string;
+};
+
 export type StreamReplyCallbacks = {
 	onStart: () => Promise<void>;
 	onDelta: (fullText: string) => Promise<void>;
-	onToolStatus: (name: string, state: 'running' | 'completed' | 'error') => void;
+	onToolStatus: (name: string, state: 'running' | 'completed' | 'error', detail?: string) => void;
+	onTodoUpdate: (todos: BotTodoListItem[]) => void;
 	onDone: (fullText: string) => Promise<void>;
 	onError: (error: string) => Promise<void>;
 };

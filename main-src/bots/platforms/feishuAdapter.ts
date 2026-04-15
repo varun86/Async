@@ -1,6 +1,6 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
-import type { BotPlatformAdapter, PlatformMessageHandler, StreamReplyCallbacks } from './common.js';
+import type { BotPlatformAdapter, BotTodoListItem, PlatformMessageHandler, StreamReplyCallbacks } from './common.js';
 import { createJsonHttpInstance, createProxyAgent, resolveIntegrationProxyUrl, splitPlainText } from './common.js';
 import { FeishuCardKitClient, FeishuStreamingSession } from './feishuCardKit.js';
 
@@ -39,6 +39,19 @@ function collectSenderIds(raw: { open_id?: string; user_id?: string; union_id?: 
 		.map((value) => String(value ?? '').trim())
 		.filter(Boolean);
 	return [...new Set(ids)];
+}
+
+function normalizeBotTodos(raw: BotTodoListItem[]): BotTodoListItem[] {
+	return raw
+		.map((todo) => ({
+			content: String(todo.content ?? '').trim(),
+			status:
+				todo.status === 'completed' || todo.status === 'in_progress' || todo.status === 'pending'
+					? todo.status
+					: 'pending',
+			activeForm: String(todo.activeForm ?? '').trim() || undefined,
+		}))
+		.filter((todo) => todo.content);
 }
 
 export function buildFeishuReplyPayload(messageId: string, text: string) {
@@ -167,9 +180,13 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 							if (session.isFailed) return;
 							session.update(fullText);
 						},
-						onToolStatus: (name, state) => {
+						onToolStatus: (name, state, detail) => {
 							if (session.isFailed) return;
-							session.setToolStatus(name, state);
+							session.setToolStatus(name, state, detail);
+						},
+						onTodoUpdate: (todos) => {
+							if (session.isFailed) return;
+							session.setTodos(normalizeBotTodos(todos));
 						},
 						onDone: async (fullText) => {
 							if (session.isFailed) {
