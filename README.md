@@ -52,6 +52,7 @@ Async IDE is an open-source AI-native desktop application designed as your comma
 - **Full control** — Use your own API keys, keep conversation history and repo state entirely local, with no dependency on cloud services.
 - **Git-native** — Status, diffs, and agent-driven changes stay in sync with your actual repository.
 - **Four Composer modes** — **Agent** (autonomous execution), **Plan** (review first, then run), **Ask** (read-only Q&A), and **Debug** (systematic troubleshooting), covering various development scenarios.
+- **IM bot bridge** — Wire **Telegram**, **Slack**, **Discord**, and **Feishu (Lark)** into the same Agent / **Team** toolchain as the desktop app, with per-integration model, workspace roots, allowlists, optional HTTP proxy, and streaming replies where the platform supports it.
 - **Lean shell** — Electron + React with **Agent / Editor** dual layout, Monaco + embedded terminal, following the same philosophy as Cursor but with a more focused codebase.
 
 ---
@@ -93,6 +94,12 @@ Async IDE is an open-source AI-native desktop application designed as your comma
   <img src="docs/assets/multi_agent_1.png" width="2871" alt="Async 模型设置" />
 </p>
 
+### Control the entire application through external robots in a conversational manner.
+
+<p align="center">
+  <img src="docs/assets/bot_1.png" width="2871" alt="Async 模型设置" />
+</p>
+
 ---
 
 ## Core Features
@@ -121,6 +128,19 @@ Async IDE is an open-source AI-native desktop application designed as your comma
 - **Quick Open** palette (`Ctrl/Cmd+P`) and keyboard-first navigation.
 - Built-in i18n support for English and Simplified Chinese.
 - Support for local disk skills, workspace config merge, and tool approval controls.
+
+### IM / Bot integrations
+
+Async can act as the **host** for coding agents on external chat surfaces, not only inside the Electron UI.
+
+- **Platforms** — **Telegram**, **Slack**, **Discord**, and **Feishu (Lark)** via dedicated adapters under `main-src/bots/platforms/`.
+- **Same runtime** — Inbound messages run through **`botRuntime`**: normal threads use **`agentLoop`**, while **Team** mode uses the same **`teamOrchestrator`** path as the desktop Composer, including worker streaming and tool status where applicable.
+- **Per integration** — Enable/disable, display name, **default model**, **default Composer mode** (`agent` / `ask` / `plan` / `team`), **workspace root(s)**, optional **allowlists** for chats and users, and an extra **system prompt** on top of project rules.
+- **Connectivity** — Optional **HTTP proxy URL** per platform (shared pattern for token calls and webhooks) when vendor APIs must go through a corporate proxy.
+- **Feishu** — App credentials, optional encryption, **streaming interactive cards** for long-running replies, and session hygiene when integration settings change.
+- **Configuration UI** — Managed from **Settings → Bots** (`SettingsBotsPanel.tsx`).
+
+For a deeper module-level walkthrough, see the maintainer-oriented notes under [`docs/llm-wiki/`](./docs/llm-wiki/).
 
 ---
 
@@ -175,6 +195,7 @@ Async/
 │   ├── lsp/                   # TypeScript LSP session
 │   ├── mcp/                   # Model Context Protocol integration
 │   ├── memdir/                # Memory directory management
+│   ├── bots/                  # IM bot controller, runtime, connectivity, platform adapters
 │   ├── ipc/register.ts        # ipcMain handlers (chat, threads, git, fs, agent, ...)
 │   ├── shell/                 # Shell command execution
 │   ├── threadStore.ts         # Persistent threads + messages (JSON)
@@ -193,6 +214,7 @@ Async/
 │   ├── ChatComposer.tsx       # Message composer component
 │   ├── EditorMainPanel.tsx    # Monaco editor panel
 │   ├── SettingsPage.tsx       # Settings UI
+│   ├── SettingsBotsPanel.tsx  # IM bot integrations (Telegram / Slack / Discord / Feishu)
 │   ├── WorkspaceExplorer.tsx  # File explorer
 │   ├── hooks/                 # Custom React hooks (19 files)
 │   ├── i18n/                  # Locale messages (en / zh-CN)
@@ -213,7 +235,7 @@ Async/
 Default location under Electron's **`userData`** directory:
 
 - **`async/threads.json`**: threads and chat messages.
-- **`async/settings.json`**: model configuration, API keys, layout, and agent options.
+- **`async/settings.json`**: model configuration, API keys, layout, agent options, and **`bots.integrations`** (Telegram / Slack / Discord / Feishu tokens, proxy URLs, allowlists, defaults).
 - **`.async/plans/`**: Markdown plan documents generated in Plan mode.
 
 The renderer may use **localStorage** for lightweight UI state, but the authoritative data source for conversations is **`threads.json`**.
