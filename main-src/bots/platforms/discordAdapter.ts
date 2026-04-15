@@ -38,8 +38,15 @@ export class DiscordBotAdapter implements BotPlatformAdapter {
 	}
 
 	private isAllowedChannel(channelId: string): boolean {
-		const allowed = this.integration.discord?.allowedChannelIds ?? [];
+		const allowed = this.integration.allowedReplyChatIds?.length
+			? this.integration.allowedReplyChatIds
+			: (this.integration.discord?.allowedChannelIds ?? []);
 		return allowed.length === 0 || allowed.includes(channelId);
+	}
+
+	private isAllowedUser(userId: string): boolean {
+		const allowed = this.integration.allowedReplyUserIds ?? [];
+		return allowed.length === 0 || allowed.includes(userId);
 	}
 
 	private startHeartbeat(intervalMs: number): void {
@@ -109,8 +116,12 @@ export class DiscordBotAdapter implements BotPlatformAdapter {
 			if (author.bot === true) {
 				return;
 			}
+			const senderId = String(author.id ?? '');
+			if (!this.isAllowedUser(senderId)) {
+				return;
+			}
 			const channelId = String(data.channel_id ?? '');
-			if (!channelId || !this.isAllowedChannel(channelId)) {
+			if (!channelId) {
 				return;
 			}
 			const content = String(data.content ?? '');
@@ -118,6 +129,9 @@ export class DiscordBotAdapter implements BotPlatformAdapter {
 				return;
 			}
 			const guildId = data.guild_id ? String(data.guild_id) : '';
+			if (guildId && !this.isAllowedChannel(channelId)) {
+				return;
+			}
 			if (guildId && this.integration.discord?.requireMentionInGuilds !== false) {
 				const mentions = Array.isArray(data.mentions) ? data.mentions : [];
 				const didMention = mentions.some((item) => String((item as { id?: unknown }).id ?? '') === this.botUserId);
@@ -132,7 +146,7 @@ export class DiscordBotAdapter implements BotPlatformAdapter {
 			void onMessage({
 				conversationKey: channelId,
 				text: cleaned,
-				senderId: String(author.id ?? ''),
+				senderId: senderId || undefined,
 				senderName: String(author.global_name ?? author.username ?? '').trim() || undefined,
 				reply: async (text) => {
 					for (const chunk of splitPlainText(text, 1900)) {
@@ -176,4 +190,3 @@ export class DiscordBotAdapter implements BotPlatformAdapter {
 		this.socket = null;
 	}
 }
-

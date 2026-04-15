@@ -18,6 +18,18 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 
 	constructor(private readonly integration: BotIntegrationConfig) {}
 
+	private isAllowedChat(chatId: string): boolean {
+		const allowed = this.integration.allowedReplyChatIds?.length
+			? this.integration.allowedReplyChatIds
+			: (this.integration.feishu?.allowedChatIds ?? []);
+		return allowed.length === 0 || allowed.includes(chatId);
+	}
+
+	private isAllowedUser(userId: string): boolean {
+		const allowed = this.integration.allowedReplyUserIds ?? [];
+		return allowed.length === 0 || allowed.includes(userId);
+	}
+
 	async start(onMessage: PlatformMessageHandler): Promise<void> {
 		const appId = this.integration.feishu?.appId?.trim() ?? '';
 		const appSecret = this.integration.feishu?.appSecret?.trim() ?? '';
@@ -42,8 +54,13 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 					return;
 				}
 				const chatId = String(message.chat_id ?? '').trim();
-				const allowed = this.integration.feishu?.allowedChatIds ?? [];
-				if (allowed.length > 0 && !allowed.includes(chatId)) {
+				const senderId = String(event?.sender?.sender_id?.open_id ?? '').trim();
+				if (!this.isAllowedUser(senderId)) {
+					return;
+				}
+				const chatType = String(message.chat_type ?? '').trim().toLowerCase();
+				const isGroupChat = chatType !== '' && chatType !== 'p2p';
+				if (isGroupChat && !this.isAllowedChat(chatId)) {
 					return;
 				}
 				const text = parseFeishuText(message.content);
@@ -53,7 +70,7 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 				await onMessage({
 					conversationKey: chatId,
 					text,
-					senderId: String(event?.sender?.sender_id?.open_id ?? '').trim() || undefined,
+					senderId: senderId || undefined,
 					senderName: String(event?.sender?.sender_type ?? '').trim() || undefined,
 					reply: async (replyText) => {
 						if (!this.client) {
@@ -82,4 +99,3 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 		this.client = null;
 	}
 }
-

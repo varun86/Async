@@ -43,8 +43,15 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 	}
 
 	private isAllowedChat(chatId: string): boolean {
-		const allowed = this.integration.telegram?.allowedChatIds ?? [];
+		const allowed = this.integration.allowedReplyChatIds?.length
+			? this.integration.allowedReplyChatIds
+			: (this.integration.telegram?.allowedChatIds ?? []);
 		return allowed.length === 0 || allowed.includes(chatId);
+	}
+
+	private isAllowedUser(userId: string): boolean {
+		const allowed = this.integration.allowedReplyUserIds ?? [];
+		return allowed.length === 0 || allowed.includes(userId);
 	}
 
 	private cleanIncomingText(message: TelegramMessage): string {
@@ -92,7 +99,11 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 							continue;
 						}
 						const chatId = String(message.chat.id);
-						if (!this.isAllowedChat(chatId)) {
+						const senderId = message.from?.id != null ? String(message.from.id) : '';
+						if (!this.isAllowedUser(senderId)) {
+							continue;
+						}
+						if (message.chat.type !== 'private' && !this.isAllowedChat(chatId)) {
 							continue;
 						}
 						const cleaned = this.cleanIncomingText(message);
@@ -103,7 +114,7 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 						await onMessage({
 							conversationKey: threadKey,
 							text: cleaned,
-							senderId: message.from?.id != null ? String(message.from.id) : undefined,
+							senderId: senderId || undefined,
 							senderName: message.from?.username || message.from?.first_name,
 							reply: async (text) => {
 								for (const chunk of splitPlainText(text, 3500)) {
@@ -130,4 +141,3 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 		this.abortController = null;
 	}
 }
-

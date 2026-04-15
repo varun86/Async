@@ -37,10 +37,11 @@ export type BotIntegrationConfig = {
 	defaultMode?: BotComposerMode;
 	defaultWorkspaceRoot?: string;
 	workspaceRoots?: string[];
+	allowedReplyChatIds?: string[];
+	allowedReplyUserIds?: string[];
 	systemPrompt?: string;
 	telegram?: TelegramBotConfig;
 	slack?: SlackBotConfig;
 	discord?: DiscordBotConfig;
 	feishu?: FeishuBotConfig;
 };
-

@@ -37,6 +37,8 @@ export type BotIntegrationConfig = {
 	defaultMode?: BotComposerMode;
 	defaultWorkspaceRoot?: string;
 	workspaceRoots?: string[];
+	allowedReplyChatIds?: string[];
+	allowedReplyUserIds?: string[];
 	systemPrompt?: string;
 	telegram?: TelegramBotConfig;
 	slack?: SlackBotConfig;
@@ -55,6 +57,8 @@ export function createEmptyBotIntegration(): BotIntegrationConfig {
 		enabled: false,
 		defaultMode: 'agent',
 		workspaceRoots: [],
+		allowedReplyChatIds: [],
+		allowedReplyUserIds: [],
 		telegram: {
 			requireMentionInGroups: true,
 			allowedChatIds: [],
@@ -71,4 +75,3 @@ export function createEmptyBotIntegration(): BotIntegrationConfig {
 		},
 	};
 }
-

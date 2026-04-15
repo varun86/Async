@@ -54,8 +54,15 @@ export class SlackBotAdapter implements BotPlatformAdapter {
 	}
 
 	private isAllowedChannel(channelId: string): boolean {
-		const allowed = this.integration.slack?.allowedChannelIds ?? [];
+		const allowed = this.integration.allowedReplyChatIds?.length
+			? this.integration.allowedReplyChatIds
+			: (this.integration.slack?.allowedChannelIds ?? []);
 		return allowed.length === 0 || allowed.includes(channelId);
+	}
+
+	private isAllowedUser(userId: string): boolean {
+		const allowed = this.integration.allowedReplyUserIds ?? [];
+		return allowed.length === 0 || allowed.includes(userId);
 	}
 
 	private normalizeEventText(text: string): string {
@@ -90,10 +97,13 @@ export class SlackBotAdapter implements BotPlatformAdapter {
 			if (!evt?.type || evt.subtype || evt.bot_id || !evt.text || !evt.channel) {
 				return;
 			}
-			if (!this.isAllowedChannel(evt.channel)) {
+			if (!this.isAllowedUser(String(evt.user ?? ''))) {
 				return;
 			}
 			const isDirect = evt.channel_type === 'im';
+			if (!isDirect && !this.isAllowedChannel(evt.channel)) {
+				return;
+			}
 			if (!isDirect && evt.type !== 'app_mention') {
 				return;
 			}
@@ -143,4 +153,3 @@ export class SlackBotAdapter implements BotPlatformAdapter {
 		this.socket = null;
 	}
 }
-
