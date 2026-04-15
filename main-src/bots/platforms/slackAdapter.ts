@@ -1,6 +1,14 @@
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
 import type { BotPlatformAdapter, PlatformMessageHandler } from './common.js';
-import { safeJsonParse, splitPlainText } from './common.js';
+import {
+	createProxyAgent,
+	requestJson,
+	resolveIntegrationProxyUrl,
+	safeJsonParse,
+	splitPlainText,
+	websocketMessageToText,
+} from './common.js';
+import WebSocket from 'ws';
 
 type SlackEventEnvelope = {
 	envelope_id?: string;
@@ -35,18 +43,16 @@ export class SlackBotAdapter implements BotPlatformAdapter {
 	}
 
 	private async api<T>(method: string, token: string, body?: Record<string, unknown>): Promise<T> {
-		const response = await fetch(`https://slack.com/api/${method}`, {
+		const data = await requestJson<{ ok?: boolean; error?: string } & T>(`https://slack.com/api/${method}`, {
 			method: body ? 'POST' : 'GET',
 			headers: {
 				authorization: `Bearer ${token}`,
 				...(body ? { 'content-type': 'application/json' } : {}),
 			},
-			body: body ? JSON.stringify(body) : undefined,
+			body,
+			timeoutMs: 20_000,
+			proxyUrl: resolveIntegrationProxyUrl(this.integration),
 		});
-		if (!response.ok) {
-			throw new Error(`Slack API ${method} failed: ${response.status}`);
-		}
-		const data = (await response.json()) as { ok?: boolean; error?: string } & T;
 		if (!data.ok) {
 			throw new Error(data.error || `Slack API ${method} failed`);
 		}
@@ -81,9 +87,11 @@ export class SlackBotAdapter implements BotPlatformAdapter {
 			throw new Error('Slack Socket Mode URL missing.');
 		}
 
-		this.socket = new WebSocket(url);
-		this.socket.addEventListener('message', (event) => {
-			const payload = safeJsonParse<SlackEventEnvelope>(String(event.data ?? ''));
+		this.socket = new WebSocket(url, {
+			agent: createProxyAgent(resolveIntegrationProxyUrl(this.integration)),
+		});
+		this.socket.on('message', (data) => {
+			const payload = safeJsonParse<SlackEventEnvelope>(websocketMessageToText(data));
 			if (!payload) {
 				return;
 			}
@@ -127,7 +135,13 @@ export class SlackBotAdapter implements BotPlatformAdapter {
 			});
 		});
 
-		this.socket.addEventListener('close', () => {
+		this.socket.on('error', (error) => {
+			if (!this.stopRequested) {
+				console.warn('[bots][slack]', error instanceof Error ? error.message : error);
+			}
+		});
+
+		this.socket.on('close', () => {
 			this.socket = null;
 			if (!this.stopRequested) {
 				setTimeout(() => {

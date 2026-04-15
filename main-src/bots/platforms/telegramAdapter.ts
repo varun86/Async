@@ -1,6 +1,6 @@
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
 import type { BotPlatformAdapter, PlatformMessageHandler } from './common.js';
-import { splitPlainText } from './common.js';
+import { requestJson, resolveIntegrationProxyUrl, splitPlainText } from './common.js';
 
 type TelegramUpdate = {
 	update_id: number;
@@ -19,6 +19,7 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 	private abortController: AbortController | null = null;
 	private offset = 0;
 	private botUsername = '';
+	private stopRequested = false;
 
 	constructor(private readonly integration: BotIntegrationConfig) {}
 
@@ -27,72 +28,55 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 	}
 
 	private async api<T>(method: string, body?: Record<string, unknown>): Promise<T> {
-		const response = await fetch(`https://api.telegram.org/bot${this.token}/${method}`, {
-			method: body ? 'POST' : 'GET',
-			headers: body ? { 'content-type': 'application/json' } : undefined,
-			body: body ? JSON.stringify(body) : undefined,
-		});
-		if (!response.ok) {
-			throw new Error(`Telegram API ${method} failed: ${response.status}`);
-		}
-		const data = (await response.json()) as { ok?: boolean; result?: T; description?: string };
+		const data = await requestJson<{ ok?: boolean; result?: T; description?: string }>(
+			`https://api.telegram.org/bot${this.token}/${method}`,
+			{
+				method: body ? 'POST' : 'GET',
+				headers: body ? { 'content-type': 'application/json' } : undefined,
+				body,
+				timeoutMs: body ? 40_000 : 20_000,
+				proxyUrl: resolveIntegrationProxyUrl(this.integration),
+				signal: this.abortController?.signal,
+			}
+		);
 		if (!data.ok) {
 			throw new Error(data.description || `Telegram API ${method} failed`);
 		}
 		return data.result as T;
 	}
 
-	private isAllowedChat(chatId: string): boolean {
-		const allowed = this.integration.allowedReplyChatIds?.length
-			? this.integration.allowedReplyChatIds
-			: (this.integration.telegram?.allowedChatIds ?? []);
-		return allowed.length === 0 || allowed.includes(chatId);
-	}
-
-	private isAllowedUser(userId: string): boolean {
-		const allowed = this.integration.allowedReplyUserIds ?? [];
-		return allowed.length === 0 || allowed.includes(userId);
-	}
-
-	private cleanIncomingText(message: TelegramMessage): string {
-		const raw = String(message.text ?? '').trim();
-		if (!raw) {
-			return '';
-		}
-		if (message.chat.type === 'private') {
-			return raw;
-		}
-		if (this.integration.telegram?.requireMentionInGroups === false) {
-			return raw;
-		}
-		if (!this.botUsername) {
-			return '';
-		}
-		const mention = `@${this.botUsername.toLowerCase()}`;
-		const lowered = raw.toLowerCase();
-		if (!lowered.includes(mention)) {
-			return '';
-		}
-		return raw.replace(new RegExp(`@${this.botUsername}\\b`, 'ig'), '').trim();
-	}
-
 	async start(onMessage: PlatformMessageHandler): Promise<void> {
 		if (!this.token) {
 			return;
 		}
-		this.abortController = new AbortController();
+		this.stopRequested = false;
+		const controller = new AbortController();
+		this.abortController = controller;
 		const me = await this.api<{ username?: string }>('getMe');
 		this.botUsername = String(me.username ?? '').trim();
 
 		void (async () => {
-			while (!this.abortController?.signal.aborted) {
+			while (!controller.signal.aborted) {
 				try {
-					const updates = await this.api<TelegramUpdate[]>('getUpdates', {
-						timeout: 30,
-						offset: this.offset,
-						allowed_updates: ['message'],
-					});
-					for (const update of updates) {
+					const updates = await requestJson<{ ok?: boolean; result?: TelegramUpdate[]; description?: string }>(
+						`https://api.telegram.org/bot${this.token}/getUpdates`,
+						{
+							method: 'POST',
+							headers: { 'content-type': 'application/json' },
+							body: {
+								timeout: 30,
+								offset: this.offset,
+								allowed_updates: ['message'],
+							},
+							timeoutMs: 40_000,
+							proxyUrl: resolveIntegrationProxyUrl(this.integration),
+							signal: controller.signal,
+						}
+					);
+					if (!updates.ok) {
+						throw new Error(updates.description || 'Telegram API getUpdates failed');
+					}
+					for (const update of updates.result ?? []) {
 						this.offset = Math.max(this.offset, update.update_id + 1);
 						const message = update.message;
 						if (!message?.text || message.from?.is_bot) {
@@ -129,6 +113,9 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 						});
 					}
 				} catch (error) {
+					if (controller.signal.aborted || this.stopRequested) {
+						break;
+					}
 					console.warn('[bots][telegram]', error instanceof Error ? error.message : error);
 					await new Promise((resolve) => setTimeout(resolve, 3000));
 				}
@@ -136,7 +123,42 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 		})();
 	}
 
+	private isAllowedChat(chatId: string): boolean {
+		const allowed = this.integration.allowedReplyChatIds?.length
+			? this.integration.allowedReplyChatIds
+			: (this.integration.telegram?.allowedChatIds ?? []);
+		return allowed.length === 0 || allowed.includes(chatId);
+	}
+
+	private isAllowedUser(userId: string): boolean {
+		const allowed = this.integration.allowedReplyUserIds ?? [];
+		return allowed.length === 0 || allowed.includes(userId);
+	}
+
+	private cleanIncomingText(message: TelegramMessage): string {
+		const raw = String(message.text ?? '').trim();
+		if (!raw) {
+			return '';
+		}
+		if (message.chat.type === 'private') {
+			return raw;
+		}
+		if (this.integration.telegram?.requireMentionInGroups === false) {
+			return raw;
+		}
+		if (!this.botUsername) {
+			return '';
+		}
+		const mention = `@${this.botUsername.toLowerCase()}`;
+		const lowered = raw.toLowerCase();
+		if (!lowered.includes(mention)) {
+			return '';
+		}
+		return raw.replace(new RegExp(`@${this.botUsername}\\b`, 'ig'), '').trim();
+	}
+
 	async stop(): Promise<void> {
+		this.stopRequested = true;
 		this.abortController?.abort();
 		this.abortController = null;
 	}

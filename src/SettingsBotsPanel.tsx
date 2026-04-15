@@ -43,6 +43,36 @@ function textFromLines(lines: string[] | undefined): string {
 	return (lines ?? []).join('\n');
 }
 
+function platformProxyValue(item: BotIntegrationConfig): string {
+	switch (item.platform) {
+		case 'telegram':
+			return item.telegram?.proxyUrl ?? '';
+		case 'slack':
+			return item.slack?.proxyUrl ?? '';
+		case 'discord':
+			return item.discord?.proxyUrl ?? '';
+		case 'feishu':
+			return item.feishu?.proxyUrl ?? '';
+		default:
+			return '';
+	}
+}
+
+function patchPlatformProxy(item: BotIntegrationConfig, proxyUrl: string): BotIntegrationConfig {
+	switch (item.platform) {
+		case 'telegram':
+			return { ...item, telegram: { ...(item.telegram ?? {}), proxyUrl } };
+		case 'slack':
+			return { ...item, slack: { ...(item.slack ?? {}), proxyUrl } };
+		case 'discord':
+			return { ...item, discord: { ...(item.discord ?? {}), proxyUrl } };
+		case 'feishu':
+			return { ...item, feishu: { ...(item.feishu ?? {}), proxyUrl } };
+		default:
+			return item;
+	}
+}
+
 function platformLabel(platform: BotPlatform, t: TFunction): string {
 	return t(`settings.bots.platform.${platform}.label`);
 }
@@ -183,6 +213,12 @@ function BotEditorModal(props: BotEditorModalProps) {
 
 	useEffect(() => {
 		const timer = window.setTimeout(() => firstInputRef.current?.focus(), 40);
+		return () => {
+			window.clearTimeout(timer);
+		};
+	}, []);
+
+	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key === 'Escape') {
 				event.preventDefault();
@@ -191,7 +227,6 @@ function BotEditorModal(props: BotEditorModalProps) {
 		};
 		window.addEventListener('keydown', onKeyDown);
 		return () => {
-			window.clearTimeout(timer);
 			window.removeEventListener('keydown', onKeyDown);
 		};
 	}, [onClose]);
@@ -502,6 +537,18 @@ function BotEditorModal(props: BotEditorModalProps) {
 								</label>
 							</div>
 						) : null}
+
+						<label className="ref-settings-field">
+							<span>{t('settings.bots.field.proxy')}</span>
+							<input
+								type="text"
+								value={platformProxyValue(draft)}
+								onChange={(event) => onChangeDraft(patchPlatformProxy(draft, event.target.value))}
+								placeholder={t('settings.bots.placeholder.proxy')}
+								autoComplete="off"
+							/>
+							<p className="ref-settings-field-hint">{t('settings.bots.hint.proxy')}</p>
+						</label>
 					</section>
 
 					<section className="ref-settings-bot-section">

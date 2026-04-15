@@ -1,7 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
 import type { BotPlatformAdapter, PlatformMessageHandler } from './common.js';
-import { splitPlainText } from './common.js';
+import { createJsonHttpInstance, createProxyAgent, resolveIntegrationProxyUrl, splitPlainText } from './common.js';
 
 function parseFeishuText(raw: unknown): string {
 	try {
@@ -36,11 +36,16 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 		if (!appId || !appSecret) {
 			return;
 		}
-		this.client = new lark.Client({ appId, appSecret });
+		const proxyUrl = resolveIntegrationProxyUrl(this.integration);
+		const httpInstance = createJsonHttpInstance(proxyUrl);
+		const proxyAgent = createProxyAgent(proxyUrl);
+		this.client = new lark.Client({ appId, appSecret, httpInstance });
 		this.wsClient = new lark.ws.Client({
 			appId,
 			appSecret,
 			appType: lark.AppType.SelfBuild,
+			httpInstance,
+			agent: proxyAgent,
 			...(this.integration.feishu?.encryptKey?.trim()
 				? { encryptKey: this.integration.feishu?.encryptKey?.trim() }
 				: {}),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { safeJsonParse, splitPlainText } from './common.js';
+import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
+import { resolveIntegrationProxyUrl, safeJsonParse, splitPlainText, websocketMessageToText } from './common.js';
 
 describe('splitPlainText', () => {
 	it('splits long text on whitespace boundaries when possible', () => {
@@ -21,3 +22,30 @@ describe('safeJsonParse', () => {
 	});
 });
 
+describe('websocketMessageToText', () => {
+	it('joins buffer fragments into utf8 text', () => {
+		expect(websocketMessageToText([Buffer.from('{"ok"'), Buffer.from(':true}')])).toBe('{"ok":true}');
+	});
+});
+
+describe('resolveIntegrationProxyUrl', () => {
+	it('reads the proxy from the active platform config', () => {
+		const integration: BotIntegrationConfig = {
+			id: 'telegram-1',
+			name: 'Telegram',
+			platform: 'telegram',
+			telegram: { botToken: 'secret', proxyUrl: 'http://127.0.0.1:7890' },
+		};
+		expect(resolveIntegrationProxyUrl(integration)).toBe('http://127.0.0.1:7890');
+	});
+
+	it('returns undefined when the current platform has no proxy configured', () => {
+		const integration: BotIntegrationConfig = {
+			id: 'slack-1',
+			name: 'Slack',
+			platform: 'slack',
+			slack: { botToken: 'xoxb-token', appToken: 'xapp-token' },
+		};
+		expect(resolveIntegrationProxyUrl(integration)).toBeUndefined();
+	});
+});

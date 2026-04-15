@@ -1,6 +1,14 @@
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
 import type { BotPlatformAdapter, PlatformMessageHandler } from './common.js';
-import { safeJsonParse, splitPlainText } from './common.js';
+import {
+	createProxyAgent,
+	requestJson,
+	resolveIntegrationProxyUrl,
+	safeJsonParse,
+	splitPlainText,
+	websocketMessageToText,
+} from './common.js';
+import WebSocket from 'ws';
 
 type DiscordGatewayPayload = {
 	op: number;
@@ -23,18 +31,20 @@ export class DiscordBotAdapter implements BotPlatformAdapter {
 	}
 
 	private async api<T>(url: string, init?: RequestInit): Promise<T> {
-		const response = await fetch(`https://discord.com/api/v10${url}`, {
-			...init,
+		const data = await requestJson<T>(`https://discord.com/api/v10${url}`, {
+			method: init?.method,
 			headers: {
 				authorization: `Bot ${this.token}`,
 				'content-type': 'application/json',
-				...(init?.headers ?? {}),
+				...Object.fromEntries(
+					Object.entries((init?.headers ?? {}) as Record<string, string>).map(([key, value]) => [key, String(value)])
+				),
 			},
+			body: init?.body,
+			timeoutMs: 20_000,
+			proxyUrl: resolveIntegrationProxyUrl(this.integration),
 		});
-		if (!response.ok) {
-			throw new Error(`Discord API ${url} failed: ${response.status}`);
-		}
-		return (await response.json()) as T;
+		return data;
 	}
 
 	private isAllowedChannel(channelId: string): boolean {
@@ -77,10 +87,12 @@ export class DiscordBotAdapter implements BotPlatformAdapter {
 		this.botUserId = String(me.id ?? '').trim();
 		const gateway = await this.api<{ url?: string }>('/gateway/bot');
 		const gatewayUrl = `${String(gateway.url ?? 'wss://gateway.discord.gg').replace(/\/+$/, '')}/?v=10&encoding=json`;
-		this.socket = new WebSocket(gatewayUrl);
+		this.socket = new WebSocket(gatewayUrl, {
+			agent: createProxyAgent(resolveIntegrationProxyUrl(this.integration)),
+		});
 
-		this.socket.addEventListener('message', (event) => {
-			const payload = safeJsonParse<DiscordGatewayPayload>(String(event.data ?? ''));
+		this.socket.on('message', (messageData) => {
+			const payload = safeJsonParse<DiscordGatewayPayload>(websocketMessageToText(messageData));
 			if (!payload) {
 				return;
 			}
@@ -162,7 +174,13 @@ export class DiscordBotAdapter implements BotPlatformAdapter {
 			});
 		});
 
-		this.socket.addEventListener('close', () => {
+		this.socket.on('error', (error) => {
+			if (!this.stopRequested) {
+				console.warn('[bots][discord]', error instanceof Error ? error.message : error);
+			}
+		});
+
+		this.socket.on('close', () => {
 			this.stopHeartbeat();
 			this.socket = null;
 			if (!this.stopRequested) {
