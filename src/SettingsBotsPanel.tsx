@@ -2,7 +2,6 @@ import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useStat
 import { createPortal } from 'react-dom';
 import {
 	createEmptyBotIntegration,
-	type BotComposerMode,
 	type BotIntegrationConfig,
 	type BotPlatform,
 } from './botSettingsTypes';
@@ -93,14 +92,6 @@ function platformTip(platform: BotPlatform, t: TFunction): string {
 	return t(`settings.bots.platform.${platform}.tip`);
 }
 
-function modeOptions(t: TFunction): Array<{ value: BotComposerMode; label: string }> {
-	return [
-		{ value: 'agent', label: t('composer.mode.agent') },
-		{ value: 'ask', label: t('composer.mode.ask') },
-		{ value: 'plan', label: t('composer.mode.plan') },
-		{ value: 'team', label: t('composer.mode.team') },
-	];
-}
 
 function ensurePlatformShape(item: BotIntegrationConfig, platform: BotPlatform): BotIntegrationConfig {
 	const next: BotIntegrationConfig = {
@@ -111,7 +102,13 @@ function ensurePlatformShape(item: BotIntegrationConfig, platform: BotPlatform):
 		telegram: item.telegram ?? { requireMentionInGroups: true, allowedChatIds: [] },
 		slack: item.slack ?? { allowedChannelIds: [] },
 		discord: item.discord ?? { allowedChannelIds: [], requireMentionInGuilds: true },
-		feishu: item.feishu ?? { allowedChatIds: [] },
+		feishu: item.feishu
+			? {
+					...item.feishu,
+					allowedChatIds: item.feishu.allowedChatIds ?? [],
+					streamingCard: item.feishu.streamingCard ?? true,
+			  }
+			: { allowedChatIds: [], streamingCard: true },
 	};
 	if (platform === 'telegram' && next.telegram?.requireMentionInGroups === undefined) {
 		next.telegram = { ...(next.telegram ?? {}), requireMentionInGroups: true };
@@ -131,7 +128,13 @@ function cloneIntegration(item: BotIntegrationConfig): BotIntegrationConfig {
 			telegram: item.telegram ? { ...item.telegram, allowedChatIds: [...(item.telegram.allowedChatIds ?? [])] } : undefined,
 			slack: item.slack ? { ...item.slack, allowedChannelIds: [...(item.slack.allowedChannelIds ?? [])] } : undefined,
 			discord: item.discord ? { ...item.discord, allowedChannelIds: [...(item.discord.allowedChannelIds ?? [])] } : undefined,
-			feishu: item.feishu ? { ...item.feishu, allowedChatIds: [...(item.feishu.allowedChatIds ?? [])] } : undefined,
+			feishu: item.feishu
+				? {
+						...item.feishu,
+						allowedChatIds: [...(item.feishu.allowedChatIds ?? [])],
+						streamingCard: item.feishu.streamingCard ?? true,
+				  }
+				: undefined,
 		},
 		item.platform
 	);
@@ -306,15 +309,6 @@ function BotEditorModal(props: BotEditorModalProps) {
 									onChange={(next) => patchDraft({ defaultModelId: String(next ?? '') })}
 									options={modelOptions}
 									ariaLabel={t('settings.bots.field.defaultModel')}
-								/>
-							</label>
-							<label className="ref-settings-field">
-								<span>{t('settings.bots.field.defaultMode')}</span>
-								<VoidSelect
-									value={draft.defaultMode ?? 'agent'}
-									onChange={(next) => patchDraft({ defaultMode: next as BotComposerMode })}
-									options={modeOptions(t)}
-									ariaLabel={t('settings.bots.field.defaultMode')}
 								/>
 							</label>
 						</div>
@@ -827,7 +821,6 @@ export function SettingsBotsPanel({ value, onChange, modelEntries, shell }: Prop
 									</div>
 
 									<div className="ref-settings-bot-badges">
-										<span className="ref-settings-bot-badge">{t(`composer.mode.${current.defaultMode ?? 'agent'}`)}</span>
 										<span className="ref-settings-bot-badge">{modelText}</span>
 										<span className="ref-settings-bot-badge">{summary.chats}</span>
 										<span className="ref-settings-bot-badge">{summary.users}</span>

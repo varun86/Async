@@ -231,3 +231,66 @@ export function appendSuffixToStructuredAssistant(raw: string, suffix: string): 
 	}
 	return stringifyAgentAssistantPayload({ ...p, parts });
 }
+
+/**
+ * 去掉 run_async_task 结果开头的元数据行（workspace=, mode=, model=）。
+ * botRuntime 在 run_async_task handler 里会拼上这几行前缀。
+ */
+function stripBotTaskResultMetadata(result: string): string {
+	const lines = result.split('\n');
+	let i = 0;
+	while (i < lines.length && /^(workspace|mode|model)=/.test(lines[i])) {
+		i++;
+	}
+	// 跳过紧跟的空行
+	if (i < lines.length && lines[i].trim() === '') {
+		i++;
+	}
+	return i > 0 ? lines.slice(i).join('\n') : result;
+}
+
+/**
+ * 从机器人 orchestrator 返回的结构化 JSON 中提取对外展示的纯文本/markdown。
+ *
+ * 处理两层嵌套：
+ *  - 外层：orchestrator 自身的 structured payload（含桥接文本 + run_async_task tool 调用）
+ *  - 内层：run_async_task 的 result 里可能还嵌了一层 structured payload
+ *
+ * 优先取内层（真正的任务结果），没有时回退到外层文本。
+ */
+export function extractBotReplyText(raw: string): string {
+	if (!isStructuredAssistantMessage(raw)) {
+		return raw;
+	}
+	const payload = parseAgentAssistantPayload(raw);
+	if (!payload) {
+		return raw;
+	}
+
+	const outerTexts: string[] = [];
+	const innerTaskTexts: string[] = [];
+
+	for (const part of payload.parts) {
+		if (part.type === 'text') {
+			const t = part.text.trim();
+			if (t) outerTexts.push(part.text);
+		} else if (part.type === 'tool' && part.name === 'run_async_task') {
+			const stripped = stripBotTaskResultMetadata(part.result);
+			if (isStructuredAssistantMessage(stripped)) {
+				const inner = flattenAssistantTextPartsForSearch(stripped).trim();
+				if (inner) innerTaskTexts.push(inner);
+			} else {
+				const t = stripped.trim();
+				if (t) innerTaskTexts.push(t);
+			}
+		}
+	}
+
+	const combined = innerTaskTexts.join('\n\n').trim();
+	if (combined) return combined;
+
+	const outerText = outerTexts.join('').trim();
+	if (outerText) return outerText;
+
+	return raw;
+}

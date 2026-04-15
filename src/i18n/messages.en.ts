@@ -638,6 +638,7 @@ export const messagesEn: Record<string, string> = {
 	'settings.bots.telegram.policy.direct': 'Allow direct group replies',
 	'settings.bots.telegram.policy.directHint': 'More proactive, but noisier',
 	'settings.bots.discord.requireMention': 'Require mentions in guild channels',
+	'settings.bots.feishu.streamingCard': 'Use streaming cards (CardKit) for real-time typewriter effect',
 	'settings.modelsHint':
 		'Add a provider first (Base URL, API key, and HTTP proxy for OpenAI-compatible). Put every model that shares that connection under the same provider. Models only need display name, request name, and optional output cap.',
 	'settings.modelsProviderLead': 'Deleting a provider removes all of its models.',

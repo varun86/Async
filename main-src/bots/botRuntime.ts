@@ -9,7 +9,7 @@ import { runTeamSession } from '../agent/teamOrchestrator.js';
 import type { BotComposerMode, BotIntegrationConfig } from '../botSettingsTypes.js';
 import { getGitContextBlock } from '../gitContext.js';
 import { streamChatUnified } from '../llm/llmRouter.js';
-import { prepareUserTurnForChat } from '../llm/agentMessagePrep.js';
+import { buildAgentGlobalRuleAppend, prepareUserTurnForChat } from '../llm/agentMessagePrep.js';
 import { formatLlmSdkError } from '../llm/formatLlmSdkError.js';
 import { resolveModelRequest, resolveThinkingLevelForSelection } from '../llm/modelResolve.js';
 import { buildWorkspaceTreeSummary, cloneMessagesWithExpandedLastUser, modeExpandsWorkspaceFileContext } from '../llm/workspaceContextExpand.js';
@@ -214,7 +214,7 @@ export function createInitialBotSession(
 		conversationKey,
 		workspaceRoot,
 		modelId,
-		mode: integration.defaultMode ?? 'agent',
+		mode: 'agent' as BotComposerMode,
 		threadIdsByWorkspace: {},
 		lastUserId: senderId,
 		lastUserName: senderName,
@@ -228,6 +228,8 @@ type RunBotOrchestratorArgs = {
 	inbound: BotInboundMessage;
 	workspaceLspManager: WorkspaceLspManager;
 	signal: AbortSignal;
+	onStreamDelta?: (fullText: string) => void;
+	onToolStatus?: (name: string, state: 'running' | 'completed' | 'error') => void;
 };
 
 type RunBotAsyncTaskArgs = {
@@ -237,12 +239,14 @@ type RunBotAsyncTaskArgs = {
 	task: string;
 	workspaceLspManager: WorkspaceLspManager;
 	signal: AbortSignal;
+	onInnerTextDelta?: (fullText: string) => void;
+	onInnerToolStatus?: (name: string, state: 'running' | 'completed' | 'error') => void;
 };
 
 const BOT_TOOL_DEFS: AgentToolDef[] = [
 	{
 		name: 'get_async_session',
-		description: 'Get the current bot session context, including active workspace, model, mode, and available switch targets.',
+		description: 'Get the current bot session context, including active workspace, model, and available switch targets.',
 		parameters: { type: 'object', properties: {}, required: [] },
 	},
 	{
@@ -265,17 +269,6 @@ const BOT_TOOL_DEFS: AgentToolDef[] = [
 				model_id: { type: 'string', description: 'Configured model id.' },
 			},
 			required: ['model_id'],
-		},
-	},
-	{
-		name: 'switch_mode',
-		description: 'Switch the active Async mode for this conversation.',
-		parameters: {
-			type: 'object',
-			properties: {
-				mode: { type: 'string', enum: ['agent', 'ask', 'plan', 'team'], description: 'Target Async mode.' },
-			},
-			required: ['mode'],
 		},
 	},
 	{
@@ -303,19 +296,6 @@ const BOT_TOOL_DEFS: AgentToolDef[] = [
 	},
 ];
 
-function modeLabel(mode: BotComposerMode): string {
-	switch (mode) {
-		case 'ask':
-			return 'Ask';
-		case 'plan':
-			return 'Plan';
-		case 'team':
-			return 'Team';
-		case 'agent':
-		default:
-			return 'Agent';
-	}
-}
 
 function renderSessionSnapshot(
 	settings: ShellSettings,
@@ -344,7 +324,7 @@ function renderSessionSnapshot(
 	);
 }
 
-function buildBotOrchestratorPrompt(
+export function buildBotOrchestratorPrompt(
 	settings: ShellSettings,
 	integration: BotIntegrationConfig,
 	session: BotSessionState,
@@ -354,6 +334,7 @@ function buildBotOrchestratorPrompt(
 	const sessionBlock = renderSessionSnapshot(settings, integration, session);
 	const userName = inbound.senderName?.trim() || inbound.senderId?.trim() || 'user';
 	const extraPrompt = integration.systemPrompt?.trim();
+	const globalRuleAppend = buildAgentGlobalRuleAppend(settings.agent, language);
 	const lines = [
 		language === 'en'
 			? 'You are the Async bot bridge. You orchestrate the user conversation by switching Async session state and then calling run_async_task.'
@@ -362,14 +343,11 @@ function buildBotOrchestratorPrompt(
 			? 'Only the custom bot tools are available in this loop. Do not pretend to have already executed Async work unless run_async_task returned it.'
 			: '当前循环里只有机器人会话工具。没有调用 run_async_task 之前，不要假装已经执行了 Async 内部任务。',
 		language === 'en'
-			? 'When the user wants a different workspace, model, or mode, call the matching switch tool first. If the user asks to reset context, call new_async_thread.'
-			: '当用户要求切换工作区、模型或模式时，先调用对应的 switch 工具；如果用户要求开启新话题或清空上下文，调用 new_async_thread。',
+			? 'When the user wants a different workspace or model, call the matching switch tool first. If the user asks to reset context, call new_async_thread.'
+			: '当用户要求切换工作区或模型时，先调用对应的 switch 工具；如果用户要求开启新话题或清空上下文，调用 new_async_thread。',
 		language === 'en'
 			? 'After changing session state, call run_async_task in the same turn whenever the user also expects actual execution or an answer from Async.'
 			: '切换完会话状态后，只要用户还期待 Async 继续执行任务或给出结果，就在同一轮里调用 run_async_task。',
-		language === 'en'
-			? 'Plan and Team executions are headless here: do not ask the platform user to approve an internal UI dialog, and avoid depending on interactive clarification tools.'
-			: '这里的 Plan 和 Team 执行是无界面的：不要依赖桌面端弹窗审批，也尽量不要依赖需要交互澄清的问题工具。',
 		language === 'en'
 			? `Current bot user: ${userName}`
 			: `当前外部用户：${userName}`,
@@ -379,6 +357,17 @@ function buildBotOrchestratorPrompt(
 	];
 	if (extraPrompt) {
 		lines.push('', '## Integration Prompt', extraPrompt);
+	}
+	if (globalRuleAppend.trim()) {
+		lines.push(
+			'',
+			language === 'en' ? '## Global Reply Rules' : '## 全局回复规则',
+			language === 'en'
+				? 'Follow these rules whenever you produce user-visible text, including short confirmations and direct replies.'
+				: '只要你输出任何面向用户的文本，包括简短确认和直接回复，也必须遵守以下规则。',
+			'',
+			globalRuleAppend
+		);
 	}
 	return lines.join('\n');
 }
@@ -580,6 +569,7 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 		const messagesForAgent = modeExpandsWorkspaceFileContext(mode)
 			? cloneMessagesWithExpandedLastUser(sendMessages, session.workspaceRoot)
 			: sendMessages;
+		let innerStreamFull = '';
 		return await new Promise<string>(async (resolve, reject) => {
 			try {
 				await runAgentLoop(
@@ -615,10 +605,16 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 						...(finalSystemAppend?.trim() ? { agentSystemAppend: finalSystemAppend.trim() } : {}),
 					},
 					{
-						onTextDelta: () => {},
-						onToolCall: () => {},
-						onToolResult: () => {
+						onTextDelta: (text) => {
+							innerStreamFull += text;
+							args.onInnerTextDelta?.(innerStreamFull);
+						},
+						onToolCall: (name) => {
+							args.onInnerToolStatus?.(name, 'running');
+						},
+						onToolResult: (name, _result, success) => {
 							incrementThreadAgentToolCallCount(threadId);
+							args.onInnerToolStatus?.(name, success ? 'completed' : 'error');
 						},
 						onDone: (full, usage) => {
 							finish(full, usage);
@@ -633,6 +629,7 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 		});
 	}
 
+	let askStreamFull = '';
 	return await new Promise<string>(async (resolve, reject) => {
 		try {
 			await streamChatUnified(
@@ -652,7 +649,10 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 					...(finalSystemAppend?.trim() ? { agentSystemAppend: finalSystemAppend.trim() } : {}),
 				},
 				{
-					onDelta: () => {},
+					onDelta: (text) => {
+							askStreamFull += text;
+							args.onInnerTextDelta?.(askStreamFull);
+						},
 					onThinkingDelta: () => {},
 					onDone: (full, usage) => {
 						finish(full, usage);
@@ -730,24 +730,6 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 				isError: false,
 			};
 		},
-		switch_mode: async (call) => {
-			const raw = String(call.arguments.mode ?? '').trim();
-			if (raw !== 'agent' && raw !== 'ask' && raw !== 'plan' && raw !== 'team') {
-				return {
-					toolCallId: call.id,
-					name: call.name,
-					content: '模式无效，必须是 agent / ask / plan / team。',
-					isError: true,
-				};
-			}
-			session.mode = raw;
-			return {
-				toolCallId: call.id,
-				name: call.name,
-				content: `已切换模式：${modeLabel(raw)}`,
-				isError: false,
-			};
-		},
 		new_async_thread: async (call) => {
 			const created = createThread(session.workspaceRoot, { select: false });
 			session.threadIdsByWorkspace[normalizeWorkspaceKey(session.workspaceRoot)] = created.id;
@@ -779,6 +761,8 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 					task,
 					workspaceLspManager,
 					signal,
+					onInnerTextDelta: args.onStreamDelta,
+					onInnerToolStatus: args.onToolStatus,
 				});
 				return {
 					toolCallId: call.id,

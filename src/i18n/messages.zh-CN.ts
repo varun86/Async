@@ -639,6 +639,7 @@ export const messagesZhCN: Record<string, string> = {
 	'settings.bots.telegram.policy.direct': '允许直接回复群消息',
 	'settings.bots.telegram.policy.directHint': '更积极，但更容易打扰群聊',
 	'settings.bots.discord.requireMention': '服务器频道里必须显式提及机器人',
+	'settings.bots.feishu.streamingCard': '使用流式卡片（CardKit）实现实时打字机效果',
 	'settings.modelsHint':
 		'先添加「提供商」并填写 Base URL、API 密钥与（OpenAI 兼容时的）代理；同一连接下的多个模型挂在该提供商下。模型只需配置显示名、请求名称与输出上限。',
 	'settings.modelsProviderLead': '删除提供商会同时移除其下所有模型。',

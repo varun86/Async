@@ -9,6 +9,6 @@ describe('createEmptyBotIntegration', () => {
 		expect(integration.defaultMode).toBe('agent');
 		expect(integration.telegram?.requireMentionInGroups).toBe(true);
 		expect(integration.discord?.requireMentionInGuilds).toBe(true);
+		expect(integration.feishu?.streamingCard).toBe(true);
 	});
 });
-

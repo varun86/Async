@@ -1,7 +1,27 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
-import type { BotPlatformAdapter, PlatformMessageHandler } from './common.js';
+import type { BotPlatformAdapter, PlatformMessageHandler, StreamReplyCallbacks } from './common.js';
 import { createJsonHttpInstance, createProxyAgent, resolveIntegrationProxyUrl, splitPlainText } from './common.js';
+import { FeishuCardKitClient, FeishuStreamingSession } from './feishuCardKit.js';
+
+type FeishuSenderId = {
+	open_id?: string;
+	user_id?: string;
+	union_id?: string;
+};
+
+type FeishuSender = {
+	sender_id?: FeishuSenderId;
+	sender_type?: string;
+};
+
+type FeishuMessage = {
+	message_id?: string;
+	chat_id?: string;
+	chat_type?: string;
+	message_type?: string;
+	content?: unknown;
+};
 
 function parseFeishuText(raw: unknown): string {
 	try {
@@ -12,9 +32,44 @@ function parseFeishuText(raw: unknown): string {
 	}
 }
 
+function collectSenderIds(raw: { open_id?: string; user_id?: string; union_id?: string } | undefined): string[] {
+	const ids = [raw?.open_id, raw?.user_id, raw?.union_id]
+		.map((value) => String(value ?? '').trim())
+		.filter(Boolean);
+	return [...new Set(ids)];
+}
+
+export function buildFeishuReplyPayload(messageId: string, text: string) {
+	return {
+		path: { message_id: messageId },
+		data: {
+			content: JSON.stringify({ text }),
+			msg_type: 'text',
+		},
+	};
+}
+
+export function extractFeishuMessageEvent(
+	raw: unknown
+): { sender?: FeishuSender; message?: FeishuMessage } | null {
+	if (!raw || typeof raw !== 'object') {
+		return null;
+	}
+	const root = raw as { event?: unknown; sender?: FeishuSender; message?: FeishuMessage };
+	const payload =
+		root.event && typeof root.event === 'object'
+			? (root.event as { sender?: FeishuSender; message?: FeishuMessage })
+			: root;
+	return {
+		sender: payload.sender,
+		message: payload.message,
+	};
+}
+
 export class FeishuBotAdapter implements BotPlatformAdapter {
-	private wsClient: lark.ws.Client | null = null;
+	private wsClient: lark.WSClient | null = null;
 	private client: lark.Client | null = null;
+	private cardKitClient: FeishuCardKitClient | null = null;
 
 	constructor(private readonly integration: BotIntegrationConfig) {}
 
@@ -25,9 +80,9 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 		return allowed.length === 0 || allowed.includes(chatId);
 	}
 
-	private isAllowedUser(userId: string): boolean {
+	private isAllowedUser(userIds: string[]): boolean {
 		const allowed = this.integration.allowedReplyUserIds ?? [];
-		return allowed.length === 0 || allowed.includes(userId);
+		return allowed.length === 0 || userIds.some((userId) => allowed.includes(userId));
 	}
 
 	async start(onMessage: PlatformMessageHandler): Promise<void> {
@@ -40,27 +95,28 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 		const httpInstance = createJsonHttpInstance(proxyUrl);
 		const proxyAgent = createProxyAgent(proxyUrl);
 		this.client = new lark.Client({ appId, appSecret, httpInstance });
-		this.wsClient = new lark.ws.Client({
-			appId,
-			appSecret,
-			appType: lark.AppType.SelfBuild,
-			httpInstance,
-			agent: proxyAgent,
-			...(this.integration.feishu?.encryptKey?.trim()
-				? { encryptKey: this.integration.feishu?.encryptKey?.trim() }
-				: {}),
+
+		const encryptKey = this.integration.feishu?.encryptKey?.trim() || undefined;
+		const eventDispatcher = new lark.EventDispatcher({
+			...(encryptKey ? { encryptKey } : {}),
 		});
 
-		this.wsClient.eventDispatcher.register({
-			'*.im.message.receive_v1': async (data) => {
-				const event = data?.event;
+		const useStreamingCard = this.integration.feishu?.streamingCard !== false;
+		if (useStreamingCard) {
+			this.cardKitClient = new FeishuCardKitClient({ appId, appSecret, proxyUrl });
+		}
+
+		eventDispatcher.register({
+			'im.message.receive_v1': async (data) => {
+				const event = extractFeishuMessageEvent(data);
 				const message = event?.message;
 				if (!message || message.message_type !== 'text') {
 					return;
 				}
 				const chatId = String(message.chat_id ?? '').trim();
-				const senderId = String(event?.sender?.sender_id?.open_id ?? '').trim();
-				if (!this.isAllowedUser(senderId)) {
+				const senderIds = collectSenderIds(event?.sender?.sender_id);
+				const senderId = senderIds[0] ?? '';
+				if (!this.isAllowedUser(senderIds)) {
 					return;
 				}
 				const chatType = String(message.chat_type ?? '').trim().toLowerCase();
@@ -72,35 +128,77 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 				if (!text) {
 					return;
 				}
+
+				const messageId = String(message.message_id ?? '');
+
+				// Build streaming callbacks if CardKit is enabled
+				let streamReply: StreamReplyCallbacks | undefined;
+				if (this.cardKitClient) {
+					const session = new FeishuStreamingSession(this.cardKitClient);
+					streamReply = {
+						onStart: async () => {
+							await session.start(chatId, messageId);
+						},
+						onDelta: async (fullText) => {
+							if (session.isFailed) return;
+							session.update(fullText);
+						},
+						onToolStatus: (name, state) => {
+							if (session.isFailed) return;
+							session.setToolStatus(name, state);
+						},
+						onDone: async (fullText) => {
+							if (session.isFailed) {
+								// Fallback to plain text
+								await this.replyPlainText(messageId, fullText);
+								return;
+							}
+							await session.close(fullText);
+						},
+						onError: async (error) => {
+							if (session.isActive) {
+								await session.close(`❌ ${error}`);
+							} else {
+								await this.replyPlainText(messageId, `❌ ${error}`);
+							}
+						},
+					};
+				}
+
 				await onMessage({
 					conversationKey: chatId,
 					text,
 					senderId: senderId || undefined,
 					senderName: String(event?.sender?.sender_type ?? '').trim() || undefined,
 					reply: async (replyText) => {
-						if (!this.client) {
-							return;
-						}
-						for (const chunk of splitPlainText(replyText, 8000)) {
-							await this.client.im.message.reply({
-								params: { message_id: String(message.message_id ?? '') },
-								data: {
-									content: JSON.stringify({ text: chunk }),
-									msg_type: 'text',
-								},
-							});
-						}
+						await this.replyPlainText(messageId, replyText);
 					},
+					streamReply,
 				});
 			},
 		});
 
-		this.wsClient.start();
+		this.wsClient = new lark.WSClient({
+			appId,
+			appSecret,
+			appType: lark.AppType.SelfBuild,
+			httpInstance,
+			agent: proxyAgent,
+		});
+		this.wsClient.start({ eventDispatcher });
+	}
+
+	private async replyPlainText(messageId: string, text: string): Promise<void> {
+		if (!this.client) return;
+		for (const chunk of splitPlainText(text, 8000)) {
+			await this.client.im.message.reply(buildFeishuReplyPayload(messageId, chunk));
+		}
 	}
 
 	async stop(): Promise<void> {
 		this.wsClient?.stop();
 		this.wsClient = null;
 		this.client = null;
+		this.cardKitClient = null;
 	}
 }

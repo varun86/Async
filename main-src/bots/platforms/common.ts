@@ -4,8 +4,17 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
 import type { BotInboundMessage } from '../botRuntime.js';
 
+export type StreamReplyCallbacks = {
+	onStart: () => Promise<void>;
+	onDelta: (fullText: string) => Promise<void>;
+	onToolStatus: (name: string, state: 'running' | 'completed' | 'error') => void;
+	onDone: (fullText: string) => Promise<void>;
+	onError: (error: string) => Promise<void>;
+};
+
 export type PlatformInboundEnvelope = BotInboundMessage & {
 	reply: (text: string) => Promise<void>;
+	streamReply?: StreamReplyCallbacks;
 };
 
 export type PlatformMessageHandler = (message: PlatformInboundEnvelope) => Promise<void>;

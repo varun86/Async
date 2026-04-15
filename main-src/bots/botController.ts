@@ -1,5 +1,6 @@
 import type { BotIntegrationConfig } from '../botSettingsTypes.js';
 import type { ShellSettings } from '../settingsStore.js';
+import { extractBotReplyText } from '../../src/agentStructuredMessage.js';
 import { createBotWorkspaceLspManager, createInitialBotSession, runBotOrchestratorTurn, type BotSessionState } from './botRuntime.js';
 import { DiscordBotAdapter } from './platforms/discordAdapter.js';
 import { FeishuBotAdapter } from './platforms/feishuAdapter.js';
@@ -56,6 +57,8 @@ class BotController {
 
 		const run = async () => {
 			const ac = new AbortController();
+			const stream = message.streamReply;
+			let streamStarted = false;
 			try {
 				const text = await runBotOrchestratorTurn({
 					settings: this.getSettings(),
@@ -64,11 +67,38 @@ class BotController {
 					inbound: message,
 					workspaceLspManager: this.lspManager,
 					signal: ac.signal,
+					onStreamDelta: stream
+						? (fullText) => {
+								if (!streamStarted) {
+									streamStarted = true;
+									stream.onStart().catch(() => {});
+								}
+								stream.onDelta(fullText).catch(() => {});
+						  }
+						: undefined,
+					onToolStatus: stream
+						? (name, state) => {
+								if (!streamStarted) {
+									streamStarted = true;
+									stream.onStart().catch(() => {});
+								}
+								stream.onToolStatus(name, state);
+						  }
+						: undefined,
 				});
-				await message.reply(text || '已完成，但没有返回可展示的文本结果。');
+				const displayText = extractBotReplyText(text || '');
+				if (streamStarted) {
+					await stream!.onDone(displayText || '已完成，但没有返回可展示的文本结果。');
+				} else {
+					await message.reply(displayText || '已完成，但没有返回可展示的文本结果。');
+				}
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : String(error);
-				await message.reply(`机器人执行失败：${msg}`);
+				if (streamStarted) {
+					await stream!.onError(msg).catch(() => {});
+				} else {
+					await message.reply(`机器人执行失败：${msg}`);
+				}
 			}
 		};
 

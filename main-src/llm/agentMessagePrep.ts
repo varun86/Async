@@ -309,6 +309,26 @@ export function loadThirdPartyAgentRules(workspaceRoot: string | null): string {
 	return chunks.join('\n\n---\n\n');
 }
 
+function buildEnabledAlwaysRuleBlocks(agent: AgentCustomization | undefined): string[] {
+	const parts: string[] = [];
+	for (const rule of agent?.rules ?? []) {
+		if (!rule.enabled || rule.scope !== 'always') {
+			continue;
+		}
+		parts.push(`#### Rule: ${rule.name}\n${rule.content}`);
+	}
+	return parts;
+}
+
+export function buildAgentGlobalRuleAppend(
+	agent: AgentCustomization | undefined,
+	uiLanguage: 'zh-CN' | 'en'
+): string {
+	const parts = buildEnabledAlwaysRuleBlocks(agent);
+	parts.push(buildAutoReplyLanguageRuleBlock(uiLanguage, uiLanguage));
+	return parts.join('\n\n');
+}
+
 export function buildAgentSystemAppend(opts: {
 	agent: AgentCustomization | undefined;
 	userText: string;
@@ -326,13 +346,13 @@ export function buildAgentSystemAppend(opts: {
 		parts.push(`#### 从项目导入的规则（.async/rules、.cursor/rules、CLAUDE.md、.claude/rules）\n${opts.thirdPartyRules.trim()}`);
 	}
 
+	parts.push(...buildEnabledAlwaysRuleBlocks(agent));
+
 	for (const r of agent?.rules ?? []) {
 		if (!r.enabled) {
 			continue;
 		}
-		if (r.scope === 'always') {
-			parts.push(`#### Rule: ${r.name}\n${r.content}`);
-		} else if (r.scope === 'glob' && r.globPattern?.trim()) {
+		if (r.scope === 'glob' && r.globPattern?.trim()) {
 			const pat = r.globPattern.trim();
 			if (opts.atPaths.some((p) => pathMatchesGlob(p, pat))) {
 				parts.push(`#### Rule（路径匹配）: ${r.name}\n${r.content}`);

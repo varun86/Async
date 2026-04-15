@@ -30,6 +30,7 @@ export type FeishuBotConfig = {
 	verificationToken?: string;
 	proxyUrl?: string;
 	allowedChatIds?: string[];
+	streamingCard?: boolean;
 };
 
 export type BotIntegrationConfig = {
@@ -76,6 +77,7 @@ export function createEmptyBotIntegration(): BotIntegrationConfig {
 		},
 		feishu: {
 			allowedChatIds: [],
+			streamingCard: true,
 		},
 	};
 }
