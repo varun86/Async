@@ -37,6 +37,8 @@ export const messagesZhCN: Record<string, string> = {
 	'composer.attach.tooLarge': '文件过大（单文件上限 8MB）。',
 	'app.settings': '设置',
 	'app.settingsAria': 'Async 设置',
+	'app.backToAgentLayout': '返回Agent布局',
+	'app.backToAgentLayoutAria': '返回 Agent 布局',
 	'app.switchingToEditor': '正在切换到 Editor',
 	'app.switchingToEditorHint': '正在准备编辑器工作区…',
 	'app.menu': '菜单',

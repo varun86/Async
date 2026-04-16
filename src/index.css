@@ -794,6 +794,29 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	gap: 6px;
 }
 
+.ref-menubar-layout-switch-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 32px;
+	padding: 0 12px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.03);
+	color: var(--void-fg-2);
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	font-family: inherit;
+	transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.ref-menubar-layout-switch-btn:hover {
+	background: var(--void-bg-2);
+	border-color: rgba(255, 255, 255, 0.12);
+	color: var(--void-fg-0);
+}
+
 .ref-brand-block-simple {
 	display: inline-flex;
 	align-items: center;
@@ -3821,7 +3844,6 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 .ref-md-root :not(pre) > code {
 	padding: 2px 6px;
 	border-radius: 6px;
-	background: var(--void-bg-3);
 	font-size: 0.9em;
 }
 

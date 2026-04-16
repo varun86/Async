@@ -187,6 +187,7 @@ import {
 	markBrowserWindowReadyForSenderId,
 	openBrowserWindowForHostId,
 } from '../browser/browserController.js';
+import { syncBrowserCaptureBindingsForHostId } from '../browser/browserCapture.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1484,7 +1485,9 @@ export function registerIpc(): void {
 	});
 
 	ipcMain.handle('browser:syncState', async (event, rawState: unknown) => {
-		const state = updateBrowserRuntimeStateForHostId(resolveBrowserHostIdForSenderId(event.sender.id), rawState);
+		const hostId = resolveBrowserHostIdForSenderId(event.sender.id);
+		syncBrowserCaptureBindingsForHostId(hostId, rawState);
+		const state = updateBrowserRuntimeStateForHostId(hostId, rawState);
 		return {
 			ok: true as const,
 			state,

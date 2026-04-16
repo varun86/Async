@@ -1501,6 +1501,26 @@ const AgentRightSidebarBrowserPanel = memo(function AgentRightSidebarBrowserPane
 				canGoForward: tab.canGoForward,
 				loadError: tab.loadError,
 			})),
+			guestBindings: tabs
+				.map((tab) => {
+					const node = webviewsRef.current.get(tab.id);
+					if (!node?.getWebContentsId) {
+						return null;
+					}
+					try {
+						const webContentsId = Number(node.getWebContentsId());
+						if (!Number.isInteger(webContentsId) || webContentsId <= 0) {
+							return null;
+						}
+						return {
+							tabId: tab.id,
+							webContentsId,
+						};
+					} catch {
+						return null;
+					}
+				})
+				.filter((binding): binding is { tabId: string; webContentsId: number } => Boolean(binding)),
 			updatedAt: Date.now(),
 		};
 		const timer = window.setTimeout(() => {

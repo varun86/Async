@@ -47,6 +47,14 @@ import {
 	type BrowserSidebarConfigPayload,
 } from '../browser/browserController.js';
 import {
+	clearBrowserCaptureDataForHostId,
+	getBrowserCaptureRequestForHostId,
+	getBrowserCaptureStateForHostId,
+	listBrowserCaptureRequestsForHostId,
+	startBrowserCaptureForHostId,
+	stopBrowserCaptureForHostId,
+} from '../browser/browserCapture.js';
+import {
 	attachManagedAgentEmitter,
 	closeManagedAgent,
 	getManagedAgentSession,
@@ -570,6 +578,121 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 	}
 }
 
+async function executeBrowserCaptureTool(call: ToolCall, execCtx: ToolExecutionContext): Promise<ToolResult> {
+	throwIfToolAbortRequested(execCtx.signal, call.name, 'browser-capture:start');
+	const hostId = execCtx.hostWebContentsId ?? null;
+	if (!hostId) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: 'BrowserCapture tool is unavailable because this run is not attached to an app window.',
+			isError: true,
+		};
+	}
+
+	const action = String(call.arguments.action ?? '').trim();
+	if (!action) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: 'Error: action is required',
+			isError: true,
+		};
+	}
+
+	switch (action) {
+		case 'get_state':
+			return {
+				toolCallId: call.id,
+				name: call.name,
+				content: JSON.stringify(getBrowserCaptureStateForHostId(hostId), null, 2),
+				isError: false,
+			};
+		case 'start': {
+			const clearExisting =
+				call.arguments.clear_existing === undefined && call.arguments.clearExisting === undefined
+					? true
+					: call.arguments.clear_existing === true ||
+						call.arguments.clear_existing === 'true' ||
+						call.arguments.clearExisting === true ||
+						call.arguments.clearExisting === 'true';
+			const state = await startBrowserCaptureForHostId(hostId, { clear: clearExisting });
+			return {
+				toolCallId: call.id,
+				name: call.name,
+				content: JSON.stringify(state, null, 2),
+				isError: false,
+			};
+		}
+		case 'stop': {
+			const state = await stopBrowserCaptureForHostId(hostId);
+			return {
+				toolCallId: call.id,
+				name: call.name,
+				content: JSON.stringify(state, null, 2),
+				isError: false,
+			};
+		}
+		case 'clear':
+			return {
+				toolCallId: call.id,
+				name: call.name,
+				content: JSON.stringify(clearBrowserCaptureDataForHostId(hostId), null, 2),
+				isError: false,
+			};
+		case 'list_requests': {
+			const statusRaw = Number(call.arguments.status);
+			const result = listBrowserCaptureRequestsForHostId(hostId, {
+				query: typeof call.arguments.query === 'string' ? call.arguments.query : undefined,
+				tabId:
+					typeof firstBrowserArg(call.arguments, 'tab_id', 'tabId') === 'string'
+						? String(firstBrowserArg(call.arguments, 'tab_id', 'tabId'))
+						: undefined,
+				status: Number.isFinite(statusRaw) ? statusRaw : null,
+				offset: Number(call.arguments.offset ?? 0),
+				limit: Number(call.arguments.limit ?? 50),
+			});
+			return {
+				toolCallId: call.id,
+				name: call.name,
+				content: JSON.stringify(result, null, 2),
+				isError: false,
+			};
+		}
+		case 'get_request': {
+			const request = getBrowserCaptureRequestForHostId(hostId, {
+				requestId:
+					typeof firstBrowserArg(call.arguments, 'request_id', 'requestId') === 'string'
+						? String(firstBrowserArg(call.arguments, 'request_id', 'requestId'))
+						: undefined,
+				seq: Number(call.arguments.seq ?? 0),
+			});
+			if (!request) {
+				return {
+					toolCallId: call.id,
+					name: call.name,
+					content: 'BrowserCapture request not found. Provide a valid request_id or seq from list_requests.',
+					isError: true,
+				};
+			}
+			return {
+				toolCallId: call.id,
+				name: call.name,
+				content: JSON.stringify(request, null, 2),
+				isError: false,
+			};
+		}
+		default:
+			return {
+				toolCallId: call.id,
+				name: call.name,
+				content:
+					'Unknown BrowserCapture action. Supported actions: get_state, start, stop, clear, list_requests, get_request.',
+				isError: true,
+			};
+	}
+}
+
 async function executeListMcpResources(call: ToolCall): Promise<ToolResult> {
 	const filter = String(call.arguments.server ?? '').trim();
 	const mgr = getMcpManager();
@@ -738,6 +861,8 @@ export async function executeTool(
 			return await executeCommand(call, hooks, execCtx);
 		case 'Browser':
 			return await executeBrowserTool(call, execCtx);
+		case 'BrowserCapture':
+			return await executeBrowserCaptureTool(call, execCtx);
 		case 'LSP':
 			return await executeLspTool(call, execCtx);
 		case 'Agent':

@@ -32,3 +32,16 @@ describe('executeTool Browser', () => {
 		expect(result.content).toContain('attached to an app window');
 	});
 });
+
+describe('executeTool BrowserCapture', () => {
+	it('fails gracefully when no host window is attached', async () => {
+		const result = await executeTool({
+			id: 'browser-capture-1',
+			name: 'BrowserCapture',
+			arguments: { action: 'get_state' },
+		});
+
+		expect(result.isError).toBe(true);
+		expect(result.content).toContain('attached to an app window');
+	});
+});

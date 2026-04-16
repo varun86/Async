@@ -30,6 +30,7 @@ interface AsyncShellWebviewElement extends HTMLElement {
 			getSize(): { width: number; height: number };
 		}>;
 		executeJavaScript<T = unknown>(code: string, userGesture?: boolean): Promise<T>;
+		getWebContentsId(): number;
 		goBack(): void;
 		goForward(): void;
 		getUserAgent(): string;

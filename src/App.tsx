@@ -132,7 +132,9 @@ import {
 	defaultQuarterRailWidths,
 	readSidebarLayout,
 	readStoredShellLayoutModeFromKey,
+	syncDesktopShellLayoutMode,
 	syncDesktopSidebarLayout,
+	writeStoredShellLayoutMode,
 	type ShellLayoutMode,
 } from './app/shellLayoutStorage';
 import {
@@ -3594,6 +3596,19 @@ function AppMainWorkspaceInner() {
 		[openFileInTab]
 	);
 
+	const handleReturnToAgentLayout = useCallback(() => {
+		setLayoutMode('agent');
+		writeStoredShellLayoutMode('agent', shellLayoutStorageKey);
+		syncDesktopShellLayoutMode(shell, 'agent');
+		queueMicrotask(() => {
+			if (composerRichBottomRef.current) {
+				composerRichBottomRef.current.focus();
+			} else {
+				composerRichHeroRef.current?.focus();
+			}
+		});
+	}, [shell, shellLayoutStorageKey]);
+
 	const handleDeleteWorkspaceSkillDisk = useCallback(async (skillMdRel: string): Promise<boolean> => {
 		if (!shell) return false;
 		try {
@@ -6393,6 +6408,7 @@ function AppMainWorkspaceInner() {
 				windowMenuToggleMaximize={windowMenuToggleMaximize}
 				windowMenuCloseWindow={windowMenuCloseWindow}
 				spawnEditorTerminal={spawnEditorTerminal}
+				onReturnToAgentLayout={handleReturnToAgentLayout}
 				handleOpenSettingsGeneral={handleOpenSettingsGeneral}
 			/>
 

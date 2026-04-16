@@ -33,6 +33,8 @@ export const messagesEn: Record<string, string> = {
 	'composer.attach.tooLarge': 'File is too large (max 8MB per file).',
 	'app.settings': 'Settings',
 	'app.settingsAria': 'Async settings',
+	'app.backToAgentLayout': 'Back to Agent Layout',
+	'app.backToAgentLayoutAria': 'Back to Agent layout',
 	'app.switchingToEditor': 'Switching to Editor',
 	'app.switchingToEditorHint': 'Preparing your editor workspace…',
 	'app.menu': 'Menu',

@@ -334,6 +334,59 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 		},
 	},
 	{
+		name: 'BrowserCapture',
+		description:
+			'Capture HTTP traffic from Async\'s built-in browser for the current app session. Typical flow: start capture, use the Browser tool to navigate and interact, then list captured requests and inspect a specific request in detail.',
+		parameters: {
+			type: 'object',
+			properties: {
+				action: {
+					type: 'string',
+					enum: ['get_state', 'start', 'stop', 'clear', 'list_requests', 'get_request'],
+					description: 'Browser capture action to perform.',
+				},
+				clear_existing: {
+					type: 'boolean',
+					description:
+						'For start: clear previously captured requests before arming capture. Default true.',
+				},
+				tab_id: {
+					type: 'string',
+					description: 'For list_requests: optional browser tab id to filter captured requests.',
+				},
+				query: {
+					type: 'string',
+					description:
+						'For list_requests: optional case-insensitive substring filter applied to method, URL, content type, and error text.',
+				},
+				status: {
+					type: 'number',
+					description: 'For list_requests: optional exact HTTP status code filter.',
+				},
+				offset: {
+					type: 'number',
+					description: 'For list_requests: number of matching items to skip before returning results. Default 0.',
+				},
+				limit: {
+					type: 'number',
+					description:
+						'For list_requests: maximum number of items to return. Default 50, capped at 200.',
+				},
+				seq: {
+					type: 'number',
+					description:
+						'For get_request: captured request sequence number, as returned by list_requests.',
+				},
+				request_id: {
+					type: 'string',
+					description:
+						'For get_request: stable captured request id, as returned by list_requests. Takes precedence over seq.',
+				},
+			},
+			required: ['action'],
+		},
+	},
+	{
 		name: 'LSP',
 		description:
 			'Language-server intelligence for the workspace, routed by **file extension** to LSP servers declared in plugin dirs under `<asyncData>/plugins/<name>/` or `<workspace>/.async/plugins/<name>/` with **`.lsp.json`** or **`plugin.json` → `lspServers`** (each server: **command**, optional **args**, required **extensionToLanguage** map). Legacy **`lsp.servers`** in settings.json is still merged. TS/JS additionally works if **typescript-language-server** is discoverable under the app or workspace `node_modules` (optional).\n\nOperations: goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls, getDiagnostics. Use **filePath** plus 1-based **line**/**character** except **getDiagnostics**/**workspaceSymbol** (optional line/char).\n\nIf nothing matches the file extension, add a plugin or legacy server entry. If an LSP method fails, fall back to **Read** / **Grep** / **Bash**.',

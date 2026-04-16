@@ -70,6 +70,7 @@ export type AppShellMenubarProps = {
 	windowMenuToggleMaximize: () => void | Promise<void>;
 	windowMenuCloseWindow: () => void | Promise<void>;
 	spawnEditorTerminal: () => void;
+	onReturnToAgentLayout: () => void;
 	handleOpenSettingsGeneral: () => void;
 };
 
@@ -138,6 +139,7 @@ export const AppShellMenubar = memo(function AppShellMenubar({
 	windowMenuToggleMaximize,
 	windowMenuCloseWindow,
 	spawnEditorTerminal,
+	onReturnToAgentLayout,
 	handleOpenSettingsGeneral,
 }: AppShellMenubarProps) {
 	return (
@@ -526,6 +528,17 @@ export const AppShellMenubar = memo(function AppShellMenubar({
 				) : null}
 			</div>
 			<div className="ref-menubar-right">
+				{layoutMode === 'editor' ? (
+					<button
+						type="button"
+						className="ref-menubar-layout-switch-btn"
+						onClick={onReturnToAgentLayout}
+						title={t('app.backToAgentLayout')}
+						aria-label={t('app.backToAgentLayoutAria')}
+					>
+						{t('app.backToAgentLayout')}
+					</button>
+				) : null}
 				<button
 					type="button"
 					className="ref-icon-tile ref-settings-btn"
