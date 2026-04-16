@@ -108,11 +108,22 @@ function clampSettingsSidebarWidth(w: number): number {
 	return Math.min(Math.max(w, SETTINGS_SIDEBAR_MIN), cap);
 }
 
-function IconGear({ className }: { className?: string }) {
+function IconSlidersNav({ className }: { className?: string }) {
 	return (
 		<svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-			<circle cx="12" cy="12" r="3" />
-			<path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" strokeLinecap="round" />
+			<path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />
+			<circle cx="9" cy="6" r="2" fill="var(--void-bg-0)" />
+			<circle cx="15" cy="12" r="2" fill="var(--void-bg-0)" />
+			<circle cx="11" cy="18" r="2" fill="var(--void-bg-0)" />
+		</svg>
+	);
+}
+
+function IconShieldNav({ className }: { className?: string }) {
+	return (
+		<svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+			<path d="M12 3 5 6v5c0 4.5 2.7 8.6 7 10 4.3-1.4 7-5.5 7-10V6l-7-3Z" strokeLinecap="round" strokeLinejoin="round" />
+			<path d="m9.5 12 2 2 3.5-4" strokeLinecap="round" strokeLinejoin="round" />
 		</svg>
 	);
 }
@@ -165,6 +176,17 @@ function IconBotNav({ className }: { className?: string }) {
 		<svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
 			<rect x="5" y="8" width="14" height="11" rx="3" />
 			<path d="M12 3v3M8 13h.01M16 13h.01M9 19v2M15 19v2" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+function IconTeamNav({ className }: { className?: string }) {
+	return (
+		<svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+			<circle cx="7" cy="9" r="2" />
+			<circle cx="12" cy="7" r="2" />
+			<circle cx="17" cy="9" r="2" />
+			<path d="M4 18a3 3 0 0 1 6 0M9 18a3 3 0 0 1 6 0M14 18a3 3 0 0 1 6 0" strokeLinecap="round" />
 		</svg>
 	);
 }
@@ -266,13 +288,13 @@ function IconSunNav({ className }: { className?: string }) {
 function navIcon(id: SettingsNavId) {
 	switch (id) {
 		case 'general':
-			return <IconGear />;
+			return <IconSlidersNav />;
 		case 'appearance':
 			return <IconSunNav />;
 		case 'editor':
 			return <IconEditor />;
 		case 'agents':
-			return <IconBotNav />;
+			return <IconShieldNav />;
 		case 'bots':
 			return <IconBotNav />;
 		case 'models':
@@ -306,9 +328,9 @@ function navIcon(id: SettingsNavId) {
 		case 'plan':
 			return <IconBarChart />;
 		case 'team':
-			return <IconBotNav />;
+			return <IconTeamNav />;
 		default:
-			return <IconGear />;
+			return <IconSlidersNav />;
 	}
 }
 

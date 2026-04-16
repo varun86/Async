@@ -47,7 +47,6 @@ export function useAgentChatPanelProps({
 		messagesThreadId: rest.messagesThreadId,
 		currentId: rest.currentId,
 		lastAssistantMessageIndex: rest.lastAssistantMessageIndex,
-		lastUserMessageIndex: rest.lastUserMessageIndex,
 		hasConversation: rest.hasConversation,
 		awaitingReply: rest.awaitingReply,
 		streaming: rest.streaming,
@@ -61,7 +60,7 @@ export function useAgentChatPanelProps({
 		scrollMessagesToBottom: rest.scrollMessagesToBottom,
 	}), [
 		rest.displayMessages, rest.persistedMessageCount, rest.messagesThreadId,
-		rest.currentId, rest.lastAssistantMessageIndex, rest.lastUserMessageIndex,
+		rest.currentId, rest.lastAssistantMessageIndex,
 		rest.hasConversation, rest.awaitingReply, rest.streaming,
 		rest.streamingThinking, rest.streamingToolPreview, rest.liveAssistantBlocks,
 		rest.lastTurnUsage, rest.fileChangesDismissed,

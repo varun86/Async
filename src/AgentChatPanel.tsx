@@ -1,5 +1,4 @@
 import {
-	Fragment,
 	memo,
 	useCallback,
 	useDeferredValue,
@@ -65,7 +64,6 @@ export type AgentChatPanelProps = {
 	messagesThreadId: string | null;
 	currentId: string | null;
 	lastAssistantMessageIndex: number;
-	lastUserMessageIndex: number;
 	messagesViewportRef: RefObject<HTMLDivElement | null>;
 	messagesTrackRef: RefObject<HTMLDivElement | null>;
 	inlineResendRootRef: RefObject<HTMLDivElement | null>;
@@ -210,7 +208,6 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	messagesThreadId,
 	currentId,
 	lastAssistantMessageIndex,
-	lastUserMessageIndex,
 	messagesViewportRef,
 	messagesTrackRef,
 	inlineResendRootRef,
@@ -572,7 +569,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			const isEditingThisUser = userMessageIndex >= 0 && resendFromUserIndex === userMessageIndex;
 
 			if (m.role === 'user' && isEditingThisUser) {
-				const inner = (
+				return (
 					<div ref={inlineResendRootRef} className="ref-msg-slot ref-msg-slot--composer">
 						<ChatComposer
 							{...sharedComposerProps}
@@ -584,13 +581,6 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 							showGitBranchRow={false}
 						/>
 					</div>
-				);
-				return i === lastUserMessageIndex ? (
-					<div key={`u-edit-${convoKey}-${i}`} className="ref-msg-sticky-user-wrap">
-						{inner}
-					</div>
-				) : (
-					<Fragment key={`u-edit-${convoKey}-${i}`}>{inner}</Fragment>
 				);
 			}
 
@@ -610,7 +600,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 					: null;
 				const hasTodoPanel = userTodos != null && userTodos.length > 0;
 
-				const inner = (
+				return (
 					<div className={`ref-msg-slot ref-msg-slot--user${hasTodoPanel ? ' has-todo-panel' : ''}`}>
 						<button
 							type="button"
@@ -678,13 +668,6 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 						})()}
 					</div>
 				);
-				return i === lastUserMessageIndex ? (
-					<div key={`u-${convoKey}-${i}`} className="ref-msg-sticky-user-wrap">
-						{inner}
-					</div>
-				) : (
-					<Fragment key={`u-${convoKey}-${i}`}>{inner}</Fragment>
-				);
 			}
 
 			return (
@@ -738,10 +721,11 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		const nodes: ReactNode[] = [];
 		const convoKey = conversationRenderKey;
 		for (let i = messageStartIndex; i < displayMessages.length; i++) {
+			const isStickyUserRow = displayMessages[i]?.role === 'user';
 			nodes.push(
 				<div
 					key={`row-${convoKey}-${i}`}
-					className="ref-msg-row-measure"
+					className={`ref-msg-row-measure${isStickyUserRow ? ' ref-msg-sticky-user-wrap' : ''}`}
 					data-msg-index={String(i)}
 				>
 					{messageNodeAtIndex(i)}

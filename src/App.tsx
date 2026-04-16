@@ -4586,17 +4586,6 @@ function AppMainWorkspaceInner() {
 		return idx;
 	}, [displayMessages]);
 
-	/** 中间消息区滚动时，最后一条用户消息 sticky 在视口顶部（参考 Cursor） */
-	const lastUserMessageIndex = useMemo(() => {
-		let idx = -1;
-		for (let j = 0; j < displayMessages.length; j++) {
-			if (displayMessages[j]!.role === 'user') {
-				idx = j;
-			}
-		}
-		return idx;
-	}, [displayMessages]);
-
 	const displayMessagesRef = useRef(displayMessages);
 	displayMessagesRef.current = displayMessages;
 
@@ -5756,7 +5745,6 @@ function AppMainWorkspaceInner() {
 		messagesThreadId,
 		currentId,
 		lastAssistantMessageIndex,
-		lastUserMessageIndex,
 		messagesViewportRef,
 		messagesTrackRef,
 		inlineResendRootRef,
