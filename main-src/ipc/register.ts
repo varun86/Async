@@ -176,12 +176,15 @@ import { scanMemoryFiles } from '../memdir/memoryScan.js';
 import { getAutoMemEntrypoint } from '../memdir/paths.js';
 import { buildMemoryEntrypoint, queueExtractMemories } from '../services/extractMemories/extractMemories.js';
 import {
-	browserPartitionForHost,
+	browserPartitionForHostId,
 	getBrowserSidebarConfigPayloadForHostId,
 	setBrowserSidebarConfigForHostId,
 	updateBrowserRuntimeStateForHostId,
 	getBrowserRuntimeStateForHostId,
 	resolveBrowserCommandResultForHostId,
+	resolveBrowserHostIdForSenderId,
+	markBrowserWindowReadyForSenderId,
+	openBrowserWindowForHostId,
 } from '../browser/browserController.js';
 
 const execFileAsync = promisify(execFile);
@@ -1410,8 +1413,9 @@ export function registerIpc(): void {
 	);
 
 	ipcMain.handle('browser:getConfig', async (event) => {
-		const partition = browserPartitionForHost(event.sender);
-		const payload = await getBrowserSidebarConfigPayloadForHostId(event.sender.id);
+		const hostId = resolveBrowserHostIdForSenderId(event.sender.id);
+		const partition = browserPartitionForHostId(hostId);
+		const payload = await getBrowserSidebarConfigPayloadForHostId(hostId);
 		return {
 			ok: true as const,
 			partition,
@@ -1421,11 +1425,11 @@ export function registerIpc(): void {
 	});
 
 	ipcMain.handle('browser:setConfig', async (event, rawConfig: unknown) => {
-		return await setBrowserSidebarConfigForHostId(event.sender.id, rawConfig);
+		return await setBrowserSidebarConfigForHostId(resolveBrowserHostIdForSenderId(event.sender.id), rawConfig);
 	});
 
 	ipcMain.handle('browser:syncState', async (event, rawState: unknown) => {
-		const state = updateBrowserRuntimeStateForHostId(event.sender.id, rawState);
+		const state = updateBrowserRuntimeStateForHostId(resolveBrowserHostIdForSenderId(event.sender.id), rawState);
 		return {
 			ok: true as const,
 			state,
@@ -1433,16 +1437,28 @@ export function registerIpc(): void {
 	});
 
 	ipcMain.handle('browser:getState', async (event) => {
+		const hostId = resolveBrowserHostIdForSenderId(event.sender.id);
 		return {
 			ok: true as const,
-			state: getBrowserRuntimeStateForHostId(event.sender.id),
+			state: getBrowserRuntimeStateForHostId(hostId),
 		};
 	});
 
 	ipcMain.handle('browser:commandResult', async (event, payload: unknown) => {
+		const hostId = resolveBrowserHostIdForSenderId(event.sender.id);
 		return {
-			ok: resolveBrowserCommandResultForHostId(event.sender.id, payload),
+			ok: resolveBrowserCommandResultForHostId(hostId, payload),
 		};
+	});
+
+	ipcMain.handle('browser:windowReady', async (event) => {
+		markBrowserWindowReadyForSenderId(event.sender.id);
+		return { ok: true as const };
+	});
+
+	ipcMain.handle('browser:openWindow', async (event) => {
+		const hostId = resolveBrowserHostIdForSenderId(event.sender.id);
+		return { ok: await openBrowserWindowForHostId(hostId) };
 	});
 
 	const COMPOSER_ATTACH_MAX_BYTES = 8 * 1024 * 1024;

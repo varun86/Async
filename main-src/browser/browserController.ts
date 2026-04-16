@@ -1,4 +1,5 @@
-import { session, webContents, type WebContents } from 'electron';
+import { BrowserWindow, session, webContents, type WebContents } from 'electron';
+import { getWorkspaceRootForWebContents } from '../workspace.js';
 
 export type BrowserSidebarConfig = {
 	userAgent: string;
@@ -168,6 +169,191 @@ const browserPendingCommandResults = new Map<
 		hostId: number;
 	}
 >();
+const browserWindowRendererByHost = new Map<number, number>();
+const browserWindowHostByRenderer = new Map<number, number>();
+const browserWindowOpenByHost = new Map<number, Promise<number>>();
+const browserWindowReadyRenderers = new Set<number>();
+const browserWindowReadyWaiters = new Map<
+	number,
+	{
+		resolve: () => void;
+		reject: (error: Error) => void;
+		timer: ReturnType<typeof setTimeout>;
+	}
+>();
+
+function cleanupBrowserWindowRegistration(rendererId: number): void {
+	const hostId = browserWindowHostByRenderer.get(rendererId);
+	if (hostId != null && browserWindowRendererByHost.get(hostId) === rendererId) {
+		browserWindowRendererByHost.delete(hostId);
+	}
+	browserWindowHostByRenderer.delete(rendererId);
+	browserWindowReadyRenderers.delete(rendererId);
+	const waiter = browserWindowReadyWaiters.get(rendererId);
+	if (waiter) {
+		clearTimeout(waiter.timer);
+		waiter.reject(new Error('Browser window was closed before it became ready.'));
+		browserWindowReadyWaiters.delete(rendererId);
+	}
+}
+
+function resolveBrowserCommandTargetId(hostId: number): number {
+	const mappedRendererId = browserWindowRendererByHost.get(hostId);
+	if (mappedRendererId != null) {
+		try {
+			const mapped = webContents.fromId(mappedRendererId);
+			if (mapped && !mapped.isDestroyed()) {
+				return mappedRendererId;
+			}
+		} catch {
+			/* ignore */
+		}
+		cleanupBrowserWindowRegistration(mappedRendererId);
+	}
+	return hostId;
+}
+
+function waitForBrowserWindowReady(rendererId: number, timeoutMs: number = 15_000): Promise<void> {
+	if (browserWindowReadyRenderers.has(rendererId)) {
+		return Promise.resolve();
+	}
+	const existing = browserWindowReadyWaiters.get(rendererId);
+	if (existing) {
+		return new Promise<void>((resolve, reject) => {
+			const prevResolve = existing.resolve;
+			const prevReject = existing.reject;
+			existing.resolve = () => {
+				prevResolve();
+				resolve();
+			};
+			existing.reject = (error) => {
+				prevReject(error);
+				reject(error);
+			};
+		});
+	}
+	return new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			browserWindowReadyWaiters.delete(rendererId);
+			reject(new Error('Timed out waiting for browser window to become ready.'));
+		}, Math.max(1_000, timeoutMs));
+		browserWindowReadyWaiters.set(rendererId, { resolve, reject, timer });
+	});
+}
+
+export function markBrowserWindowReadyForSenderId(senderId: number): void {
+	browserWindowReadyRenderers.add(senderId);
+	const waiter = browserWindowReadyWaiters.get(senderId);
+	if (!waiter) {
+		return;
+	}
+	clearTimeout(waiter.timer);
+	browserWindowReadyWaiters.delete(senderId);
+	waiter.resolve();
+}
+
+export function resolveBrowserHostIdForSenderId(senderId: number): number {
+	return browserWindowHostByRenderer.get(senderId) ?? senderId;
+}
+
+async function ensureBrowserWindowForHostId(hostId: number): Promise<number | null> {
+	const resolvedTargetId = resolveBrowserCommandTargetId(hostId);
+	if (resolvedTargetId !== hostId) {
+		return resolvedTargetId;
+	}
+	const pending = browserWindowOpenByHost.get(hostId);
+	if (pending) {
+		return await pending;
+	}
+	const openPromise = (async () => {
+		try {
+			const sourceContents = webContents.fromId(hostId);
+			if (!sourceContents || sourceContents.isDestroyed()) {
+				return null;
+			}
+			const initialWorkspace = getWorkspaceRootForWebContents(sourceContents);
+			const { createAppWindow } = await import('../appWindow.js');
+			const browserWin = createAppWindow({
+				blank: true,
+				surface: 'agent',
+				initialWorkspace,
+				queryParams: {
+					browserWindow: '1',
+				},
+			});
+			const rendererId = browserWin.webContents.id;
+			browserWindowRendererByHost.set(hostId, rendererId);
+			browserWindowHostByRenderer.set(rendererId, hostId);
+			browserWin.webContents.once('destroyed', () => cleanupBrowserWindowRegistration(rendererId));
+			browserWin.once('closed', () => cleanupBrowserWindowRegistration(rendererId));
+			try {
+				await waitForBrowserWindowReady(rendererId);
+				return rendererId;
+			} catch {
+				cleanupBrowserWindowRegistration(rendererId);
+				if (!browserWin.isDestroyed()) {
+					browserWin.close();
+				}
+				return null;
+			}
+		} catch {
+			return null;
+		} finally {
+			browserWindowOpenByHost.delete(hostId);
+		}
+	})();
+	browserWindowOpenByHost.set(hostId, openPromise);
+	return await openPromise;
+}
+
+export async function openBrowserWindowForHostId(hostId: number): Promise<boolean> {
+	const targetId = await ensureBrowserWindowForHostId(hostId);
+	if (targetId == null) {
+		return false;
+	}
+	try {
+		const contents = webContents.fromId(targetId);
+		if (!contents || contents.isDestroyed()) {
+			return false;
+		}
+		const win = BrowserWindow.fromWebContents(contents);
+		if (!win || win.isDestroyed()) {
+			return false;
+		}
+		if (win.isMinimized()) {
+			win.restore();
+		}
+		win.show();
+		win.focus();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export function closeBrowserWindowForHostId(hostId: number): boolean {
+	const rendererId = browserWindowRendererByHost.get(hostId);
+	if (rendererId == null) {
+		return false;
+	}
+	try {
+		const contents = webContents.fromId(rendererId);
+		if (!contents || contents.isDestroyed()) {
+			cleanupBrowserWindowRegistration(rendererId);
+			return false;
+		}
+		const win = BrowserWindow.fromWebContents(contents);
+		if (!win || win.isDestroyed()) {
+			cleanupBrowserWindowRegistration(rendererId);
+			return false;
+		}
+		win.close();
+		return true;
+	} catch {
+		cleanupBrowserWindowRegistration(rendererId);
+		return false;
+	}
+}
 
 export function browserPartitionForHost(sender: WebContents): string {
 	return browserPartitionForHostId(sender.id);
@@ -468,9 +654,13 @@ export function getBrowserRuntimeStateForHostId(hostId: number): BrowserRuntimeS
 	return current ? cloneBrowserRuntimeState(current) : null;
 }
 
-export function dispatchBrowserControlToHostId(hostId: number, command: BrowserControlCommand): boolean {
+export async function dispatchBrowserControlToHostId(hostId: number, command: BrowserControlCommand): Promise<boolean> {
 	try {
-		const host = webContents.fromId(hostId);
+		const targetId = await ensureBrowserWindowForHostId(hostId);
+		if (targetId == null) {
+			return false;
+		}
+		const host = webContents.fromId(targetId);
 		if (!host || host.isDestroyed()) {
 			return false;
 		}
@@ -487,26 +677,34 @@ export function awaitBrowserCommandResult(
 	timeoutMs: number = 20_000
 ): Promise<BrowserCommandResult> {
 	return new Promise((resolve) => {
-		if (!dispatchBrowserControlToHostId(hostId, command)) {
+		void dispatchBrowserControlToHostId(hostId, command).then((sent) => {
+			if (!sent) {
+				resolve({
+					commandId: command.commandId,
+					ok: false,
+					error: 'Browser UI is not available in the current window.',
+				});
+				return;
+			}
+			const timer = setTimeout(() => {
+				browserPendingCommandResults.delete(command.commandId);
+				resolve({
+					commandId: command.commandId,
+					ok: false,
+					error: 'Timed out waiting for browser command result.',
+				});
+			}, Math.max(1_000, timeoutMs));
+			browserPendingCommandResults.set(command.commandId, {
+				resolve,
+				timer,
+				hostId,
+			});
+		}).catch(() => {
 			resolve({
 				commandId: command.commandId,
 				ok: false,
 				error: 'Browser UI is not available in the current window.',
 			});
-			return;
-		}
-		const timer = setTimeout(() => {
-			browserPendingCommandResults.delete(command.commandId);
-			resolve({
-				commandId: command.commandId,
-				ok: false,
-				error: 'Timed out waiting for browser command result.',
-			});
-		}, Math.max(1_000, timeoutMs));
-		browserPendingCommandResults.set(command.commandId, {
-			resolve,
-			timer,
-			hostId,
 		});
 	});
 }

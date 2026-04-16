@@ -45,6 +45,7 @@ import { TeamRoleWorkflowPanel } from './TeamRoleWorkflowPanel';
 import { buildTeamWorkflowItems } from './teamWorkflowItems';
 import { AgentSessionPanel } from './AgentSessionPanel';
 import type { AgentSessionState } from './hooks/useAgentSession';
+import { hideBootSplash } from './bootSplash';
 
 type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team' | 'browser' | 'agents';
 
@@ -1147,7 +1148,24 @@ const BrowserTabView = memo(
 	}) {
 	const webviewRef = useRef<AsyncShellWebviewElement | null>(null);
 	const tabIdRef = useRef(tab.id);
+	const [webviewSize, setWebviewSize] = useState<{ width: number; height: number } | null>(null);
 	tabIdRef.current = tab.id;
+
+	const syncWebviewSize = useCallback(() => {
+		const node = webviewRef.current;
+		const host = node?.parentElement;
+		if (!node || !(host instanceof HTMLElement)) {
+			return;
+		}
+		const nextWidth = Math.max(1, Math.round(host.clientWidth));
+		const nextHeight = Math.max(1, Math.round(host.clientHeight));
+		setWebviewSize((prev) => {
+			if (prev && prev.width === nextWidth && prev.height === nextHeight) {
+				return prev;
+			}
+			return { width: nextWidth, height: nextHeight };
+		});
+	}, []);
 
 	const assignWebviewRef = useCallback(
 		(node: AsyncShellWebviewElement | null) => {
@@ -1215,6 +1233,7 @@ const BrowserTabView = memo(
 				url: failedUrl,
 			});
 		};
+
 		node.addEventListener('dom-ready', handleDomReady);
 		node.addEventListener('did-start-loading', handleStartLoading);
 		node.addEventListener('did-stop-loading', handleStopLoading);
@@ -1234,12 +1253,43 @@ const BrowserTabView = memo(
 		};
 	}, [partition, onLoading, onNavigate, onTitle, onFailLoad]);
 
+	useEffect(() => {
+		const node = webviewRef.current;
+		const host = node?.parentElement;
+		if (!node || !(host instanceof HTMLElement)) {
+			return;
+		}
+		syncWebviewSize();
+		let frameId = window.requestAnimationFrame(() => {
+			syncWebviewSize();
+		});
+		const observer =
+			typeof ResizeObserver === 'undefined'
+				? null
+				: new ResizeObserver(() => {
+						syncWebviewSize();
+					});
+		observer?.observe(host);
+		const onWindowResize = () => {
+			syncWebviewSize();
+		};
+		window.addEventListener('resize', onWindowResize);
+		return () => {
+			window.cancelAnimationFrame(frameId);
+			observer?.disconnect();
+			window.removeEventListener('resize', onWindowResize);
+		};
+	}, [active, syncWebviewSize, tab.id]);
+
 	const webviewProps = {
 		ref: assignWebviewRef,
 		className: `ref-browser-webview${active ? '' : ' is-hidden'}`,
 		src: tab.requestedUrl,
 		partition: partition,
 		useragent: userAgent,
+		style: webviewSize
+			? { width: `${webviewSize.width}px`, height: `${webviewSize.height}px` }
+			: { width: '100%', height: '100%' },
 		onLoad: () => console.log('[BrowserTab] webview onLoad event fired'),
 		allowpopups: 'true' as any,  // Electron webview expects string, not boolean
 	};
@@ -1271,12 +1321,14 @@ const AgentRightSidebarBrowserPanel = memo(function AgentRightSidebarBrowserPane
 	openView,
 	pendingCommand,
 	onCommandHandled,
+	variant = 'sidebar',
 }: {
 	hasAgentPlanSidebarContent: boolean;
 	closeSidebar: () => void;
 	openView: (view: AgentRightSidebarView) => void;
 	pendingCommand: BrowserControlPayload | null;
 	onCommandHandled: (commandId: string) => void;
+	variant?: 'sidebar' | 'window';
 }) {
 	const { t, shell } = useAppShellChrome();
 	const webviewsRef = useRef<Map<string, AsyncShellWebviewElement>>(new Map());
@@ -1661,6 +1713,10 @@ const AgentRightSidebarBrowserPanel = memo(function AgentRightSidebarBrowserPane
 		}
 		webviewsRef.current.delete(id);
 		if (prev.length <= 1) {
+			if (variant === 'window') {
+				closeSidebar();
+				return;
+			}
 			const fresh = createBrowserTab();
 			setTabs([fresh]);
 			setActiveTabId(fresh.id);
@@ -1930,12 +1986,8 @@ const AgentRightSidebarBrowserPanel = memo(function AgentRightSidebarBrowserPane
 						{headerLabel}
 					</span>
 				</div>
-				<RightSidebarTabs
-					t={t}
-					hasPlan={hasAgentPlanSidebarContent}
-					openView={openView}
-					closeSidebar={closeSidebar}
-					extraActions={
+				{variant === 'window' ? (
+					<div className="ref-agent-review-actions">
 						<button
 							type="button"
 							aria-label={t('app.browserSettings')}
@@ -1945,8 +1997,26 @@ const AgentRightSidebarBrowserPanel = memo(function AgentRightSidebarBrowserPane
 						>
 							<IconSettings />
 						</button>
-					}
-				/>
+					</div>
+				) : (
+					<RightSidebarTabs
+						t={t}
+						hasPlan={hasAgentPlanSidebarContent}
+						openView={openView}
+						closeSidebar={closeSidebar}
+						extraActions={
+							<button
+								type="button"
+								aria-label={t('app.browserSettings')}
+								title={t('app.browserSettings')}
+								className="ref-right-icon-tab"
+								onClick={openBrowserSettings}
+							>
+								<IconSettings />
+							</button>
+						}
+					/>
+				)}
 			</div>
 			<div className="ref-right-panel-stage">
 				<div className="ref-right-panel-view ref-right-panel-view--agent ref-browser-panel">
@@ -2152,6 +2222,67 @@ const AgentRightSidebarBrowserPanel = memo(function AgentRightSidebarBrowserPane
 					setBrowserSettingsError(null);
 				}}
 				onSave={saveBrowserSettings}
+			/>
+		</div>
+	);
+});
+
+export const AgentBrowserWindowSurface = memo(function AgentBrowserWindowSurface() {
+	const { shell } = useAppShellChrome();
+	const [pendingBrowserCommands, setPendingBrowserCommands] = useState<BrowserControlPayload[]>([]);
+
+	useEffect(() => {
+		hideBootSplash();
+	}, []);
+
+	const closeWindow = useCallback(() => {
+		void shell?.invoke('app:windowClose').catch(() => {
+			/* ignore */
+		});
+	}, [shell]);
+
+	useEffect(() => {
+		const subscribe = shell?.subscribeBrowserControl;
+		if (!subscribe) {
+			return;
+		}
+		const unsubscribe = subscribe((payload) => {
+			if (!isBrowserControlPayload(payload)) {
+				return;
+			}
+			if (payload.type === 'closeSidebar') {
+				closeWindow();
+				return;
+			}
+			setPendingBrowserCommands((prev) => [...prev, payload]);
+		});
+		return () => {
+			unsubscribe?.();
+		};
+	}, [closeWindow, shell]);
+
+	useEffect(() => {
+		if (!shell) {
+			return;
+		}
+		void shell.invoke('browser:windowReady').catch(() => {
+			/* ignore */
+		});
+	}, [shell]);
+
+	const handleBrowserCommandHandled = useCallback((commandId: string) => {
+		setPendingBrowserCommands((prev) => prev.filter((command) => command.commandId !== commandId));
+	}, []);
+
+	return (
+		<div className="ref-browser-window-root">
+			<AgentRightSidebarBrowserPanel
+				hasAgentPlanSidebarContent={false}
+				closeSidebar={closeWindow}
+				openView={() => {}}
+				pendingCommand={pendingBrowserCommands[0] ?? null}
+				onCommandHandled={handleBrowserCommandHandled}
+				variant="window"
 			/>
 		</div>
 	);
@@ -2385,17 +2516,13 @@ export const AgentRightSidebar = memo(function AgentRightSidebar({
 			if (!isBrowserControlPayload(payload)) {
 				return;
 			}
-			if (payload.type === 'closeSidebar') {
-				closeSidebar();
-				return;
-			}
-			setPendingBrowserCommands((prev) => [...prev, payload]);
-			openView('browser');
+			// Main workspace no longer hosts the AI browser UI.
+			// Browser commands are expected to land in the dedicated browser window instead.
 		});
 		return () => {
 			unsubscribe?.();
 		};
-	}, [closeSidebar, openView, shell]);
+	}, [shell]);
 
 	const handleBrowserCommandHandled = useCallback((commandId: string) => {
 		setPendingBrowserCommands((prev) => prev.filter((command) => command.commandId !== commandId));

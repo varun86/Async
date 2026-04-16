@@ -38,6 +38,7 @@ import { resolveToolPermissionFromRules } from '../agent/toolPermissionModel.js'
 import { isSafeShellCommandForAutoApprove } from '../agent/toolApprovalGate.js';
 import { getShellPermissionMode } from '../../src/shellPermissionMode.js';
 import type { BotTodoListItem } from './platforms/common.js';
+import { closeBrowserWindowForHostId } from '../browser/browserController.js';
 
 export type BotInboundMessage = {
 	conversationKey: string;
@@ -673,97 +674,98 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 	const mode = args.modeOverride ?? session.mode;
 	const threadId = ensureThreadForSession(session, mode, args.startNewThread === true);
 	const hostWebContentsId = resolveBotHostWebContentsId();
-	const modelSelection = session.modelId.trim();
-	if (!modelSelection) {
-		throw new Error('当前机器人会话没有可用的模型。请先在设置里为该机器人配置可用模型。');
-	}
-	const resolved = resolveModelRequest(settings, modelSelection);
-	if (!resolved.ok) {
-		throw new Error(resolved.message);
-	}
-
-	const effectiveSettings: ShellSettings = {
-		...settings,
-		team: {
-			...(settings.team ?? {}),
-			requirePlanApproval: false,
-		},
-	};
-
-	let workspaceFiles: string[] = [];
-	if (session.workspaceRoot) {
-		try {
-			workspaceFiles = await ensureWorkspaceFileIndex(session.workspaceRoot, signal);
-		} catch {
-			workspaceFiles = [];
+	try {
+		const modelSelection = session.modelId.trim();
+		if (!modelSelection) {
+			throw new Error('当前机器人会话没有可用的模型。请先在设置里为该机器人配置可用模型。');
 		}
-	}
-
-	const projectAgent = readWorkspaceAgentProjectSlice(session.workspaceRoot);
-	const agentForTurn = mergeAgentWithProjectSlice(effectiveSettings.agent, projectAgent);
-	const uiLanguage = effectiveSettings.language === 'en' ? 'en' : 'zh-CN';
-	const prepared = prepareUserTurnForChat(task, agentForTurn, session.workspaceRoot, workspaceFiles, uiLanguage);
-	let finalSystemAppend = prepared.agentSystemAppend;
-	if (session.workspaceRoot && (mode === 'plan' || mode === 'ask' || mode === 'team')) {
-		const wsLine = `## Current workspace\nWorkspace root (absolute): \`${session.workspaceRoot.replace(/\\/g, '/')}\`\nUser file references with \`@\` are relative to this root.`;
-		finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${wsLine}` : wsLine;
-	}
-	if ((mode === 'plan' || mode === 'ask' || mode === 'team') && workspaceFiles.length > 0) {
-		const tree = buildWorkspaceTreeSummary(workspaceFiles);
-		if (tree) {
-			finalSystemAppend = appendSystemBlock(finalSystemAppend, tree);
+		const resolved = resolveModelRequest(settings, modelSelection);
+		if (!resolved.ok) {
+			throw new Error(resolved.message);
 		}
-	}
-	finalSystemAppend = await appendMemoryAndRetrievalContext({
-		base: finalSystemAppend,
-		mode,
-		settings: effectiveSettings,
-		root: session.workspaceRoot,
-		threadId,
-		userText: prepared.userText,
-		modelSelection,
-		signal,
-	});
 
-	const updatedThread = appendMessage(threadId, { role: 'user', content: prepared.userText });
-	const thinkingLevel = resolveThinkingLevelForSelection(effectiveSettings, modelSelection);
-	const thread = getThread(threadId);
-	const compressResult = await compressForSend(
-		updatedThread.messages,
-		effectiveSettings,
-		{
+		const effectiveSettings: ShellSettings = {
+			...settings,
+			team: {
+				...(settings.team ?? {}),
+				requirePlanApproval: false,
+			},
+		};
+
+		let workspaceFiles: string[] = [];
+		if (session.workspaceRoot) {
+			try {
+				workspaceFiles = await ensureWorkspaceFileIndex(session.workspaceRoot, signal);
+			} catch {
+				workspaceFiles = [];
+			}
+		}
+
+		const projectAgent = readWorkspaceAgentProjectSlice(session.workspaceRoot);
+		const agentForTurn = mergeAgentWithProjectSlice(effectiveSettings.agent, projectAgent);
+		const uiLanguage = effectiveSettings.language === 'en' ? 'en' : 'zh-CN';
+		const prepared = prepareUserTurnForChat(task, agentForTurn, session.workspaceRoot, workspaceFiles, uiLanguage);
+		let finalSystemAppend = prepared.agentSystemAppend;
+		if (session.workspaceRoot && (mode === 'plan' || mode === 'ask' || mode === 'team')) {
+			const wsLine = `## Current workspace\nWorkspace root (absolute): \`${session.workspaceRoot.replace(/\\/g, '/')}\`\nUser file references with \`@\` are relative to this root.`;
+			finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${wsLine}` : wsLine;
+		}
+		if ((mode === 'plan' || mode === 'ask' || mode === 'team') && workspaceFiles.length > 0) {
+			const tree = buildWorkspaceTreeSummary(workspaceFiles);
+			if (tree) {
+				finalSystemAppend = appendSystemBlock(finalSystemAppend, tree);
+			}
+		}
+		finalSystemAppend = await appendMemoryAndRetrievalContext({
+			base: finalSystemAppend,
 			mode,
-			signal,
-			requestModelId: resolved.requestModelId,
-			paradigm: resolved.paradigm,
-			requestApiKey: resolved.apiKey,
-			requestBaseURL: resolved.baseURL,
-			requestProxyUrl: resolved.proxyUrl,
-			maxOutputTokens: resolved.maxOutputTokens,
-			...(resolved.contextWindowTokens != null ? { contextWindowTokens: resolved.contextWindowTokens } : {}),
-			thinkingLevel,
-		},
-		thread?.summary,
-		thread?.summaryCoversMessageCount
-	);
-	let sendMessages = compressResult.messages;
-	if (compressResult.newSummary && compressResult.newSummaryCoversCount !== undefined) {
-		saveSummary(threadId, compressResult.newSummary, compressResult.newSummaryCoversCount);
-	}
-
-	const finish = (full: string, usage?: { inputTokens?: number; outputTokens?: number }) => {
-		updateLastAssistant(threadId, full);
-		accumulateTokenUsage(threadId, usage?.inputTokens, usage?.outputTokens);
-		queueExtractMemories({
-			threadId,
-			workspaceRoot: session.workspaceRoot,
 			settings: effectiveSettings,
+			root: session.workspaceRoot,
+			threadId,
+			userText: prepared.userText,
 			modelSelection,
+			signal,
 		});
-	};
 
-	if (mode === 'team') {
-		return await new Promise<string>(async (resolve, reject) => {
+		const updatedThread = appendMessage(threadId, { role: 'user', content: prepared.userText });
+		const thinkingLevel = resolveThinkingLevelForSelection(effectiveSettings, modelSelection);
+		const thread = getThread(threadId);
+		const compressResult = await compressForSend(
+			updatedThread.messages,
+			effectiveSettings,
+			{
+				mode,
+				signal,
+				requestModelId: resolved.requestModelId,
+				paradigm: resolved.paradigm,
+				requestApiKey: resolved.apiKey,
+				requestBaseURL: resolved.baseURL,
+				requestProxyUrl: resolved.proxyUrl,
+				maxOutputTokens: resolved.maxOutputTokens,
+				...(resolved.contextWindowTokens != null ? { contextWindowTokens: resolved.contextWindowTokens } : {}),
+				thinkingLevel,
+			},
+			thread?.summary,
+			thread?.summaryCoversMessageCount
+		);
+		let sendMessages = compressResult.messages;
+		if (compressResult.newSummary && compressResult.newSummaryCoversCount !== undefined) {
+			saveSummary(threadId, compressResult.newSummary, compressResult.newSummaryCoversCount);
+		}
+
+		const finish = (full: string, usage?: { inputTokens?: number; outputTokens?: number }) => {
+			updateLastAssistant(threadId, full);
+			accumulateTokenUsage(threadId, usage?.inputTokens, usage?.outputTokens);
+			queueExtractMemories({
+				threadId,
+				workspaceRoot: session.workspaceRoot,
+				settings: effectiveSettings,
+				modelSelection,
+			});
+		};
+
+		if (mode === 'team') {
+			return await new Promise<string>(async (resolve, reject) => {
 			try {
 				let teamStreamFull = '';
 				await runTeamSession({
@@ -817,15 +819,15 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 			} catch (error) {
 				reject(error);
 			}
-		});
-	}
+			});
+		}
 
-	if ((mode === 'agent' || mode === 'plan') && resolved.paradigm !== 'gemini') {
-		const messagesForAgent = modeExpandsWorkspaceFileContext(mode)
-			? cloneMessagesWithExpandedLastUser(sendMessages, session.workspaceRoot)
-			: sendMessages;
-		let innerStreamFull = '';
-		return await new Promise<string>(async (resolve, reject) => {
+		if ((mode === 'agent' || mode === 'plan') && resolved.paradigm !== 'gemini') {
+			const messagesForAgent = modeExpandsWorkspaceFileContext(mode)
+				? cloneMessagesWithExpandedLastUser(sendMessages, session.workspaceRoot)
+				: sendMessages;
+			let innerStreamFull = '';
+			return await new Promise<string>(async (resolve, reject) => {
 			try {
 				await runAgentLoop(
 					effectiveSettings,
@@ -888,11 +890,11 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 			} catch (error) {
 				reject(error);
 			}
-		});
-	}
+			});
+		}
 
-	let askStreamFull = '';
-	return await new Promise<string>(async (resolve, reject) => {
+		let askStreamFull = '';
+		return await new Promise<string>(async (resolve, reject) => {
 		try {
 			await streamChatUnified(
 				effectiveSettings,
@@ -925,8 +927,13 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 			);
 		} catch (error) {
 			reject(error);
+			}
+		});
+	} finally {
+		if (hostWebContentsId != null) {
+			closeBrowserWindowForHostId(hostWebContentsId);
 		}
-	});
+	}
 }
 
 export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Promise<string> {
@@ -1089,6 +1096,7 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 
 	const thinkingLevel = resolveThinkingLevelForSelection(settings, session.modelId.trim());
 	const systemAppend = buildBotOrchestratorPrompt(settings, integration, session, inbound);
+	const hostWebContentsId = resolveBotHostWebContentsId();
 	let full = '';
 	let errorMessage = '';
 	let streamFull = '';
@@ -1141,7 +1149,7 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 				thinkingLevel,
 				workspaceRoot: session.workspaceRoot,
 				workspaceLspManager,
-				hostWebContentsId: resolveBotHostWebContentsId(),
+				hostWebContentsId,
 				toolPoolOverride: leaderToolPool,
 				customToolHandlers: handlers,
 				agentSystemAppend: systemAppend,
@@ -1177,6 +1185,10 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 		);
 	} catch (error) {
 		errorMessage = formatLlmSdkError(error);
+	} finally {
+		if (hostWebContentsId != null) {
+			closeBrowserWindowForHostId(hostWebContentsId);
+		}
 	}
 
 	if (errorMessage) {

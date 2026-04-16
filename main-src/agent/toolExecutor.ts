@@ -272,7 +272,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 		};
 	}
 
-	const dispatch = (command: BrowserControlCommand): boolean => dispatchBrowserControlToHostId(hostId, command);
+	const dispatch = async (command: BrowserControlCommand): Promise<boolean> => await dispatchBrowserControlToHostId(hostId, command);
 
 	switch (action) {
 		case 'get_config': {
@@ -320,7 +320,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 				};
 			}
 			const resolvedUrl = normalizeBrowserNavigateTarget(target);
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: 'navigate',
 				target,
@@ -438,7 +438,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 			};
 		}
 		case 'close_sidebar': {
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: 'closeSidebar',
 			});
@@ -462,7 +462,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 						: action === 'close_tab'
 							? 'closeTab'
 							: (action as 'reload' | 'stop');
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: commandType,
 				tabId:
@@ -491,7 +491,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 					isError: true,
 				};
 			}
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: 'applyConfig',
 				config: result.config,
@@ -546,7 +546,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 					isError: true,
 				};
 			}
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: 'applyConfig',
 				config: result.config,

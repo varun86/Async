@@ -236,7 +236,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 	{
 		name: 'Browser',
 		description:
-			'Control the app\'s built-in browser sidebar in the current Async window. Use this to open or steer pages, read visible page content, capture webpage screenshots, and inspect/update browser networking settings such as User-Agent, Accept-Language, extra request headers, and proxy configuration.',
+			'Control the app\'s dedicated browser window for the current Async session. Use this to open or steer pages, read visible page content, capture webpage screenshots, and inspect/update browser networking settings such as User-Agent, Accept-Language, extra request headers, and proxy configuration.',
 		parameters: {
 			type: 'object',
 			properties: {

@@ -36,6 +36,7 @@ import {
 	applyThemePresetToAppearance,
 	applyAppearanceSettingsToDom,
 	defaultAppearanceSettings,
+	normalizeAppearanceSettings,
 	nativeWindowChromeFromAppearance,
 	replaceBuiltinChromeColorsForScheme,
 	shouldMigrateChromeWhenLeavingScheme,
@@ -45,7 +46,9 @@ import { useAppColorScheme } from './useAppColorScheme';
 import {
 	type AppColorMode,
 	getVoidMonacoTheme,
+	readPrefersDark,
 	readStoredColorMode,
+	resolveEffectiveScheme,
 	type ThemeTransitionOrigin,
 	writeStoredColorMode,
 } from './colorMode';
@@ -120,6 +123,7 @@ import { AgentAgentCenterColumn } from './app/AgentAgentCenterColumn';
 import type { ComposerAnchorSlot } from './ChatComposer';
 import { AppProvider } from './AppContext';
 import { ComposerActionsProvider } from './ComposerActionsContext';
+import { AgentBrowserWindowSurface } from './AgentRightSidebar';
 import { runDesktopShellInit } from './app/desktopShellInit';
 import {
 	DEFAULT_SHELL_LAYOUT_MODE_KEY,
@@ -155,7 +159,7 @@ const EditorMainPanel = lazy(() => import('./EditorMainPanel').then((m) => ({ de
 type LayoutMode = ShellLayoutMode;
 type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team' | 'browser' | 'agents';
 type EditorLeftSidebarView = 'explorer' | 'search' | 'git';
-import { useI18n, type AppLocale } from './i18n';
+import { useI18n, normalizeLocale, type AppLocale } from './i18n';
 import { hideBootSplash } from './bootSplash';
 import { debugDiffHead, diffCreatesNewFile, sameStringArray } from './appDiffUtils';
 
@@ -195,7 +199,13 @@ type OnSendOptions = {
 	planBuildPathKey?: string;
 };
 
-export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
+export default function App({
+	appSurface,
+	browserWindow = false,
+}: {
+	appSurface?: LayoutMode;
+	browserWindow?: boolean;
+} = {}) {
 	const shell = useAsyncShell();
 	const layoutPinnedBySurface = appSurface !== undefined;
 	const shellLsPrefix = appSurface === 'editor' ? 'void-shell:editor:' : '';
@@ -494,9 +504,50 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 
 	return (
 		<AppShellProviders chrome={chromeSlice} workspace={workspaceSlice} settings={settingsSlice}>
-			<AppMainWorkspace />
+			{browserWindow ? <AppBrowserWindow /> : <AppMainWorkspace />}
 		</AppShellProviders>
 	);
+}
+
+function AppBrowserWindow() {
+	const { shell, setLocale, setColorMode, setAppearanceSettings } = useAppShellChrome();
+
+	useEffect(() => {
+		if (!shell) {
+			return;
+		}
+		let cancelled = false;
+		void (async () => {
+			try {
+				const settings = (await shell.invoke('settings:get')) as {
+					language?: string;
+					ui?: {
+						colorMode?: string;
+					} & Record<string, unknown>;
+				};
+				if (cancelled) {
+					return;
+				}
+				setLocale(normalizeLocale(settings.language));
+				const colorMode =
+					settings.ui?.colorMode === 'light' ||
+					settings.ui?.colorMode === 'dark' ||
+					settings.ui?.colorMode === 'system'
+						? settings.ui.colorMode
+						: readStoredColorMode();
+				setColorMode(colorMode);
+				const scheme = resolveEffectiveScheme(colorMode, readPrefersDark());
+				setAppearanceSettings(normalizeAppearanceSettings(settings.ui, scheme));
+			} catch {
+				/* ignore */
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [shell, setAppearanceSettings, setColorMode, setLocale]);
+
+	return <AgentBrowserWindowSurface />;
 }
 
 function AppMainWorkspaceInner() {
@@ -5998,6 +6049,11 @@ function AppMainWorkspaceInner() {
 					agentRightSidebarOpen={agentRightSidebarOpen}
 					agentRightSidebarView={agentRightSidebarView}
 					toggleAgentRightSidebarView={toggleAgentRightSidebarView}
+					onOpenBrowserWindow={() => {
+						void shell?.invoke('browser:openWindow').catch(() => {
+							/* ignore */
+						});
+					}}
 					onLaunchWorkspaceWithTool={(tool) => {
 						void launchWorkspaceWithTool(tool);
 					}}
@@ -6032,6 +6088,7 @@ function AppMainWorkspaceInner() {
 		agentRightSidebarOpen,
 		agentRightSidebarView,
 		toggleAgentRightSidebarView,
+		shell,
 		launchWorkspaceWithTool,
 		agentChatPanelProps,
 		editorMainPanelProps,

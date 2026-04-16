@@ -700,6 +700,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 								onRunCommand={onRunCommand}
 								streamingToolPreview={agentOrPlanStreaming ? streamingToolPreview : null}
 								showAgentWorking={agentOrPlanStreaming}
+								hidePendingActivityTextCluster
 								liveAgentBlocksState={agentOrPlanStreaming ? liveAssistantBlocks : null}
 								liveThoughtMeta={agentOrPlanStreaming ? liveThoughtMeta : null}
 								revertedPaths={revertedFiles}
@@ -790,6 +791,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 							onOpenAgentFile={onOpenAgentConversationFile}
 							onRunCommand={onRunCommand}
 							showAgentWorking={isWorking}
+							hidePendingActivityTextCluster
 							liveAgentBlocksState={workflow?.liveBlocks ?? null}
 							liveThoughtMeta={liveThoughtMeta}
 							revertedPaths={revertedFiles}
@@ -820,6 +822,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 						workspaceRoot={workspace}
 						onOpenAgentFile={onOpenAgentConversationFile}
 						onRunCommand={onRunCommand}
+						hidePendingActivityTextCluster
 						revertedPaths={revertedFiles}
 						revertedChangeKeys={revertedChangeKeys}
 						skipPlanTodo

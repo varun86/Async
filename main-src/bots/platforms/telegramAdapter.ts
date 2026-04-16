@@ -1,9 +1,10 @@
 import { app, session, type Session } from 'electron';
+import FormData from 'form-data';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
 import type { BotInboundAttachment, BotPlatformAdapter, PlatformMessageHandler } from './common.js';
-import { electronProxyRulesFromUrl, resolveIntegrationProxyUrl, splitPlainText } from './common.js';
+import { electronProxyRulesFromUrl, requestJson, resolveIntegrationProxyUrl, splitPlainText } from './common.js';
 import { renderForPlatform } from './platformMarkdown.js';
 
 type TelegramUpdate = {
@@ -166,6 +167,44 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 		return attachments;
 	}
 
+	private async uploadReply(
+		method: 'sendPhoto' | 'sendDocument',
+		fileField: 'photo' | 'document',
+		message: TelegramMessage,
+		filePath: string
+	): Promise<void> {
+		const fullPath = String(filePath ?? '').trim();
+		if (!fullPath) {
+			throw new Error('附件路径为空。');
+		}
+		if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+			throw new Error('附件不存在，或不是文件。');
+		}
+
+		const form = new FormData();
+		form.append('chat_id', String(message.chat.id));
+		form.append('reply_to_message_id', String(message.message_id));
+		if (message.message_thread_id != null) {
+			form.append('message_thread_id', String(message.message_thread_id));
+		}
+		form.append(fileField, fs.createReadStream(fullPath), {
+			filename: path.basename(fullPath),
+		});
+
+		const response = await requestJson<{ ok?: boolean; result?: { message_id?: number }; description?: string }>(
+			`https://api.telegram.org/bot${this.token}/${method}`,
+			{
+				method: 'POST',
+				body: form,
+				proxyUrl: resolveIntegrationProxyUrl(this.integration),
+				signal: this.abortController?.signal,
+			}
+		);
+		if (!response.ok) {
+			throw new Error(response.description || `Telegram API ${method} failed`);
+		}
+	}
+
 	async start(onMessage: PlatformMessageHandler): Promise<void> {
 		if (!this.token) {
 			return;
@@ -220,6 +259,7 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 						if (!cleaned && attachments.length === 0) {
 							continue;
 						}
+						const threadReplyParams = message.message_thread_id ? { message_thread_id: message.message_thread_id } : {};
 						const threadKey = message.message_thread_id ? `${chatId}:${message.message_thread_id}` : chatId;
 						await onMessage({
 							conversationKey: threadKey,
@@ -232,7 +272,7 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 								await this.api('sendChatAction', {
 									chat_id: message.chat.id,
 									action: 'typing',
-									...(message.message_thread_id ? { message_thread_id: message.message_thread_id } : {}),
+									...threadReplyParams,
 								}).catch(() => {});
 							},
 							reply: async (text) => {
@@ -243,16 +283,22 @@ export class TelegramBotAdapter implements BotPlatformAdapter {
 										text: chunk,
 										parse_mode: 'MarkdownV2',
 										reply_to_message_id: message.message_id,
-										...(message.message_thread_id ? { message_thread_id: message.message_thread_id } : {}),
+										...threadReplyParams,
 									}).catch(async () => {
 										await this.api('sendMessage', {
 											chat_id: message.chat.id,
 											text: chunk,
 											reply_to_message_id: message.message_id,
-											...(message.message_thread_id ? { message_thread_id: message.message_thread_id } : {}),
+											...threadReplyParams,
 										});
 									});
 								}
+							},
+							replyImage: async (filePath) => {
+								await this.uploadReply('sendPhoto', 'photo', message, filePath);
+							},
+							replyFile: async (filePath) => {
+								await this.uploadReply('sendDocument', 'document', message, filePath);
 							},
 						});
 					}

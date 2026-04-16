@@ -7746,8 +7746,95 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	flex-shrink: 0;
 }
 
+.ref-browser-window-root {
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+	background:
+		radial-gradient(circle at top center, color-mix(in srgb, var(--surface-tint-soft) 72%, transparent) 0%, transparent 38%),
+		linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-bg-strong) 94%, transparent) 0%, var(--surface-panel-bg) 100%);
+}
+
+.ref-browser-window-root .ref-agent-review-head {
+	-webkit-app-region: drag;
+	padding: 14px 16px 10px;
+	padding-right: max(
+		16px,
+		var(--ref-titlebar-right-safe),
+		calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px))
+	);
+	border-bottom: 1px solid color-mix(in srgb, var(--surface-glass-stroke) 92%, transparent);
+	background: color-mix(in srgb, var(--surface-panel-bg-strong) 84%, transparent);
+	backdrop-filter: blur(18px);
+	-webkit-backdrop-filter: blur(18px);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--void-fg-0) 4%, transparent);
+}
+
+.ref-browser-window-root button,
+.ref-browser-window-root input,
+.ref-browser-window-root select,
+.ref-browser-window-root textarea,
+.ref-browser-window-root a,
+.ref-browser-window-root webview,
+.ref-browser-window-root .ref-browser-tabstrip,
+.ref-browser-window-root .ref-browser-toolbar,
+.ref-browser-window-root .ref-browser-address-form,
+.ref-browser-window-root .ref-browser-webview-wrap,
+.ref-browser-window-root .ref-browser-settings-backdrop,
+.ref-browser-window-root .ref-browser-settings-modal {
+	-webkit-app-region: no-drag;
+}
+
+.ref-browser-window-root .ref-right-panel-stage {
+	padding: 12px 16px 16px;
+}
+
+.ref-browser-window-root .ref-browser-panel {
+	border-radius: 22px;
+	border: 1px solid color-mix(in srgb, var(--surface-glass-stroke) 88%, transparent);
+	background:
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--surface-panel-bg-strong) 96%, transparent) 0%,
+			color-mix(in srgb, var(--surface-panel-bg) 98%, transparent) 100%
+		);
+	box-shadow:
+		var(--shadow-floating, 0 24px 70px color-mix(in srgb, var(--void-fg-0) 14%, transparent)),
+		inset 0 1px 0 color-mix(in srgb, var(--void-fg-0) 3%, transparent);
+	min-height: 0;
+}
+
+.ref-browser-window-root .ref-browser-tabstrip {
+	padding: 10px 12px 0;
+}
+
+.ref-browser-window-root .ref-browser-toolbar {
+	padding: 10px 12px 14px;
+	gap: 12px;
+	border-bottom: 1px solid color-mix(in srgb, var(--surface-glass-stroke) 74%, transparent);
+	background:
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--surface-panel-bg-soft) 90%, transparent) 0%,
+			color-mix(in srgb, var(--surface-panel-bg) 72%, transparent) 100%
+		);
+}
+
+.ref-browser-window-root .ref-browser-webview-wrap {
+	margin: 12px;
+	border-radius: 18px;
+}
+
+.ref-browser-window-root .ref-browser-address-form {
+	background: color-mix(in srgb, var(--surface-search-bg) 92%, transparent);
+	border-color: color-mix(in srgb, var(--surface-glass-stroke) 82%, transparent);
+}
+
 .ref-browser-panel {
 	background: var(--void-bg-1);
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
 }
 
 .ref-browser-tabstrip {
@@ -7959,7 +8046,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	min-height: 0;
 	margin: 0 12px 12px;
 	border-radius: 16px;
-	overflow: auto;
+	overflow: hidden;
 	border: 1px solid var(--void-border-soft);
 	background:
 		linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 100%),
@@ -7967,10 +8054,18 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 }
 
 .ref-browser-webview {
-	display: inline-flex;
-	width: 1920px;
-	height: 1080px;
-	flex-shrink: 0;
+	/*
+	 * Electron 文档明确建议 webview 使用默认 flex（或 inline-flex），
+	 * 否则 shadow DOM 内部 iframe 可能无法正确拉伸到 100% 高度。
+	 */
+	display: flex;
+	flex: 1 1 auto;
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	min-width: 100%;
+	min-height: 100%;
 	background: white;
 }
 

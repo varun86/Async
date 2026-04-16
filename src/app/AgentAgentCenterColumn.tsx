@@ -18,6 +18,7 @@ export type AgentAgentCenterColumnProps = {
 	agentRightSidebarOpen: boolean;
 	agentRightSidebarView: AgentRightSidebarView;
 	toggleAgentRightSidebarView: (view: AgentRightSidebarView) => void;
+	onOpenBrowserWindow: () => void;
 	onLaunchWorkspaceWithTool: (tool: WorkspaceLauncherTool) => void;
 	chatPanelProps: Omit<AgentChatPanelProps, 'layout'>;
 };
@@ -34,6 +35,7 @@ export const AgentAgentCenterColumn = memo(function AgentAgentCenterColumn({
 	agentRightSidebarOpen,
 	agentRightSidebarView,
 	toggleAgentRightSidebarView,
+	onOpenBrowserWindow,
 	onLaunchWorkspaceWithTool,
 	chatPanelProps,
 }: AgentAgentCenterColumnProps) {
@@ -104,12 +106,11 @@ export const AgentAgentCenterColumn = memo(function AgentAgentCenterColumn({
 				</button>
 				<button
 					type="button"
-					className={`ref-agent-rail-toggle ${agentRightSidebarOpen && agentRightSidebarView === 'browser' ? 'is-open' : ''}`}
-					onClick={() => toggleAgentRightSidebarView('browser')}
+					className="ref-agent-rail-toggle"
+					onClick={onOpenBrowserWindow}
 					title={t('app.tabBrowser')}
 					aria-label={t('app.tabBrowser')}
-					aria-pressed={agentRightSidebarOpen && agentRightSidebarView === 'browser'}
-					aria-controls="agent-right-sidebar"
+					aria-pressed={false}
 				>
 					<IconGlobe />
 				</button>

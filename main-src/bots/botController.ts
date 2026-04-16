@@ -32,6 +32,28 @@ function looksLikeImagePath(filePath: string): boolean {
 	return /\.(png|jpe?g|webp|gif|bmp|ico|tiff?)$/i.test(path.extname(filePath));
 }
 
+export function botAttachmentDedupeKey(filePath: string): string {
+	const trimmed = String(filePath ?? '').trim();
+	if (!trimmed) {
+		return '';
+	}
+	try {
+		return path.resolve(trimmed).replace(/\\/g, '/').toLowerCase();
+	} catch {
+		return trimmed.replace(/\\/g, '/').toLowerCase();
+	}
+}
+
+export function filterUnsentBotReplyImages(imagePaths: string[], sentAttachmentPaths: Iterable<string>): string[] {
+	const sentKeys = new Set(
+		Array.from(sentAttachmentPaths, (filePath) => botAttachmentDedupeKey(filePath)).filter(Boolean)
+	);
+	return imagePaths.filter((imagePath) => {
+		const key = botAttachmentDedupeKey(imagePath);
+		return !key || !sentKeys.has(key);
+	});
+}
+
 function createAdapter(integration: BotIntegrationConfig): BotPlatformAdapter | null {
 	switch (integration.platform) {
 		case 'telegram':
@@ -262,6 +284,7 @@ class BotController {
 		const run = async () => {
 			const ac = new AbortController();
 			this.activeTurns.set(key, { abort: ac, startedAt: Date.now() });
+			const sentAttachmentPaths = new Set<string>();
 
 			let typingTimer: ReturnType<typeof setInterval> | null = null;
 			if (message.sendTyping) {
@@ -299,16 +322,29 @@ class BotController {
 					onSendAttachment:
 						message.replyImage || message.replyFile
 							? async (filePath) => {
+									const dedupeKey = botAttachmentDedupeKey(filePath);
+									if (dedupeKey && sentAttachmentPaths.has(dedupeKey)) {
+										return `已跳过重复附件：${filePath}`;
+									}
 									if (looksLikeImagePath(filePath) && message.replyImage) {
 										await message.replyImage(filePath);
+										if (dedupeKey) {
+											sentAttachmentPaths.add(dedupeKey);
+										}
 										return `已发送图片：${filePath}`;
 									}
 									if (message.replyFile) {
 										await message.replyFile(filePath);
+										if (dedupeKey) {
+											sentAttachmentPaths.add(dedupeKey);
+										}
 										return `已发送文件：${filePath}`;
 									}
 									if (message.replyImage) {
 										await message.replyImage(filePath);
+										if (dedupeKey) {
+											sentAttachmentPaths.add(dedupeKey);
+										}
 										return `已发送图片：${filePath}`;
 									}
 									throw new Error('当前平台不支持发送附件。');
@@ -321,7 +357,10 @@ class BotController {
 						: undefined,
 				});
 				const displayText = extractBotReplyText(text || '');
-				const imagePaths = extractBotReplyImagePaths(text || '');
+				const imagePaths = filterUnsentBotReplyImages(
+					extractBotReplyImagePaths(text || ''),
+					sentAttachmentPaths
+				);
 				if (stream) {
 					await stream!.onDone(displayText || '已完成，但没有返回可展示的文本结果。');
 				} else {

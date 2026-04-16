@@ -18,6 +18,8 @@ const INVOKE_CHANNELS = new Set([
 	'browser:syncState',
 	'browser:getState',
 	'browser:commandResult',
+	'browser:windowReady',
+	'browser:openWindow',
 	'workspace:saveComposerAttachment',
 	'workspace:searchSymbols',
 	'lsp:ts:start',
