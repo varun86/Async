@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { resolveAsyncDataDir } from './dataDir.js';
 import { appendSuffixToStructuredAssistant, isStructuredAssistantMessage } from '../src/agentStructuredMessage.js';
+import type { AgentSessionSnapshot } from '../src/agentSessionTypes.js';
 
 export type ChatMessage = {
 	role: 'user' | 'assistant' | 'system';
@@ -62,6 +63,7 @@ export type ThreadRecord = {
 	plan?: ThreadPlan;
 	executedPlanFileKeys?: string[];
 	teamSession?: TeamSessionSnapshot;
+	agentSession?: AgentSessionSnapshot;
 };
 
 export type PlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'skipped';
@@ -371,6 +373,21 @@ export function getTeamSession(threadId: string): TeamSessionSnapshot | null {
 	return thread?.teamSession ?? null;
 }
 
+export function saveAgentSession(threadId: string, snapshot: AgentSessionSnapshot): void {
+	const thread = getThread(threadId);
+	if (!thread) {
+		return;
+	}
+	thread.agentSession = snapshot;
+	thread.updatedAt = Date.now();
+	save();
+}
+
+export function getAgentSession(threadId: string): AgentSessionSnapshot | null {
+	const thread = getThread(threadId);
+	return thread?.agentSession ?? null;
+}
+
 export function appendToLastAssistant(threadId: string, suffix: string): void {
 	const thread = getThread(threadId);
 	if (!thread || !suffix) {
@@ -551,17 +568,41 @@ function sanitizeTranscriptFilePart(input: string): string {
 	return input.replace(/[^a-zA-Z0-9_.-]+/g, '_').slice(0, 120);
 }
 
-export function appendSubagentTranscript(threadId: string, parentToolCallId: string, chunk: string): void {
-	if (!chunk || !storePath) {
+function transcriptRootDir(): string | null {
+	if (!storePath) {
+		return null;
+	}
+	return path.join(path.dirname(storePath), 'subagent_transcripts');
+}
+
+export function getAgentTranscriptPath(threadId: string, agentId: string): string | null {
+	const root = transcriptRootDir();
+	if (!root) {
+		return null;
+	}
+	return path.join(
+		root,
+		sanitizeTranscriptFilePart(threadId),
+		`${sanitizeTranscriptFilePart(agentId)}.md`
+	);
+}
+
+export function appendAgentTranscript(threadId: string, agentId: string, chunk: string): void {
+	if (!chunk) {
+		return;
+	}
+	const file = getAgentTranscriptPath(threadId, agentId);
+	if (!file) {
 		return;
 	}
 	try {
-		const root = path.dirname(storePath);
-		const dir = path.join(root, 'subagent_transcripts', sanitizeTranscriptFilePart(threadId));
-		fs.mkdirSync(dir, { recursive: true });
-		const file = path.join(dir, `${sanitizeTranscriptFilePart(parentToolCallId)}.md`);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
 		fs.appendFileSync(file, chunk, 'utf8');
 	} catch (error) {
-		console.warn('[threadStore] appendSubagentTranscript:', error instanceof Error ? error.message : error);
+		console.warn('[threadStore] appendAgentTranscript:', error instanceof Error ? error.message : error);
 	}
+}
+
+export function appendSubagentTranscript(threadId: string, parentToolCallId: string, chunk: string): void {
+	appendAgentTranscript(threadId, parentToolCallId, chunk);
 }

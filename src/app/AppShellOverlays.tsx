@@ -154,6 +154,7 @@ export type AppShellOverlaysProps = {
 	saveToastKey: number;
 	subAgentBgToast: StreamingToast;
 	composerAttachErr: string | null;
+	onSubAgentToastClick?: (threadId: string, agentId: string) => void;
 };
 
 /**
@@ -232,6 +233,7 @@ export const AppShellOverlays = memo(function AppShellOverlays({
 	saveToastKey,
 	subAgentBgToast,
 	composerAttachErr,
+	onSubAgentToastClick,
 }: AppShellOverlaysProps) {
 	return (
 		<>
@@ -417,13 +419,25 @@ export const AppShellOverlays = memo(function AppShellOverlays({
 
 			{saveToastVisible ? <div key={saveToastKey} className="ref-save-toast">Saved ✓</div> : null}
 			{subAgentBgToast ? (
-				<div
-					key={subAgentBgToast.key}
-					className={`ref-sub-agent-bg-toast ${subAgentBgToast.ok ? 'is-ok' : 'is-err'}`}
-					role="status"
-				>
-					{subAgentBgToast.text}
-				</div>
+				subAgentBgToast.threadId && subAgentBgToast.agentId && onSubAgentToastClick ? (
+					<button
+						key={subAgentBgToast.key}
+						type="button"
+						className={`ref-sub-agent-bg-toast ${subAgentBgToast.ok ? 'is-ok' : 'is-err'}`}
+						role="status"
+						onClick={() => onSubAgentToastClick(subAgentBgToast.threadId!, subAgentBgToast.agentId!)}
+					>
+						{subAgentBgToast.text}
+					</button>
+				) : (
+					<div
+						key={subAgentBgToast.key}
+						className={`ref-sub-agent-bg-toast ${subAgentBgToast.ok ? 'is-ok' : 'is-err'}`}
+						role="status"
+					>
+						{subAgentBgToast.text}
+					</div>
+				)
 			) : null}
 			{composerAttachErr ? (
 				<div className="ref-sub-agent-bg-toast is-err" role="alert">

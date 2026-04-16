@@ -34,12 +34,21 @@ function readAppSurfaceFromUrl(): 'agent' | 'editor' | undefined {
 	return undefined;
 }
 
+function readBrowserWindowFlagFromUrl(): boolean {
+	try {
+		return new URLSearchParams(window.location.search).get('browserWindow') === '1';
+	} catch {
+		return false;
+	}
+}
+
 const appSurface = readAppSurfaceFromUrl();
+const browserWindow = readBrowserWindowFlagFromUrl();
 
 createRoot(document.getElementById('root')!).render(
 	<StrictMode>
 		<I18nProvider>
-			<App appSurface={appSurface} />
+			<App appSurface={appSurface} browserWindow={browserWindow} />
 		</I18nProvider>
 	</StrictMode>
 );

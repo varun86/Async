@@ -1,5 +1,4 @@
 import {
-	Fragment,
 	memo,
 	useCallback,
 	useDeferredValue,
@@ -19,6 +18,7 @@ import { AgentReviewPanel } from './AgentReviewPanel';
 import { AgentFileChangesPanel } from './AgentFileChanges';
 import { ChatComposer } from './ChatComposer';
 import { PlanQuestionDialog } from './PlanQuestionDialog';
+import { UserInputRequestDialog } from './UserInputRequestDialog';
 import { SkillScopeDialog } from './SkillScopeDialog';
 import { RuleWizardDialog } from './RuleWizardDialog';
 import { SubagentScopeDialog } from './SubagentScopeDialog';
@@ -47,6 +47,7 @@ import { IconArrowDown, IconChevron, IconDoc } from './icons';
 import { type ParsedPlan, type PlanQuestion } from './planParser';
 import { type ChatMessage } from './threadTypes';
 import type { TeamSessionState } from './hooks/useTeamSession';
+import type { AgentUserInputRequest } from './agentSessionTypes';
 import { buildTeamConversationTimeline } from './teamChatTimeline';
 
 type SharedComposerProps = Omit<
@@ -63,7 +64,6 @@ export type AgentChatPanelProps = {
 	messagesThreadId: string | null;
 	currentId: string | null;
 	lastAssistantMessageIndex: number;
-	lastUserMessageIndex: number;
 	messagesViewportRef: RefObject<HTMLDivElement | null>;
 	messagesTrackRef: RefObject<HTMLDivElement | null>;
 	inlineResendRootRef: RefObject<HTMLDivElement | null>;
@@ -108,6 +108,8 @@ export type AgentChatPanelProps = {
 	planQuestion: PlanQuestion | null;
 	onPlanQuestionSubmit: (answer: string) => void;
 	onPlanQuestionSkip: () => void;
+	userInputRequest: AgentUserInputRequest | null;
+	onUserInputSubmit: (answers: Record<string, string>) => Promise<void>;
 	wizardPending: WizardPending | null;
 	setWizardPending: Dispatch<SetStateAction<WizardPending | null>>;
 	executeSkillCreatorSend: (scope: 'user' | 'project', pending: WizardPending) => void;
@@ -206,7 +208,6 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	messagesThreadId,
 	currentId,
 	lastAssistantMessageIndex,
-	lastUserMessageIndex,
 	messagesViewportRef,
 	messagesTrackRef,
 	inlineResendRootRef,
@@ -246,6 +247,8 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	planQuestion,
 	onPlanQuestionSubmit,
 	onPlanQuestionSkip,
+	userInputRequest,
+	onUserInputSubmit,
 	wizardPending,
 	setWizardPending,
 	executeSkillCreatorSend,
@@ -566,7 +569,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			const isEditingThisUser = userMessageIndex >= 0 && resendFromUserIndex === userMessageIndex;
 
 			if (m.role === 'user' && isEditingThisUser) {
-				const inner = (
+				return (
 					<div ref={inlineResendRootRef} className="ref-msg-slot ref-msg-slot--composer">
 						<ChatComposer
 							{...sharedComposerProps}
@@ -578,13 +581,6 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 							showGitBranchRow={false}
 						/>
 					</div>
-				);
-				return i === lastUserMessageIndex ? (
-					<div key={`u-edit-${convoKey}-${i}`} className="ref-msg-sticky-user-wrap">
-						{inner}
-					</div>
-				) : (
-					<Fragment key={`u-edit-${convoKey}-${i}`}>{inner}</Fragment>
 				);
 			}
 
@@ -604,7 +600,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 					: null;
 				const hasTodoPanel = userTodos != null && userTodos.length > 0;
 
-				const inner = (
+				return (
 					<div className={`ref-msg-slot ref-msg-slot--user${hasTodoPanel ? ' has-todo-panel' : ''}`}>
 						<button
 							type="button"
@@ -672,13 +668,6 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 						})()}
 					</div>
 				);
-				return i === lastUserMessageIndex ? (
-					<div key={`u-${convoKey}-${i}`} className="ref-msg-sticky-user-wrap">
-						{inner}
-					</div>
-				) : (
-					<Fragment key={`u-${convoKey}-${i}`}>{inner}</Fragment>
-				);
 			}
 
 			return (
@@ -711,6 +700,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 								onRunCommand={onRunCommand}
 								streamingToolPreview={agentOrPlanStreaming ? streamingToolPreview : null}
 								showAgentWorking={agentOrPlanStreaming}
+								hidePendingActivityTextCluster
 								liveAgentBlocksState={agentOrPlanStreaming ? liveAssistantBlocks : null}
 								liveThoughtMeta={agentOrPlanStreaming ? liveThoughtMeta : null}
 								revertedPaths={revertedFiles}
@@ -732,10 +722,11 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		const nodes: ReactNode[] = [];
 		const convoKey = conversationRenderKey;
 		for (let i = messageStartIndex; i < displayMessages.length; i++) {
+			const isStickyUserRow = displayMessages[i]?.role === 'user';
 			nodes.push(
 				<div
 					key={`row-${convoKey}-${i}`}
-					className="ref-msg-row-measure"
+					className={`ref-msg-row-measure${isStickyUserRow ? ' ref-msg-sticky-user-wrap' : ''}`}
 					data-msg-index={String(i)}
 				>
 					{messageNodeAtIndex(i)}
@@ -800,6 +791,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 							onOpenAgentFile={onOpenAgentConversationFile}
 							onRunCommand={onRunCommand}
 							showAgentWorking={isWorking}
+							hidePendingActivityTextCluster
 							liveAgentBlocksState={workflow?.liveBlocks ?? null}
 							liveThoughtMeta={liveThoughtMeta}
 							revertedPaths={revertedFiles}
@@ -830,6 +822,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 						workspaceRoot={workspace}
 						onOpenAgentFile={onOpenAgentConversationFile}
 						onRunCommand={onRunCommand}
+						hidePendingActivityTextCluster
 						revertedPaths={revertedFiles}
 						revertedChangeKeys={revertedChangeKeys}
 						skipPlanTodo
@@ -1024,6 +1017,9 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 					onSubmit={onPlanQuestionSubmit}
 					onSkip={onPlanQuestionSkip}
 				/>
+			) : null}
+			{hasConversation && userInputRequest ? (
+				<UserInputRequestDialog request={userInputRequest} onSubmit={onUserInputSubmit} />
 			) : null}
 
 			{wizardPending?.kind === 'create-skill' ? (

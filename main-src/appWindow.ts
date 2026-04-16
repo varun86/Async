@@ -24,7 +24,8 @@ export function createAppWindow(opts?: {
 	blank?: boolean;
 	surface?: AppWindowSurface;
 	initialWorkspace?: string | null;
-}): void {
+	queryParams?: Record<string, string | number | boolean | null | undefined>;
+}): BrowserWindow {
 	const preloadPath = path.join(__dirname, 'preload.cjs');
 	const primary = screen.getPrimaryDisplay();
 	const wa = primary.workArea;
@@ -98,6 +99,12 @@ export function createAppWindow(opts?: {
 		params.set('blank', '1');
 	}
 	params.set('surface', surface);
+	for (const [key, value] of Object.entries(opts?.queryParams ?? {})) {
+		if (value === null || value === undefined || value === false) {
+			continue;
+		}
+		params.set(key, value === true ? '1' : String(value));
+	}
 	const qs = params.toString();
 	const urlSuffix = qs ? `?${qs}` : '';
 
@@ -110,4 +117,5 @@ export function createAppWindow(opts?: {
 		const fileUrl = pathToFileURL(htmlPath).href + urlSuffix;
 		void win.loadURL(fileUrl);
 	}
+	return win;
 }

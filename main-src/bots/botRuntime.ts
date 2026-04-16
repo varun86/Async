@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { AGENT_TOOLS, type AgentToolDef, ToolCall, ToolResult } from '../agent/agentTools.js';
+import type { BotInboundAttachment, BotStreamChannel } from './platforms/common.js';
 import { runAgentLoop } from '../agent/agentLoop.js';
 import { compressForSend } from '../agent/conversationCompress.js';
 import { type ToolExecutionContext, type ToolExecutionHooks } from '../agent/toolExecutor.js';
@@ -37,12 +38,14 @@ import { resolveToolPermissionFromRules } from '../agent/toolPermissionModel.js'
 import { isSafeShellCommandForAutoApprove } from '../agent/toolApprovalGate.js';
 import { getShellPermissionMode } from '../../src/shellPermissionMode.js';
 import type { BotTodoListItem } from './platforms/common.js';
+import { closeBrowserWindowForHostId } from '../browser/browserController.js';
 
 export type BotInboundMessage = {
 	conversationKey: string;
 	text: string;
 	senderId?: string;
 	senderName?: string;
+	attachments?: BotInboundAttachment[];
 };
 
 export type BotSessionState = {
@@ -53,6 +56,8 @@ export type BotSessionState = {
 	mode: BotComposerMode;
 	threadIdsByWorkspace: Record<string, string>;
 	leaderMessages: ChatMessage[];
+	leaderSummary?: string;
+	leaderSummaryCoversCount?: number;
 	lastUserId?: string;
 	lastUserName?: string;
 };
@@ -143,13 +148,48 @@ function normalizeWorkspaceKey(root: string | null | undefined): string {
 	return (normalizeWorkspaceRoot(root) ?? '__global__').replace(/\\/g, '/').toLowerCase();
 }
 
+let headlessBotWindow: BrowserWindow | null = null;
+
+function getOrCreateHeadlessBotWindow(): BrowserWindow | null {
+	if (headlessBotWindow && !headlessBotWindow.isDestroyed()) {
+		return headlessBotWindow;
+	}
+	try {
+		headlessBotWindow = new BrowserWindow({
+			show: false,
+			width: 1280,
+			height: 800,
+			webPreferences: {
+				contextIsolation: true,
+				nodeIntegration: false,
+				backgroundThrottling: false,
+				offscreen: false,
+			},
+		});
+		headlessBotWindow.on('closed', () => {
+			headlessBotWindow = null;
+		});
+		void headlessBotWindow.loadURL('about:blank').catch(() => {});
+		return headlessBotWindow;
+	} catch (error) {
+		console.warn('[bots] headless host window create failed', error instanceof Error ? error.message : error);
+		return null;
+	}
+}
+
 function resolveBotHostWebContentsId(): number | null {
 	const focused = BrowserWindow.getFocusedWindow();
 	if (focused && !focused.isDestroyed()) {
 		return focused.webContents.id;
 	}
-	const fallback = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
-	return fallback?.webContents.id ?? null;
+	const fallback = BrowserWindow.getAllWindows().find(
+		(win) => !win.isDestroyed() && win !== headlessBotWindow
+	);
+	if (fallback) {
+		return fallback.webContents.id;
+	}
+	const headless = getOrCreateHeadlessBotWindow();
+	return headless?.webContents.id ?? null;
 }
 
 function trimBotLeaderMessages(messages: ChatMessage[], maxMessages = 24): ChatMessage[] {
@@ -157,6 +197,23 @@ function trimBotLeaderMessages(messages: ChatMessage[], maxMessages = 24): ChatM
 		return messages;
 	}
 	return messages.slice(messages.length - maxMessages);
+}
+
+function buildUserTurnContentWithAttachments(inbound: BotInboundMessage): string {
+	const attachments = inbound.attachments ?? [];
+	const baseText = inbound.text ?? '';
+	if (attachments.length === 0) {
+		return baseText;
+	}
+	const descriptions = attachments
+		.map((att) => {
+			const label = att.kind === 'image' ? 'image' : 'file';
+			const name = att.name ? ` (${att.name})` : '';
+			return `- ${label}${name}: ${att.localPath}`;
+		})
+		.join('\n');
+	const header = `[User attached ${attachments.length} item(s); read them with Read or pass their paths to run_async_task]`;
+	return `${header}\n${descriptions}\n\n${baseText}`.trim();
 }
 
 function workerThreadMapKey(root: string | null | undefined, mode: BotComposerMode): string {
@@ -324,10 +381,11 @@ type RunBotOrchestratorArgs = {
 	inbound: BotInboundMessage;
 	workspaceLspManager: WorkspaceLspManager;
 	signal: AbortSignal;
-	onStreamDelta?: (fullText: string) => void;
+	onStreamDelta?: (fullText: string, channel?: BotStreamChannel) => void;
 	onToolStatus?: (name: string, state: 'running' | 'completed' | 'error', detail?: string) => void;
 	onTodoUpdate?: (todos: BotTodoListItem[]) => void;
 	onSendAttachment?: (filePath: string) => Promise<string>;
+	onLeaderMessagesPersist?: (session: BotSessionState) => void;
 };
 
 type RunBotAsyncTaskArgs = {
@@ -339,7 +397,7 @@ type RunBotAsyncTaskArgs = {
 	startNewThread?: boolean;
 	workspaceLspManager: WorkspaceLspManager;
 	signal: AbortSignal;
-	onInnerTextDelta?: (fullText: string) => void;
+	onInnerTextDelta?: (fullText: string, channel?: BotStreamChannel) => void;
 	onInnerToolStatus?: (name: string, state: 'running' | 'completed' | 'error', detail?: string) => void;
 	onInnerTodoUpdate?: (todos: BotTodoListItem[]) => void;
 };
@@ -423,6 +481,9 @@ const BOT_TOOL_DEFS: AgentToolDef[] = [
 const BOT_LEADER_NATIVE_TOOL_NAMES = new Set([
 	'Browser',
 	'TodoWrite',
+	'Read',
+	'Grep',
+	'Glob',
 ]);
 
 
@@ -473,23 +534,17 @@ export function buildBotOrchestratorPrompt(
 			? 'This leader loop is for app-level orchestration. It can directly use app/browser controls plus the custom bot session tools below.'
 			: '这个 Leader 循环用于应用级调度。它可以直接使用应用/浏览器控制工具，以及下面的 bot 会话工具。',
 		language === 'en'
-			? 'Do not treat every user message as a detached worker task, but also do not directly inspect or modify workspace project files in the leader loop.'
-			: '不要把每条用户消息都当成需要派给 worker 的任务，但也不要在 Leader 循环里直接检查或修改工作区项目文件。',
+			? 'Your priority is fast, direct answers. Default to using your own tools (Read, Grep, Glob, Browser, TodoWrite) to answer the user without spawning a worker.'
+			: '你的首要目标是快速、直接地回答用户。默认优先使用自己的工具（Read、Grep、Glob、Browser、TodoWrite）直接回答，不要动不动就派 worker。',
 		language === 'en'
-			? 'Use run_async_task only when you intentionally want to start an internal worker session or a specialist workflow. When delegating, choose the worker mode yourself and summarize the result back to the user.'
-			: '只有当你明确想启动内部 worker 会话或专家工作流时，才使用 run_async_task。发生委派时，由你自己判断合适的 worker 模式，并把结果总结反馈给用户。',
+			? 'Use run_async_task ONLY when the task requires Writes/Edits, shell commands, builds/tests, multi-file refactors, or long-running workflows. Simple reads, searches, status questions, and lookups must be answered directly by you.'
+			: '只有在任务需要写文件、改文件、执行 shell、跑构建/测试、多文件重构、或长链路流程时，才使用 run_async_task。简单的读文件、搜索、状态问询、查询必须你自己直接答。',
 		language === 'en'
-			? 'If the user asks about current model, workspace, browser state, git state, or other app state, inspect and answer directly instead of launching a worker by default.'
-			: '如果用户在问当前模型、工作区、浏览器状态、Git 状态或其他应用状态，优先直接检查并回答，而不是默认启动 worker。',
+			? 'If the user asks about current model, workspace, browser state, git state, or other app state, inspect and answer directly.'
+			: '如果用户在问当前模型、工作区、浏览器状态、Git 状态或其他应用状态，直接检查并回答。',
 		language === 'en'
-			? 'Any request about a workspace project, repository, source files, tests, builds, architecture, code changes, or reading/modifying files MUST go through run_async_task so the work is preserved in an internal Async conversation record.'
-			: '任何关于工作区项目、仓库、源文件、测试、构建、架构、代码修改，或读取/修改文件的请求，都必须通过 run_async_task 处理，这样工作会被保存在内部 Async 对话记录里。',
-		language === 'en'
-			? 'File-changing requests must never be performed directly by the leader loop. Always delegate them through run_async_task.'
-			: '涉及改文件的请求绝对不能由 Leader 循环直接执行，必须始终通过 run_async_task 委派处理。',
-		language === 'en'
-			? 'Choose worker mode automatically: use agent for direct project inspection/implementation/debugging, plan for plan-only analysis, team for larger or cross-cutting project work, and ask for lightweight Q&A that still needs a recorded worker conversation.'
-			: '自动判断 worker 模式：直接项目排查/实现/调试用 agent，只做方案分析用 plan，较大或跨领域项目工作用 team，需要保留记录的轻量问答可用 ask。',
+			? 'When delegating via run_async_task, choose mode automatically: agent for direct project implementation/debugging, plan for plan-only analysis, team for larger or cross-cutting project work, and ask for lightweight Q&A that still needs a recorded worker conversation.'
+			: '使用 run_async_task 时，自动判断模式：直接项目实现/调试用 agent，只做方案分析用 plan，较大或跨领域工作用 team，需要保留记录的轻量问答可用 ask。',
 		language === 'en'
 			? 'When the user asks to search the web, open a page, read a webpage, take a screenshot, or close the built-in browser, use the Browser tool directly (for example: navigate, read_page, screenshot_page, close_sidebar).'
 			: '当用户要求搜索网页、打开页面、读取网页内容、截屏，或关闭内置浏览器时，直接使用 Browser 工具（例如：navigate、read_page、screenshot_page、close_sidebar）。',
@@ -546,12 +601,27 @@ function resolveSessionWorkspace(
 	return { ok: true, workspaceRoot: match };
 }
 
-function createHeadlessBeforeExecuteTool(settings: ShellSettings) {
+const READONLY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Browser', 'TodoWrite']);
+
+function resolveBotPermissionPolicy(integration: BotIntegrationConfig): 'strict' | 'readonly_auto' | 'permissive' {
+	const raw = String(integration.permissionPolicy ?? '').trim().toLowerCase();
+	if (raw === 'permissive' || raw === 'readonly_auto' || raw === 'strict') {
+		return raw;
+	}
+	return 'readonly_auto';
+}
+
+function createHeadlessBeforeExecuteTool(settings: ShellSettings, integration: BotIntegrationConfig) {
+	const policy = resolveBotPermissionPolicy(integration);
 	return async (call: ToolCall) => {
 		const agent = settings.agent;
 		const permission = resolveToolPermissionFromRules(call, agent, { avoidPermissionPrompts: true });
 		if (permission === 'deny') {
 			return { proceed: false as const, rejectionMessage: '工具调用被当前权限规则拒绝。' };
+		}
+
+		if (READONLY_TOOLS.has(call.name) && policy !== 'strict') {
+			return { proceed: true as const };
 		}
 
 		if (call.name === 'Bash') {
@@ -568,11 +638,17 @@ function createHeadlessBeforeExecuteTool(settings: ShellSettings) {
 			if (mode === 'rules' && isSafeShellCommandForAutoApprove(command)) {
 				return { proceed: true as const };
 			}
+			if (policy === 'permissive' && isSafeShellCommandForAutoApprove(command)) {
+				return { proceed: true as const };
+			}
 			return { proceed: false as const, rejectionMessage: '当前机器人会话不会弹出 shell 执行确认，请在桌面端放宽权限后重试。' };
 		}
 
 		if (call.name === 'Write' || call.name === 'Edit') {
 			if (permission === 'allow' || settings.agent?.confirmWritesBeforeExecute !== true) {
+				return { proceed: true as const };
+			}
+			if (policy === 'permissive') {
 				return { proceed: true as const };
 			}
 			return { proceed: false as const, rejectionMessage: '当前机器人会话不会弹出写入确认，请关闭写入确认或改在桌面端执行。' };
@@ -598,97 +674,98 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 	const mode = args.modeOverride ?? session.mode;
 	const threadId = ensureThreadForSession(session, mode, args.startNewThread === true);
 	const hostWebContentsId = resolveBotHostWebContentsId();
-	const modelSelection = session.modelId.trim();
-	if (!modelSelection) {
-		throw new Error('当前机器人会话没有可用的模型。请先在设置里为该机器人配置可用模型。');
-	}
-	const resolved = resolveModelRequest(settings, modelSelection);
-	if (!resolved.ok) {
-		throw new Error(resolved.message);
-	}
-
-	const effectiveSettings: ShellSettings = {
-		...settings,
-		team: {
-			...(settings.team ?? {}),
-			requirePlanApproval: false,
-		},
-	};
-
-	let workspaceFiles: string[] = [];
-	if (session.workspaceRoot) {
-		try {
-			workspaceFiles = await ensureWorkspaceFileIndex(session.workspaceRoot, signal);
-		} catch {
-			workspaceFiles = [];
+	try {
+		const modelSelection = session.modelId.trim();
+		if (!modelSelection) {
+			throw new Error('当前机器人会话没有可用的模型。请先在设置里为该机器人配置可用模型。');
 		}
-	}
-
-	const projectAgent = readWorkspaceAgentProjectSlice(session.workspaceRoot);
-	const agentForTurn = mergeAgentWithProjectSlice(effectiveSettings.agent, projectAgent);
-	const uiLanguage = effectiveSettings.language === 'en' ? 'en' : 'zh-CN';
-	const prepared = prepareUserTurnForChat(task, agentForTurn, session.workspaceRoot, workspaceFiles, uiLanguage);
-	let finalSystemAppend = prepared.agentSystemAppend;
-	if (session.workspaceRoot && (mode === 'plan' || mode === 'ask' || mode === 'team')) {
-		const wsLine = `## Current workspace\nWorkspace root (absolute): \`${session.workspaceRoot.replace(/\\/g, '/')}\`\nUser file references with \`@\` are relative to this root.`;
-		finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${wsLine}` : wsLine;
-	}
-	if ((mode === 'plan' || mode === 'ask' || mode === 'team') && workspaceFiles.length > 0) {
-		const tree = buildWorkspaceTreeSummary(workspaceFiles);
-		if (tree) {
-			finalSystemAppend = appendSystemBlock(finalSystemAppend, tree);
+		const resolved = resolveModelRequest(settings, modelSelection);
+		if (!resolved.ok) {
+			throw new Error(resolved.message);
 		}
-	}
-	finalSystemAppend = await appendMemoryAndRetrievalContext({
-		base: finalSystemAppend,
-		mode,
-		settings: effectiveSettings,
-		root: session.workspaceRoot,
-		threadId,
-		userText: prepared.userText,
-		modelSelection,
-		signal,
-	});
 
-	const updatedThread = appendMessage(threadId, { role: 'user', content: prepared.userText });
-	const thinkingLevel = resolveThinkingLevelForSelection(effectiveSettings, modelSelection);
-	const thread = getThread(threadId);
-	const compressResult = await compressForSend(
-		updatedThread.messages,
-		effectiveSettings,
-		{
+		const effectiveSettings: ShellSettings = {
+			...settings,
+			team: {
+				...(settings.team ?? {}),
+				requirePlanApproval: false,
+			},
+		};
+
+		let workspaceFiles: string[] = [];
+		if (session.workspaceRoot) {
+			try {
+				workspaceFiles = await ensureWorkspaceFileIndex(session.workspaceRoot, signal);
+			} catch {
+				workspaceFiles = [];
+			}
+		}
+
+		const projectAgent = readWorkspaceAgentProjectSlice(session.workspaceRoot);
+		const agentForTurn = mergeAgentWithProjectSlice(effectiveSettings.agent, projectAgent);
+		const uiLanguage = effectiveSettings.language === 'en' ? 'en' : 'zh-CN';
+		const prepared = prepareUserTurnForChat(task, agentForTurn, session.workspaceRoot, workspaceFiles, uiLanguage);
+		let finalSystemAppend = prepared.agentSystemAppend;
+		if (session.workspaceRoot && (mode === 'plan' || mode === 'ask' || mode === 'team')) {
+			const wsLine = `## Current workspace\nWorkspace root (absolute): \`${session.workspaceRoot.replace(/\\/g, '/')}\`\nUser file references with \`@\` are relative to this root.`;
+			finalSystemAppend = finalSystemAppend ? `${finalSystemAppend}\n\n---\n${wsLine}` : wsLine;
+		}
+		if ((mode === 'plan' || mode === 'ask' || mode === 'team') && workspaceFiles.length > 0) {
+			const tree = buildWorkspaceTreeSummary(workspaceFiles);
+			if (tree) {
+				finalSystemAppend = appendSystemBlock(finalSystemAppend, tree);
+			}
+		}
+		finalSystemAppend = await appendMemoryAndRetrievalContext({
+			base: finalSystemAppend,
 			mode,
-			signal,
-			requestModelId: resolved.requestModelId,
-			paradigm: resolved.paradigm,
-			requestApiKey: resolved.apiKey,
-			requestBaseURL: resolved.baseURL,
-			requestProxyUrl: resolved.proxyUrl,
-			maxOutputTokens: resolved.maxOutputTokens,
-			...(resolved.contextWindowTokens != null ? { contextWindowTokens: resolved.contextWindowTokens } : {}),
-			thinkingLevel,
-		},
-		thread?.summary,
-		thread?.summaryCoversMessageCount
-	);
-	let sendMessages = compressResult.messages;
-	if (compressResult.newSummary && compressResult.newSummaryCoversCount !== undefined) {
-		saveSummary(threadId, compressResult.newSummary, compressResult.newSummaryCoversCount);
-	}
-
-	const finish = (full: string, usage?: { inputTokens?: number; outputTokens?: number }) => {
-		updateLastAssistant(threadId, full);
-		accumulateTokenUsage(threadId, usage?.inputTokens, usage?.outputTokens);
-		queueExtractMemories({
-			threadId,
-			workspaceRoot: session.workspaceRoot,
 			settings: effectiveSettings,
+			root: session.workspaceRoot,
+			threadId,
+			userText: prepared.userText,
 			modelSelection,
+			signal,
 		});
-	};
 
-	if (mode === 'team') {
-		return await new Promise<string>(async (resolve, reject) => {
+		const updatedThread = appendMessage(threadId, { role: 'user', content: prepared.userText });
+		const thinkingLevel = resolveThinkingLevelForSelection(effectiveSettings, modelSelection);
+		const thread = getThread(threadId);
+		const compressResult = await compressForSend(
+			updatedThread.messages,
+			effectiveSettings,
+			{
+				mode,
+				signal,
+				requestModelId: resolved.requestModelId,
+				paradigm: resolved.paradigm,
+				requestApiKey: resolved.apiKey,
+				requestBaseURL: resolved.baseURL,
+				requestProxyUrl: resolved.proxyUrl,
+				maxOutputTokens: resolved.maxOutputTokens,
+				...(resolved.contextWindowTokens != null ? { contextWindowTokens: resolved.contextWindowTokens } : {}),
+				thinkingLevel,
+			},
+			thread?.summary,
+			thread?.summaryCoversMessageCount
+		);
+		let sendMessages = compressResult.messages;
+		if (compressResult.newSummary && compressResult.newSummaryCoversCount !== undefined) {
+			saveSummary(threadId, compressResult.newSummary, compressResult.newSummaryCoversCount);
+		}
+
+		const finish = (full: string, usage?: { inputTokens?: number; outputTokens?: number }) => {
+			updateLastAssistant(threadId, full);
+			accumulateTokenUsage(threadId, usage?.inputTokens, usage?.outputTokens);
+			queueExtractMemories({
+				threadId,
+				workspaceRoot: session.workspaceRoot,
+				settings: effectiveSettings,
+				modelSelection,
+			});
+		};
+
+		if (mode === 'team') {
+			return await new Promise<string>(async (resolve, reject) => {
 			try {
 				let teamStreamFull = '';
 				await runTeamSession({
@@ -706,7 +783,7 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 					emit: (evt) => {
 						if (evt.type === 'delta') {
 							teamStreamFull += evt.text;
-							args.onInnerTextDelta?.(teamStreamFull);
+							args.onInnerTextDelta?.(teamStreamFull, 'worker');
 							return;
 						}
 						if (evt.type === 'tool_call') {
@@ -742,15 +819,15 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 			} catch (error) {
 				reject(error);
 			}
-		});
-	}
+			});
+		}
 
-	if ((mode === 'agent' || mode === 'plan') && resolved.paradigm !== 'gemini') {
-		const messagesForAgent = modeExpandsWorkspaceFileContext(mode)
-			? cloneMessagesWithExpandedLastUser(sendMessages, session.workspaceRoot)
-			: sendMessages;
-		let innerStreamFull = '';
-		return await new Promise<string>(async (resolve, reject) => {
+		if ((mode === 'agent' || mode === 'plan') && resolved.paradigm !== 'gemini') {
+			const messagesForAgent = modeExpandsWorkspaceFileContext(mode)
+				? cloneMessagesWithExpandedLastUser(sendMessages, session.workspaceRoot)
+				: sendMessages;
+			let innerStreamFull = '';
+			return await new Promise<string>(async (resolve, reject) => {
 			try {
 				await runAgentLoop(
 					effectiveSettings,
@@ -766,7 +843,7 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 						signal,
 						composerMode: mode,
 						thinkingLevel,
-						beforeExecuteTool: createHeadlessBeforeExecuteTool(effectiveSettings),
+						beforeExecuteTool: createHeadlessBeforeExecuteTool(effectiveSettings, integration),
 						maxConsecutiveMistakes: effectiveSettings.agent?.maxConsecutiveMistakes,
 						mistakeLimitEnabled: effectiveSettings.agent?.mistakeLimitEnabled,
 						workspaceRoot: session.workspaceRoot,
@@ -788,7 +865,7 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 					{
 						onTextDelta: (text) => {
 							innerStreamFull += text;
-							args.onInnerTextDelta?.(innerStreamFull);
+							args.onInnerTextDelta?.(innerStreamFull, 'worker');
 						},
 						onToolProgress: (payload) => {
 							args.onInnerToolStatus?.(payload.name, 'running', payload.detail || payload.phase);
@@ -813,11 +890,11 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 			} catch (error) {
 				reject(error);
 			}
-		});
-	}
+			});
+		}
 
-	let askStreamFull = '';
-	return await new Promise<string>(async (resolve, reject) => {
+		let askStreamFull = '';
+		return await new Promise<string>(async (resolve, reject) => {
 		try {
 			await streamChatUnified(
 				effectiveSettings,
@@ -838,7 +915,7 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 				{
 					onDelta: (text) => {
 							askStreamFull += text;
-							args.onInnerTextDelta?.(askStreamFull);
+							args.onInnerTextDelta?.(askStreamFull, 'worker');
 						},
 					onThinkingDelta: () => {},
 					onDone: (full, usage) => {
@@ -850,8 +927,13 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 			);
 		} catch (error) {
 			reject(error);
+			}
+		});
+	} finally {
+		if (hostWebContentsId != null) {
+			closeBrowserWindowForHostId(hostWebContentsId);
 		}
-	});
+	}
 }
 
 export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Promise<string> {
@@ -1014,6 +1096,7 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 
 	const thinkingLevel = resolveThinkingLevelForSelection(settings, session.modelId.trim());
 	const systemAppend = buildBotOrchestratorPrompt(settings, integration, session, inbound);
+	const hostWebContentsId = resolveBotHostWebContentsId();
 	let full = '';
 	let errorMessage = '';
 	let streamFull = '';
@@ -1021,7 +1104,33 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 		...AGENT_TOOLS.filter((tool) => BOT_LEADER_NATIVE_TOOL_NAMES.has(tool.name)),
 		...BOT_TOOL_DEFS,
 	];
-	const leaderMessages = [...session.leaderMessages, { role: 'user', content: inbound.text } satisfies ChatMessage];
+	const userTurnContent = buildUserTurnContentWithAttachments(inbound);
+	const baseLeaderMessages = [
+		...session.leaderMessages,
+		{ role: 'user', content: userTurnContent } satisfies ChatMessage,
+	];
+	const leaderCompress = await compressForSend(
+		baseLeaderMessages,
+		settings,
+		{
+			mode: 'agent',
+			signal,
+			requestModelId: resolved.requestModelId,
+			paradigm: resolved.paradigm,
+			requestApiKey: resolved.apiKey,
+			requestBaseURL: resolved.baseURL,
+			requestProxyUrl: resolved.proxyUrl,
+			maxOutputTokens: resolved.maxOutputTokens,
+			thinkingLevel,
+		},
+		session.leaderSummary,
+		session.leaderSummaryCoversCount
+	).catch(() => ({ messages: baseLeaderMessages } as { messages: ChatMessage[]; newSummary?: string; newSummaryCoversCount?: number }));
+	if (leaderCompress.newSummary && leaderCompress.newSummaryCoversCount !== undefined) {
+		session.leaderSummary = leaderCompress.newSummary;
+		session.leaderSummaryCoversCount = leaderCompress.newSummaryCoversCount;
+	}
+	const leaderMessages = leaderCompress.messages;
 
 	try {
 		await runAgentLoop(
@@ -1040,11 +1149,11 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 				thinkingLevel,
 				workspaceRoot: session.workspaceRoot,
 				workspaceLspManager,
-				hostWebContentsId: resolveBotHostWebContentsId(),
+				hostWebContentsId,
 				toolPoolOverride: leaderToolPool,
 				customToolHandlers: handlers,
 				agentSystemAppend: systemAppend,
-				beforeExecuteTool: createHeadlessBeforeExecuteTool(settings),
+				beforeExecuteTool: createHeadlessBeforeExecuteTool(settings, integration),
 				mistakeLimitEnabled: settings.agent?.mistakeLimitEnabled,
 				maxConsecutiveMistakes: settings.agent?.maxConsecutiveMistakes,
 			},
@@ -1052,7 +1161,7 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 				onTextDelta: (text) => {
 					streamFull += text;
 					full = streamFull;
-					args.onStreamDelta?.(streamFull);
+					args.onStreamDelta?.(streamFull, 'leader');
 				},
 				onToolProgress: (payload) => {
 					args.onToolStatus?.(payload.name, 'running', payload.detail || payload.phase);
@@ -1076,15 +1185,21 @@ export async function runBotOrchestratorTurn(args: RunBotOrchestratorArgs): Prom
 		);
 	} catch (error) {
 		errorMessage = formatLlmSdkError(error);
+	} finally {
+		if (hostWebContentsId != null) {
+			closeBrowserWindowForHostId(hostWebContentsId);
+		}
 	}
 
 	if (errorMessage) {
+		args.onLeaderMessagesPersist?.(session);
 		throw new Error(errorMessage);
 	}
 	session.leaderMessages = trimBotLeaderMessages([
-		...leaderMessages,
+		...baseLeaderMessages,
 		{ role: 'assistant', content: full.trim() } satisfies ChatMessage,
 	]);
+	args.onLeaderMessagesPersist?.(session);
 	return full.trim();
 }
 

@@ -1,30 +1,6 @@
 /// <reference types="vite/client" />
 import type * as React from 'react';
 
-// Override React's WebViewHTMLAttributes to allow string for allowpopups
-declare global {
-	namespace React {
-		interface WebViewHTMLAttributes<T> {
-			allowFullScreen?: boolean | undefined;
-			allowpopups?: string | boolean | undefined;
-			autosize?: boolean | undefined;
-			blinkfeatures?: string | undefined;
-			disableblinkfeatures?: string | undefined;
-			disableguestresize?: boolean | undefined;
-			disablewebsecurity?: boolean | undefined;
-			guestinstance?: string | undefined;
-			httpreferrer?: string | undefined;
-			nodeintegration?: boolean | undefined;
-			partition?: string | undefined;
-			plugins?: boolean | undefined;
-			preload?: string | undefined;
-			src?: string | undefined;
-			useragent?: string | undefined;
-			webpreferences?: string | undefined;
-		}
-	}
-}
-
 export interface AsyncShellAPI {
 	invoke(channel: string, ...args: unknown[]): Promise<unknown>;
 	subscribeChat(callback: (payload: unknown) => void): () => void;

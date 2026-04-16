@@ -188,7 +188,14 @@ export function useThreads(shell: Shell | undefined) {
 	const loadMessagesInflightByIdRef = useRef<Map<string, Promise<void>>>(new Map());
 
 	const loadMessages = useCallback(
-		async (id: string, onLoad?: (msgs: ChatMessage[], threadId: string, extra?: { teamSession?: unknown }) => void) => {
+		async (
+			id: string,
+			onLoad?: (
+				msgs: ChatMessage[],
+				threadId: string,
+				extra?: { teamSession?: unknown; agentSession?: unknown }
+			) => void
+		) => {
 			if (!shell) return;
 			let inflight = loadMessagesInflightByIdRef.current.get(id);
 			if (!inflight) {
@@ -200,6 +207,7 @@ export function useThreads(shell: Shell | undefined) {
 							ok: boolean;
 							messages?: ChatMessage[];
 							teamSession?: unknown;
+							agentSession?: unknown;
 						};
 						const tIpcEnd = dev && typeof performance !== 'undefined' ? performance.now() : 0;
 						if (dev && tIpcStart) {
@@ -240,11 +248,11 @@ export function useThreads(shell: Shell | undefined) {
 										incomingMissesOnlyTrailingAssistantError(prev.messages, incoming)
 									) {
 										return prev;
-									}
-									return { messages: incoming, threadId: id };
-								});
-								onLoad?.(incoming, id, { teamSession: r.teamSession });
+								}
+								return { messages: incoming, threadId: id };
 							});
+							onLoad?.(incoming, id, { teamSession: r.teamSession, agentSession: r.agentSession });
+						});
 							await awaitTransitionPaintCommitted();
 							if (dev && typeof performance !== 'undefined') {
 								const ipcEnd = tIpcEnd;

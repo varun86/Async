@@ -18,6 +18,7 @@ import {
 	type ChatStreamPayload,
 	type TurnTokenUsage,
 } from '../ipcTypes';
+import type { AgentSessionSnapshot, AgentUserInputRequest } from '../agentSessionTypes';
 import { parseQuestions, parsePlanDocument, toPlanMd, generatePlanFilename, type ParsedPlan, type PlanQuestion } from '../planParser';
 import { findTeamRolesMissingModels } from '../teamModelValidation';
 import { flattenAssistantTextPartsForSearch } from '../agentStructuredMessage';
@@ -30,7 +31,13 @@ import {
 	planDraftToThreadPlan,
 } from '../planDraft';
 
-export type StreamingToast = { key: number; ok: boolean; text: string } | null;
+export type StreamingToast = {
+	key: number;
+	ok: boolean;
+	text: string;
+	threadId?: string;
+	agentId?: string;
+} | null;
 
 export type StreamingSendOptions = {
 	threadId?: string;
@@ -46,6 +53,7 @@ type StreamingSendRuntime = {
 	setCurrentId: (id: string) => void;
 	loadMessages: (threadId: string) => Promise<unknown>;
 	refreshThreads: () => Promise<unknown> | void;
+	restoreAgentSession: (threadId: string, snapshot: AgentSessionSnapshot | null | undefined) => void;
 	defaultModel: string;
 	composerMode: ComposerMode;
 	teamSettings?: TeamSettings;
@@ -66,6 +74,7 @@ type StreamingSendRuntime = {
 	flashComposerAttachErr: (msg: string) => void;
 	t: TFunction;
 	clearAgentReviewForThread: (threadId: string) => void;
+	clearRootUserInputRequest: (threadId?: string | null) => void;
 	startTeamSession: (threadId: string, userRequest: string) => void;
 	clearPlanQuestion: () => void;
 	clearMistakeLimitRequest: () => void;
@@ -92,13 +101,21 @@ type StreamingSubscriptionRuntime = {
 	setToolApprovalRequest: Dispatch<
 		SetStateAction<{ approvalId: string; toolName: string; command?: string; path?: string } | null>
 	>;
+	setRootUserInputRequest: (threadId: string, request: AgentUserInputRequest | null) => void;
+	clearRootUserInputRequest: (threadId?: string | null) => void;
 	setPlanQuestion: Dispatch<SetStateAction<PlanQuestion | null>>;
 	setPlanQuestionRequestId: Dispatch<SetStateAction<string | null>>;
 	setMistakeLimitRequest: Dispatch<
 		SetStateAction<{ recoveryId: string; consecutiveFailures: number; threshold: number } | null>
 	>;
 	t: TFunction;
-	showTransientToast: (ok: boolean, text: string, durationMs?: number) => void;
+	showTransientToast: (
+		ok: boolean,
+		text: string,
+		durationMs?: number,
+		extra?: { threadId?: string; agentId?: string }
+	) => void;
+	restoreAgentSession: (threadId: string, snapshot: AgentSessionSnapshot | null | undefined) => void;
 	recordThoughtSeconds: (threadId: string, fallbackSeconds: number) => number;
 	setLastTurnUsage: Dispatch<SetStateAction<TurnTokenUsage | null>>;
 	resetStreamingSession: (options?: { clearThread?: boolean }) => void;
@@ -153,12 +170,14 @@ export function useStreamingChat() {
 	}, []);
 
 	const showTransientToast = useCallback(
-		(ok: boolean, text: string, durationMs = 4200) => {
+		(ok: boolean, text: string, durationMs = 4200, extra?: { threadId?: string; agentId?: string }) => {
 			clearToastTimer();
 			setSubAgentBgToast((prev) => ({
 				key: (prev?.key ?? 0) + 1,
 				ok,
 				text,
+				threadId: extra?.threadId,
+				agentId: extra?.agentId,
 			}));
 			subAgentBgToastTimerRef.current = window.setTimeout(() => {
 				setSubAgentBgToast(null);
@@ -293,6 +312,7 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 		}
 
 		rt.clearPlanQuestion();
+		rt.clearRootUserInputRequest(targetThreadId);
 
 		if (opts?.threadId && opts.threadId !== rt.currentId) {
 			await rt.shell.invoke('threads:select', opts.threadId);
@@ -401,6 +421,12 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 				return;
 			}
 			void rt.refreshThreads();
+			const session = (await rt.shell.invoke('agent:getSession', targetThreadId)) as
+				| { ok: true; session?: AgentSessionSnapshot | null }
+				| { ok: false };
+			if (session.ok) {
+				rt.restoreAgentSession(targetThreadId, session.session ?? null);
+			}
 		} catch (e) {
 			rt.clearInFlightIpcRouting(targetThreadId);
 			rt.resetStreamingSession({ clearThread: false });
@@ -432,6 +458,7 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 		rt.clearInFlightIpcRouting(threadToAbort);
 		rt.clearStreamingToolPreviewNow();
 		rt.resetLiveAgentBlocks();
+		rt.clearRootUserInputRequest(threadToAbort);
 		rt.setAwaitingReply(false);
 	}, []);
 
@@ -453,6 +480,27 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 		const unsub = shell.subscribeChat((raw: unknown) => {
 			const rt = runtimeRef.current;
 			const payload = raw as ChatStreamPayload;
+			if (payload.type === 'agent_session_sync') {
+				rt.restoreAgentSession(payload.threadId, payload.session);
+				if (payload.threadId === rt.currentIdRef.current) {
+					void rt.refreshThreads();
+				}
+				return;
+			}
+			if (payload.type === 'sub_agent_background_done') {
+				const preview = payload.result.length > 240 ? `${payload.result.slice(0, 240)}…` : payload.result;
+				const text = payload.success
+					? rt.t('agent.subAgentBg.done', { preview })
+					: rt.t('agent.subAgentBg.fail', { preview });
+				rt.showTransientToast(payload.success, text, 6500, {
+					threadId: payload.threadId,
+					agentId: payload.agentId,
+				});
+				if (payload.threadId === rt.currentIdRef.current) {
+					void rt.refreshThreads();
+				}
+				return;
+			}
 			const inFlight = rt.ipcInFlightChatThreadIdRef.current;
 			if (!inFlight || payload.threadId !== inFlight) {
 				return;
@@ -473,6 +521,14 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 				}
 				if ('teamRoleScope' in payload && payload.teamRoleScope) {
 					rt.applyTeamPayload(payload);
+				}
+				return;
+			}
+			if (payload.type === 'user_input_request') {
+				if ('teamRoleScope' in payload && payload.teamRoleScope) {
+					rt.applyTeamPayload(payload);
+				} else if (visible) {
+					rt.setRootUserInputRequest(payload.threadId, payload.request);
 				}
 				return;
 			}
@@ -710,12 +766,6 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 						threshold: payload.threshold,
 					});
 				}
-			} else if (payload.type === 'sub_agent_background_done') {
-				const preview = payload.result.length > 240 ? `${payload.result.slice(0, 240)}…` : payload.result;
-				const text = payload.success
-					? rt.t('agent.subAgentBg.done', { preview })
-					: rt.t('agent.subAgentBg.fail', { preview });
-				rt.showTransientToast(payload.success, text, 6500);
 			} else if (
 				payload.type === 'team_phase' ||
 				payload.type === 'team_task_created' ||
@@ -749,6 +799,7 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 					rt.setFileChangesDismissed(false);
 					rt.setDismissedFiles(new Set());
 				}
+				rt.clearRootUserInputRequest(payload.threadId);
 
 				const pendingPlan = rt.planBuildPendingMarkerRef.current;
 				if (pendingPlan && pendingPlan.threadId === payload.threadId) {
@@ -834,6 +885,7 @@ export function useStreamingChatSubscription(runtime: StreamingSubscriptionRunti
 				rt.planBuildPendingMarkerRef.current = null;
 				delete rt.offThreadStreamDraftsRef.current[payload.threadId];
 				rt.ipcInFlightChatThreadIdRef.current = null;
+				rt.clearRootUserInputRequest(payload.threadId);
 				if (visible) {
 					rt.resetStreamingSession({ clearThread: false });
 					rt.setStreamingThinking('');

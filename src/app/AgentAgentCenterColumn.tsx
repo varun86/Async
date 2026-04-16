@@ -1,11 +1,11 @@
 import { memo, type KeyboardEvent } from 'react';
 import { AgentChatPanel, type AgentChatPanelProps } from '../AgentChatPanel';
-import { IconDoc, IconGitSCM, IconGlobe } from '../icons';
+import { IconDoc, IconGitSCM, IconGlobe, IconTeam } from '../icons';
 import type { TFunction } from '../i18n';
 import { AgentWorkspaceLauncher } from './AgentWorkspaceLauncher';
 import type { WorkspaceLauncherTool } from './workspaceLaunchers';
 
-export type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team' | 'browser';
+export type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team' | 'browser' | 'agents';
 
 export type AgentAgentCenterColumnProps = {
 	t: TFunction;
@@ -18,6 +18,7 @@ export type AgentAgentCenterColumnProps = {
 	agentRightSidebarOpen: boolean;
 	agentRightSidebarView: AgentRightSidebarView;
 	toggleAgentRightSidebarView: (view: AgentRightSidebarView) => void;
+	onOpenBrowserWindow: () => void;
 	onLaunchWorkspaceWithTool: (tool: WorkspaceLauncherTool) => void;
 	chatPanelProps: Omit<AgentChatPanelProps, 'layout'>;
 };
@@ -34,6 +35,7 @@ export const AgentAgentCenterColumn = memo(function AgentAgentCenterColumn({
 	agentRightSidebarOpen,
 	agentRightSidebarView,
 	toggleAgentRightSidebarView,
+	onOpenBrowserWindow,
 	onLaunchWorkspaceWithTool,
 	chatPanelProps,
 }: AgentAgentCenterColumnProps) {
@@ -93,12 +95,22 @@ export const AgentAgentCenterColumn = memo(function AgentAgentCenterColumn({
 				/>
 				<button
 					type="button"
-					className={`ref-agent-rail-toggle ${agentRightSidebarOpen && agentRightSidebarView === 'browser' ? 'is-open' : ''}`}
-					onClick={() => toggleAgentRightSidebarView('browser')}
+					className={`ref-agent-rail-toggle ${agentRightSidebarOpen && agentRightSidebarView === 'agents' ? 'is-open' : ''}`}
+					onClick={() => toggleAgentRightSidebarView('agents')}
+					title={t('agent.session.title')}
+					aria-label={t('agent.session.title')}
+					aria-pressed={agentRightSidebarOpen && agentRightSidebarView === 'agents'}
+					aria-controls="agent-right-sidebar"
+				>
+					<IconTeam />
+				</button>
+				<button
+					type="button"
+					className="ref-agent-rail-toggle"
+					onClick={onOpenBrowserWindow}
 					title={t('app.tabBrowser')}
 					aria-label={t('app.tabBrowser')}
-					aria-pressed={agentRightSidebarOpen && agentRightSidebarView === 'browser'}
-					aria-controls="agent-right-sidebar"
+					aria-pressed={false}
 				>
 					<IconGlobe />
 				</button>

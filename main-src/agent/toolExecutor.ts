@@ -17,7 +17,6 @@ import type { ShellSettings } from '../settingsStore.js';
 import { getMcpManager } from '../mcp/index.js';
 import type { McpToolResult } from '../mcp/mcpTypes.js';
 import type { NestedAgentStreamEmit } from '../ipc/nestedAgentStream.js';
-import { appendSubagentTranscript } from '../threadStore.js';
 import { assembleAgentToolPool } from './agentToolPool.js';
 import { executeAskPlanQuestionTool, type TeamPlanQuestionRoleScope } from './planQuestionTool.js';
 import { executePlanSubmitDraftTool } from './planDraftTool.js';
@@ -47,6 +46,18 @@ import {
 	type BrowserControlCommand,
 	type BrowserSidebarConfigPayload,
 } from '../browser/browserController.js';
+import {
+	attachManagedAgentEmitter,
+	closeManagedAgent,
+	getManagedAgentSession,
+	getManagedAgentTranscriptPath,
+	resumeManagedAgent,
+	sendInputToManagedAgent,
+	spawnManagedAgent,
+	startManagedAgent,
+	waitForManagedAgents,
+	type ManagedAgentUiEvent,
+} from './managedSubagents.js';
 
 /** @deprecated 已由 WorkspaceLspManager 取代 */
 export function setToolLspSession(_session: unknown): void {
@@ -55,6 +66,7 @@ export function setToolLspSession(_session: unknown): void {
 
 export type SubAgentBackgroundDonePayload = {
 	parentToolCallId: string;
+	agentId: string;
 	result: string;
 	success: boolean;
 };
@@ -66,7 +78,9 @@ let _delegateContext: {
 	parentSignal: AbortSignal;
 	nestedEmit?: (evt: NestedAgentStreamEmit) => void;
 	threadId: string | null;
+	managedEmit?: (evt: ManagedAgentUiEvent) => void;
 	onSubAgentBackgroundDone?: (payload: SubAgentBackgroundDonePayload) => void;
+	parentMessages?: import('../threadStore.js').ChatMessage[];
 } | null = null;
 
 export function setDelegateContext(
@@ -75,7 +89,9 @@ export function setDelegateContext(
 	parentSignal: AbortSignal,
 	nestedEmit?: (evt: NestedAgentStreamEmit) => void,
 	threadId?: string | null,
-	onSubAgentBackgroundDone?: (payload: SubAgentBackgroundDonePayload) => void
+	managedEmit?: (evt: ManagedAgentUiEvent) => void,
+	onSubAgentBackgroundDone?: (payload: SubAgentBackgroundDonePayload) => void,
+	parentMessages?: import('../threadStore.js').ChatMessage[]
 ): void {
 	_delegateContext = {
 		settings,
@@ -83,7 +99,9 @@ export function setDelegateContext(
 		parentSignal,
 		nestedEmit,
 		threadId: threadId ?? null,
+		managedEmit,
 		onSubAgentBackgroundDone,
+		parentMessages,
 	};
 }
 
@@ -99,13 +117,15 @@ function coerceAgentDelegateArgs(call: ToolCall): {
 	context: string;
 	subagentType?: string;
 	runInBackground: boolean;
+	forkContext: boolean;
 } {
 	const a = call.arguments;
 	const task = String(a.prompt ?? a.task ?? a.description ?? '').trim();
 	const context = String(a.context ?? '').trim();
 	const subagentType = typeof a.subagent_type === 'string' && a.subagent_type.trim() ? a.subagent_type.trim() : undefined;
 	const runInBackground = a.run_in_background === true || a.run_in_background === 'true';
-	return { task, context, subagentType, runInBackground };
+	const forkContext = a.fork_context === true || a.fork_context === 'true';
+	return { task, context, subagentType, runInBackground, forkContext };
 }
 
 const BACKGROUND_AGENT_TOOL_RESULT =
@@ -252,7 +272,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 		};
 	}
 
-	const dispatch = (command: BrowserControlCommand): boolean => dispatchBrowserControlToHostId(hostId, command);
+	const dispatch = async (command: BrowserControlCommand): Promise<boolean> => await dispatchBrowserControlToHostId(hostId, command);
 
 	switch (action) {
 		case 'get_config': {
@@ -300,7 +320,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 				};
 			}
 			const resolvedUrl = normalizeBrowserNavigateTarget(target);
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: 'navigate',
 				target,
@@ -418,7 +438,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 			};
 		}
 		case 'close_sidebar': {
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: 'closeSidebar',
 			});
@@ -442,7 +462,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 						: action === 'close_tab'
 							? 'closeTab'
 							: (action as 'reload' | 'stop');
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: commandType,
 				tabId:
@@ -471,7 +491,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 					isError: true,
 				};
 			}
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: 'applyConfig',
 				config: result.config,
@@ -526,7 +546,7 @@ async function executeBrowserTool(call: ToolCall, execCtx: ToolExecutionContext)
 					isError: true,
 				};
 			}
-			const sent = dispatch({
+			const sent = await dispatch({
 				commandId: makeBrowserCommandId(),
 				type: 'applyConfig',
 				config: result.config,
@@ -723,6 +743,21 @@ export async function executeTool(
 		case 'Agent':
 		case 'Task':
 			return await executeAgentDelegate(call, execCtx);
+		case 'send_input':
+			return await executeAgentSendInput(call, execCtx);
+		case 'wait_agent':
+			return await executeAgentWait(call, execCtx);
+		case 'resume_agent':
+			return await executeAgentResume(call, execCtx);
+		case 'close_agent':
+			return await executeAgentClose(call, execCtx);
+		case 'request_user_input':
+			return {
+				toolCallId: call.id,
+				name: call.name,
+				content: 'request_user_input is not available in this context.',
+				isError: true,
+			};
 		case 'ListMcpResourcesTool':
 			return await executeListMcpResources(call);
 		case 'ReadMcpResourceTool':
@@ -1662,7 +1697,7 @@ const SEVERITY_LABEL: Record<number, string> = { 1: 'error', 2: 'warning', 3: 'i
 
 async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContext = {}): Promise<ToolResult> {
 	throwIfToolAbortRequested(execCtx.signal, call.name, 'delegate:start');
-	const { task, context, subagentType, runInBackground } = coerceAgentDelegateArgs(call);
+	const { task, context, subagentType, runInBackground, forkContext } = coerceAgentDelegateArgs(call);
 	if (!task) {
 		return {
 			toolCallId: call.id,
@@ -1690,229 +1725,181 @@ async function executeAgentDelegate(call: ToolCall, execCtx: ToolExecutionContex
 			isError: true,
 		};
 	}
-
-	const { runAgentLoop } = await import('./agentLoop.js');
-	const subMessages: import('../threadStore.js').ChatMessage[] = [
-		{ role: 'user', content: context ? `${task}\n\nContext:\n${context}` : task },
-	];
-
-	const parentToolCallId = call.id;
-	const nestingDepth = 1;
 	const prevCtx = _delegateContext!;
-	const emit = prevCtx.nestedEmit;
-	const tid = prevCtx.threadId;
-	const onBgDone = prevCtx.onSubAgentBackgroundDone;
-
-	const profile = resolveSubagentProfile(subagentType);
-	const subComposerMode: ComposerMode = profile === 'explore' ? 'plan' : prevCtx.options.composerMode;
-	const subAppend = buildSubagentSystemAppend(prevCtx.settings, subagentType);
-	const matchedSubagent = findConfiguredSubagent(prevCtx.settings, subagentType);
-
-	let baseToolDefs = assembleAgentToolPool(subComposerMode, {
-		mcpToolDenyPrefixes: prevCtx.settings.mcpToolDenyPrefixes,
-	});
-	baseToolDefs = baseToolDefs.filter((d) => !SUBAGENT_TOOL_NAMES.has(d.name));
-
-	const childDepth = depth + 1;
 	const useBackgroundFork = shouldRunAgentInBackground({
 		backgroundForkAgentSetting: prevCtx.settings.agent?.backgroundForkAgent,
 		envAsyncAgentBackgroundFork: process.env.ASYNC_AGENT_BACKGROUND_FORK,
 		subagentType,
 		runInBackground,
 	});
-
-	const logTranscript = (chunk: string) => {
-		if (tid) {
-			appendSubagentTranscript(tid, parentToolCallId, chunk);
-		}
-	};
-
-	const runSubAgent = async (): Promise<{ output: string; errorMsg: string }> => {
-		let output = '';
-		let errorMsg = '';
-		let agentMemoryAppend = '';
-		let agentMemoryDir: string | null = null;
-		throwIfToolAbortRequested(prevCtx.parentSignal, call.name, 'delegate:runSubAgent:start');
-		if (matchedSubagent?.memoryScope && subagentType) {
-			try {
-				const subWs = prevCtx.options.workspaceRoot ?? null;
-				agentMemoryDir = await ensureAgentMemoryDirExists(subagentType, matchedSubagent.memoryScope, subWs);
-				agentMemoryAppend =
-					loadAgentMemoryPrompt(subagentType, matchedSubagent.memoryScope, subWs)?.trim() ?? '';
-			} catch {
-				agentMemoryAppend = '';
-				agentMemoryDir = null;
-			}
-		}
-		let relevantAgentMemories = '';
-		if (agentMemoryDir) {
-			try {
-				const agentQuery = `${task}\n\n${context}`.trim();
-				relevantAgentMemories =
-					(await buildRelevantMemoryContextBlock({
-						query: agentQuery,
-						settings: prevCtx.settings,
-						modelSelection: prevCtx.options.modelSelection ?? '',
-						memoryDirOverride: agentMemoryDir,
-						label: 'Relevant agent memories',
-						signal: prevCtx.parentSignal,
-					})) ?? '';
-			} catch (e) {
-				if (e instanceof Error && e.name === 'AbortError') {
-					throw e;
-				}
-				relevantAgentMemories = '';
-			}
-		}
-		const mergedAppend = [
-			prevCtx.options.agentSystemAppend?.trim(),
-			subAppend?.trim(),
-			agentMemoryAppend,
-			relevantAgentMemories.trim(),
-		]
-			.filter(Boolean)
-			.join('\n\n');
-		const handlers: AgentLoopHandlers = {
-			onTextDelta: (text) => {
-				output += text;
-				logTranscript(text);
-				emit?.({
-					type: 'delta',
-					text,
-					parentToolCallId,
-					nestingDepth,
-				});
-			},
-			onToolInputDelta: (p) => {
-				emit?.({
-					type: 'tool_input_delta',
-					name: p.name,
-					partialJson: p.partialJson,
-					index: p.index,
-					parentToolCallId,
-					nestingDepth,
-				});
-			},
-			onThinkingDelta: (text) => {
-				logTranscript(text);
-				emit?.({
-					type: 'thinking_delta',
-					text,
-					parentToolCallId,
-					nestingDepth,
-				});
-			},
-			onToolCall: (name, args, toolUseId) => {
-				const line = `\n[tool] ${name} ${JSON.stringify(args).slice(0, 200)}\n`;
-				logTranscript(line);
-				emit?.({
-					type: 'tool_call',
-					name,
-					args: JSON.stringify(args),
-					toolCallId: toolUseId,
-					parentToolCallId,
-					nestingDepth,
-				});
-			},
-			onToolResult: (name, result, success, toolUseId) => {
-				const line = `\n[result] ${name} success=${success}\n`;
-				logTranscript(line);
-				emit?.({
-					type: 'tool_result',
-					name,
-					result,
-					success,
-					toolCallId: toolUseId,
-					parentToolCallId,
-					nestingDepth,
-				});
-			},
-			onToolProgress: (p) => {
-				emit?.({
-					type: 'tool_progress',
-					name: p.name,
-					phase: p.phase,
-					detail: p.detail,
-					parentToolCallId,
-					nestingDepth,
-				});
-			},
-			onDone: () => {},
-			onError: (msg) => {
-				errorMsg = msg;
-			},
-		};
-
-		try {
-			const baseHooks = prevCtx.options.toolHooks;
-			const hooksForSub =
-				subComposerMode === 'agent' || !baseHooks
-					? baseHooks
-					: { ...baseHooks, afterWrite: undefined };
-			await runAgentLoop(
-				prevCtx.settings,
-				subMessages,
-				{
-					...prevCtx.options,
-					signal: prevCtx.parentSignal,
-					composerMode: subComposerMode,
-					toolPoolOverride: baseToolDefs,
-					delegateExecutionDepth: childDepth,
-					toolHooks: hooksForSub,
-					...(mergedAppend ? { agentSystemAppend: mergedAppend } : {}),
-				},
-				handlers
-			);
-			if (!errorMsg && agentMemoryDir && !prevCtx.parentSignal.aborted) {
-				await extractMemoriesToDir({
-					memoryDir: agentMemoryDir,
-					workspaceRootForEntrypoint: null,
-					messages: [
-						subMessages[0]!,
-						{ role: 'assistant', content: output || '(sub-agent completed with no output)' },
-					],
-					runtimeModel: {
-						requestModelId: prevCtx.options.requestModelId,
-						paradigm: prevCtx.options.paradigm,
-						requestApiKey: prevCtx.options.requestApiKey,
-						requestBaseURL: prevCtx.options.requestBaseURL,
-						requestProxyUrl: prevCtx.options.requestProxyUrl,
-						thinkingLevel: prevCtx.options.thinkingLevel,
-					},
-				});
-			}
-		} catch (e) {
-			if (e instanceof Error && e.name === 'AbortError') {
-				throw e;
-			}
-			errorMsg = String(e);
-		}
-		return { output, errorMsg };
-	};
-
+	const runtime = spawnManagedAgent({
+		threadId: prevCtx.threadId ?? execCtx.threadId ?? '_default',
+		parentToolCallId: call.id,
+		parentAgentId: null,
+		task,
+		context,
+		subagentType,
+		background: useBackgroundFork,
+		settings: prevCtx.settings,
+		options: prevCtx.options,
+		toolHooks: prevCtx.options.toolHooks,
+		nestedEmit: prevCtx.nestedEmit,
+		emit: prevCtx.managedEmit,
+		parentMessages: prevCtx.parentMessages,
+		forkContext,
+	});
 	if (useBackgroundFork) {
-		void (async () => {
-			const { output, errorMsg } = await runSubAgent();
-			onBgDone?.({
-				parentToolCallId,
-				result: errorMsg ? `Sub-agent error: ${errorMsg}` : output || '(sub-agent completed with no output)',
-				success: !errorMsg,
-			});
-		})();
-
+		void startManagedAgent(runtime);
 		return {
 			toolCallId: call.id,
 			name: call.name,
-			content: BACKGROUND_AGENT_TOOL_RESULT,
+			content: `${BACKGROUND_AGENT_TOOL_RESULT}\nAgent ID: ${runtime.agentId}`,
 			isError: false,
 		};
 	}
-
-	const { output, errorMsg } = await runSubAgent();
-	if (errorMsg) {
-		return { toolCallId: call.id, name: call.name, content: `Sub-agent error: ${errorMsg}`, isError: true };
+	await startManagedAgent(runtime);
+	const snapshot = getManagedAgentSession(runtime.threadId)?.agents[runtime.agentId];
+	const finalOutput =
+		runtime.messages
+			.filter((message) => message.role === 'assistant')
+			.map((message) => message.content)
+			.slice(-1)[0] ?? '';
+	if (snapshot?.lastError) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: `Sub-agent error (${runtime.agentId}): ${snapshot.lastError}`,
+			isError: true,
+		};
 	}
-	return { toolCallId: call.id, name: call.name, content: output || '(sub-agent completed with no output)', isError: false };
+	return {
+		toolCallId: call.id,
+		name: call.name,
+		content: finalOutput || `(sub-agent ${runtime.agentId} completed with no output)`,
+		isError: false,
+	};
+}
+
+async function executeAgentSendInput(call: ToolCall, execCtx: ToolExecutionContext = {}): Promise<ToolResult> {
+	if (!_delegateContext) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: 'send_input is not available in this context.',
+			isError: true,
+		};
+	}
+	const target = String(call.arguments.target ?? '').trim();
+	const message = String(call.arguments.message ?? '').trim();
+	const interrupt = call.arguments.interrupt === true || call.arguments.interrupt === 'true';
+	if (!target || !message) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: 'Error: send_input requires both target and message.',
+			isError: true,
+		};
+	}
+	const result = await sendInputToManagedAgent({
+		threadId: _delegateContext.threadId ?? execCtx.threadId ?? '_default',
+		agentId: target,
+		message,
+		interrupt,
+		settings: _delegateContext.settings,
+		options: _delegateContext.options,
+		emit: _delegateContext.managedEmit,
+	});
+	return {
+		toolCallId: call.id,
+		name: call.name,
+		content: result.ok ? `Queued message for agent ${target}.` : result.error,
+		isError: !result.ok,
+	};
+}
+
+async function executeAgentWait(call: ToolCall, execCtx: ToolExecutionContext = {}): Promise<ToolResult> {
+	const rawTargets = Array.isArray(call.arguments.targets) ? call.arguments.targets : [];
+	const targets = rawTargets.map((value) => String(value ?? '').trim()).filter(Boolean);
+	if (targets.length === 0) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: 'Error: wait_agent requires at least one target.',
+			isError: true,
+		};
+	}
+	const timeoutMsRaw = Number(call.arguments.timeout_ms ?? 30000);
+	const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 30000;
+	const statuses = await waitForManagedAgents(execCtx.threadId ?? _delegateContext?.threadId ?? '_default', targets, timeoutMs);
+	return {
+		toolCallId: call.id,
+		name: call.name,
+		content: JSON.stringify(
+			{
+				statuses,
+				timedOut: Object.keys(statuses).length < targets.length,
+			},
+			null,
+			2
+		),
+		isError: false,
+	};
+}
+
+async function executeAgentResume(call: ToolCall, execCtx: ToolExecutionContext = {}): Promise<ToolResult> {
+	if (!_delegateContext) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: 'resume_agent is not available in this context.',
+			isError: true,
+		};
+	}
+	const agentId = String(call.arguments.id ?? '').trim();
+	if (!agentId) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: 'Error: resume_agent requires id.',
+			isError: true,
+		};
+	}
+	const result = await resumeManagedAgent({
+		threadId: _delegateContext.threadId ?? execCtx.threadId ?? '_default',
+		agentId,
+		settings: _delegateContext.settings,
+		options: _delegateContext.options,
+		emit: _delegateContext.managedEmit,
+	});
+	return {
+		toolCallId: call.id,
+		name: call.name,
+		content: result.ok ? `Resumed agent ${agentId}.` : result.error,
+		isError: !result.ok,
+	};
+}
+
+async function executeAgentClose(call: ToolCall, execCtx: ToolExecutionContext = {}): Promise<ToolResult> {
+	const agentId = String(call.arguments.target ?? '').trim();
+	if (!agentId) {
+		return {
+			toolCallId: call.id,
+			name: call.name,
+			content: 'Error: close_agent requires target.',
+			isError: true,
+		};
+	}
+	const result = closeManagedAgent({
+		threadId: execCtx.threadId ?? _delegateContext?.threadId ?? '_default',
+		agentId,
+		emit: _delegateContext?.managedEmit,
+	});
+	return {
+		toolCallId: call.id,
+		name: call.name,
+		content: result.ok ? `Closed agent ${agentId}.` : result.error,
+		isError: !result.ok,
+	};
 }
 
 function executeTodoWrite(call: ToolCall, execCtx: ToolExecutionContext): ToolResult {

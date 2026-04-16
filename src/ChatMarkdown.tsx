@@ -94,6 +94,7 @@ type Props = {
 	onRunCommand?: (cmd: string) => void;
 	streamingToolPreview?: StreamingToolPreview | null;
 	showAgentWorking?: boolean;
+	hidePendingActivityTextCluster?: boolean;
 	/** 对话错误气泡：强制易读配色并避免 Agent 解析路径漏字 */
 	assistantBubbleVariant?: 'default' | 'error';
 	/** 实时回合块状态；与 showAgentWorking 同时为真且 blocks 非空时，优先走块渲染，避免整段 content 重解析 */
@@ -134,11 +135,13 @@ function ActivityLine({
 	t,
 	onOpenAgentFile,
 	showAgentWorking,
+	hidePendingTextCluster = false,
 }: {
 	seg: Extract<AssistantSegment, { type: 'activity' }>;
 	t: ReturnType<typeof useI18n>['t'];
 	onOpenAgentFile?: Props['onOpenAgentFile'];
 	showAgentWorking?: boolean;
+	hidePendingTextCluster?: boolean;
 }) {
 	const readLink = seg.agentReadLink;
 	const openHintRaw = t('agent.activity.readOpenEditor');
@@ -148,6 +151,8 @@ function ActivityLine({
 			: openHintRaw;
 	const hasResultCard = Boolean(seg.resultLines && seg.resultLines.length > 0 && seg.resultKind);
 	const hasExpandableBody = Boolean(seg.detail || hasResultCard);
+	const shouldHideWorkingTextCluster =
+		hidePendingTextCluster && showAgentWorking && !hasExpandableBody;
 	const [expandedBody, setExpandedBody] = useState(false);
 	const onToggleBody = useCallback(() => setExpandedBody((v) => !v), []);
 	const onToggleKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
@@ -156,6 +161,10 @@ function ActivityLine({
 			onToggleBody();
 		}
 	}, [onToggleBody]);
+
+	if (shouldHideWorkingTextCluster && !seg.summary) {
+		return null;
+	}
 
 	return (
 		<div
@@ -209,27 +218,29 @@ function ActivityLine({
 					</span>
 				) : (
 					<>
-						<span className="ref-agent-activity-text-cluster">
-							{readLink && onOpenAgentFile ? (
-								<button
-									type="button"
-									className="ref-agent-activity-ref-link"
-									title={openHint}
-									onClick={(e) => {
-										e.stopPropagation();
-										onOpenAgentFile(
-											readLink.path,
-											readLink.startLine,
-											readLink.endLine
-										);
-									}}
-								>
-									{seg.text}
-								</button>
-							) : (
-								<span className="ref-agent-activity-text">{seg.text}</span>
-							)}
-						</span>
+						{shouldHideWorkingTextCluster ? null : (
+							<span className="ref-agent-activity-text-cluster">
+								{readLink && onOpenAgentFile ? (
+									<button
+										type="button"
+										className="ref-agent-activity-ref-link"
+										title={openHint}
+										onClick={(e) => {
+											e.stopPropagation();
+											onOpenAgentFile(
+												readLink.path,
+												readLink.startLine,
+												readLink.endLine
+											);
+										}}
+									>
+										{seg.text}
+									</button>
+								) : (
+									<span className="ref-agent-activity-text">{seg.text}</span>
+								)}
+							</span>
+						)}
 						{seg.summary ? (
 							<span className="ref-agent-activity-summary">{seg.summary}</span>
 						) : null}
@@ -267,6 +278,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 	onRunCommand,
 	streamingToolPreview,
 	showAgentWorking = false,
+	hidePendingActivityTextCluster: forceHidePendingActivityTextCluster = false,
 	liveAgentBlocksState = null,
 	liveThoughtMeta = null,
 	assistantBubbleVariant = 'default',
@@ -379,6 +391,13 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 		}
 		return out;
 	}, [renderSegments]);
+	const hidePendingActivityTextCluster =
+		showAgentWorking &&
+		(
+			forceHidePendingActivityTextCluster ||
+			streamingToolPreview != null ||
+			(liveAgentBlocksState?.blocks.length ?? 0) > 0
+		);
 
 	if (!agentMarkdown) {
 		const plainClass =
@@ -494,10 +513,14 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 								t={t}
 								onOpenAgentFile={onOpenAgentFile}
 								showAgentWorking={showAgentWorking}
+								hidePendingTextCluster={hidePendingActivityTextCluster}
 							/>
 						);
 					}
 					case 'tool_call':
+						if (hidePendingActivityTextCluster && showAgentWorking) {
+							return null;
+						}
 						return (
 							<p key={i} className="ref-agent-activity">
 								{t('agent.toolPending', { name: seg.name })}

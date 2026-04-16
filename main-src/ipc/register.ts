@@ -76,6 +76,7 @@ import {
 	markPlanFileExecuted,
 	incrementThreadAgentToolCallCount,
 	saveTeamSession,
+	getAgentSession,
 	type ChatMessage,
 } from '../threadStore.js';
 import { compressForSend } from '../agent/conversationCompress.js';
@@ -114,6 +115,11 @@ import {
 	abortPlanQuestionWaitersForThread,
 	resolvePlanQuestionTool,
 } from '../agent/planQuestionTool.js';
+import {
+	abortRequestUserInputWaitersForThread,
+	createRequestUserInputToolHandler,
+	resolveRequestUserInput,
+} from '../agent/requestUserInputTool.js';
 import { setPlanDraftRuntime } from '../agent/planDraftTool.js';
 import {
 	abortTeamPlanApprovalForThread,
@@ -151,6 +157,15 @@ import {
 } from '../lspSessionsByWebContents.js';
 import { setDelegateContext, clearDelegateContext } from '../agent/toolExecutor.js';
 import {
+	attachManagedAgentEmitter,
+	closeManagedAgent,
+	getManagedAgentSession,
+	getManagedAgentTranscriptPath,
+	resumeManagedAgent,
+	sendInputToManagedAgent,
+	waitForManagedAgents,
+} from '../agent/managedSubagents.js';
+import {
 	searchWorkspaceSymbols,
 	ensureSymbolIndexLoaded,
 } from '../workspaceSymbolIndex.js';
@@ -161,12 +176,15 @@ import { scanMemoryFiles } from '../memdir/memoryScan.js';
 import { getAutoMemEntrypoint } from '../memdir/paths.js';
 import { buildMemoryEntrypoint, queueExtractMemories } from '../services/extractMemories/extractMemories.js';
 import {
-	browserPartitionForHost,
+	browserPartitionForHostId,
 	getBrowserSidebarConfigPayloadForHostId,
 	setBrowserSidebarConfigForHostId,
 	updateBrowserRuntimeStateForHostId,
 	getBrowserRuntimeStateForHostId,
 	resolveBrowserCommandResultForHostId,
+	resolveBrowserHostIdForSenderId,
+	markBrowserWindowReadyForSenderId,
+	openBrowserWindowForHostId,
 } from '../browser/browserController.js';
 
 const execFileAsync = promisify(execFile);
@@ -307,6 +325,37 @@ const toolApprovalWaiters = new Map<string, (approved: boolean) => void>();
 const mistakeLimitWaiters = new Map<string, (d: MistakeLimitDecision) => void>();
 function activeUsageStatsDir(): string | null {
 	return resolveUsageStatsDataDir(getSettings());
+}
+
+function resolveManagedAgentLoopOptions(
+	settings: ReturnType<typeof getSettings>,
+	workspaceRoot: string | null,
+	workspaceLspManager: ReturnType<typeof getWorkspaceLspManagerForWebContents>,
+	hostWebContentsId: number | null
+): Omit<import('../agent/agentLoop.js').AgentLoopOptions, 'signal'> | null {
+	const modelSelection = String(settings.defaultModel ?? '').trim();
+	if (!modelSelection) {
+		return null;
+	}
+	const resolved = resolveModelRequest(settings, modelSelection);
+	if (!resolved.ok) {
+		return null;
+	}
+	const thinkingLevel = resolveThinkingLevelForSelection(settings, modelSelection);
+	return {
+		modelSelection,
+		requestModelId: resolved.requestModelId,
+		paradigm: resolved.paradigm,
+		requestApiKey: resolved.apiKey,
+		requestBaseURL: resolved.baseURL,
+		requestProxyUrl: resolved.proxyUrl,
+		maxOutputTokens: resolved.maxOutputTokens,
+		composerMode: 'agent',
+		thinkingLevel,
+		workspaceRoot,
+		workspaceLspManager,
+		hostWebContentsId,
+	};
 }
 
 function readWorkspaceTextFileIfExists(relPath: string, workspaceRoot: string | null): string | null {
@@ -712,6 +761,15 @@ function runChatStream(
 					mistakeLimitWaiters
 				);
 			const ag = getSettings().agent;
+			const customToolHandlers = {
+					request_user_input: createRequestUserInputToolHandler({
+						threadId,
+						signal: ac.signal,
+						emit: (evt) => send({ threadId, ...evt }),
+						agentId: 'root',
+						agentTitle: mode === 'plan' ? 'Plan Assistant' : 'Root Agent',
+					}),
+				};
 			const agentOptions = {
 					modelSelection,
 					requestModelId: resolved.requestModelId,
@@ -727,6 +785,7 @@ function runChatStream(
 					maxConsecutiveMistakes: ag?.maxConsecutiveMistakes,
 					mistakeLimitEnabled: ag?.mistakeLimitEnabled,
 					onMistakeLimitReached,
+					customToolHandlers,
 					workspaceRoot,
 					workspaceLspManager,
 					hostWebContentsId: win.webContents.id,
@@ -738,14 +797,17 @@ function runChatStream(
 					ac.signal,
 					(evt) => send({ threadId, ...evt }),
 					threadId,
+					(evt) => send(evt),
 					(payload) =>
 						send({
 							threadId,
 							type: 'sub_agent_background_done',
 							parentToolCallId: payload.parentToolCallId,
+							agentId: payload.agentId,
 							result: payload.result,
 							success: payload.success,
-						})
+						}),
+					messages
 				);
 				if (mode === 'plan') {
 					setPlanQuestionRuntime({
@@ -790,6 +852,7 @@ function runChatStream(
 						maxConsecutiveMistakes: ag?.maxConsecutiveMistakes,
 						mistakeLimitEnabled: ag?.mistakeLimitEnabled,
 						onMistakeLimitReached,
+						customToolHandlers,
 						workspaceRoot,
 						workspaceLspManager,
 						threadId,
@@ -1350,8 +1413,9 @@ export function registerIpc(): void {
 	);
 
 	ipcMain.handle('browser:getConfig', async (event) => {
-		const partition = browserPartitionForHost(event.sender);
-		const payload = await getBrowserSidebarConfigPayloadForHostId(event.sender.id);
+		const hostId = resolveBrowserHostIdForSenderId(event.sender.id);
+		const partition = browserPartitionForHostId(hostId);
+		const payload = await getBrowserSidebarConfigPayloadForHostId(hostId);
 		return {
 			ok: true as const,
 			partition,
@@ -1361,11 +1425,11 @@ export function registerIpc(): void {
 	});
 
 	ipcMain.handle('browser:setConfig', async (event, rawConfig: unknown) => {
-		return await setBrowserSidebarConfigForHostId(event.sender.id, rawConfig);
+		return await setBrowserSidebarConfigForHostId(resolveBrowserHostIdForSenderId(event.sender.id), rawConfig);
 	});
 
 	ipcMain.handle('browser:syncState', async (event, rawState: unknown) => {
-		const state = updateBrowserRuntimeStateForHostId(event.sender.id, rawState);
+		const state = updateBrowserRuntimeStateForHostId(resolveBrowserHostIdForSenderId(event.sender.id), rawState);
 		return {
 			ok: true as const,
 			state,
@@ -1373,16 +1437,28 @@ export function registerIpc(): void {
 	});
 
 	ipcMain.handle('browser:getState', async (event) => {
+		const hostId = resolveBrowserHostIdForSenderId(event.sender.id);
 		return {
 			ok: true as const,
-			state: getBrowserRuntimeStateForHostId(event.sender.id),
+			state: getBrowserRuntimeStateForHostId(hostId),
 		};
 	});
 
 	ipcMain.handle('browser:commandResult', async (event, payload: unknown) => {
+		const hostId = resolveBrowserHostIdForSenderId(event.sender.id);
 		return {
-			ok: resolveBrowserCommandResultForHostId(event.sender.id, payload),
+			ok: resolveBrowserCommandResultForHostId(hostId, payload),
 		};
+	});
+
+	ipcMain.handle('browser:windowReady', async (event) => {
+		markBrowserWindowReadyForSenderId(event.sender.id);
+		return { ok: true as const };
+	});
+
+	ipcMain.handle('browser:openWindow', async (event) => {
+		const hostId = resolveBrowserHostIdForSenderId(event.sender.id);
+		return { ok: await openBrowserWindowForHostId(hostId) };
 	});
 
 	const COMPOSER_ATTACH_MAX_BYTES = 8 * 1024 * 1024;
@@ -1738,6 +1814,7 @@ export function registerIpc(): void {
 			ok: true as const,
 			messages: t.messages.filter((m) => m.role !== 'system'),
 			teamSession: t.teamSession ?? null,
+			agentSession: getManagedAgentSession(threadId) ?? getAgentSession(threadId),
 		};
 	});
 
@@ -2180,6 +2257,7 @@ export function registerIpc(): void {
 
 	ipcMain.handle('chat:abort', (_e, threadId: string) => {
 		abortPlanQuestionWaitersForThread(threadId);
+		abortRequestUserInputWaitersForThread(threadId);
 		abortTeamPlanApprovalForThread(threadId);
 		preflightAbortByThread.get(threadId)?.abort();
 		preflightAbortByThread.delete(threadId);
@@ -2201,6 +2279,124 @@ export function registerIpc(): void {
 		}
 		return { ok: true };
 	});
+
+	ipcMain.handle('agent:getSession', (event, threadId: string) => {
+		const session =
+			getManagedAgentSession(String(threadId ?? '').trim()) ??
+			getAgentSession(String(threadId ?? '').trim()) ??
+			null;
+		if (session) {
+			attachManagedAgentEmitter(String(threadId ?? '').trim(), (evt) => {
+				event.sender.send('async-shell:chat', evt);
+			});
+		}
+		return { ok: true as const, session };
+	});
+
+	ipcMain.handle('agent:sendInput', async (event, payload: { threadId?: string; agentId?: string; message?: string; interrupt?: boolean }) => {
+		const threadId = String(payload?.threadId ?? '').trim();
+		const agentId = String(payload?.agentId ?? '').trim();
+		const message = String(payload?.message ?? '').trim();
+		if (!threadId || !agentId || !message) {
+			return { ok: false as const, error: 'missing agent input payload' };
+		}
+		const workspaceRoot = senderWorkspaceRoot(event);
+		const settings = getSettings();
+		const options = resolveManagedAgentLoopOptions(
+			settings,
+			workspaceRoot,
+			getWorkspaceLspManagerForWebContents(event.sender),
+			event.sender.id
+		);
+		if (!options) {
+			return { ok: false as const, error: 'no-model' };
+		}
+		const send = (evt: import('../agent/managedSubagents.js').ManagedAgentUiEvent) =>
+			event.sender.send('async-shell:chat', evt);
+		const result = await sendInputToManagedAgent({
+			threadId,
+			agentId,
+			message,
+			interrupt: payload?.interrupt === true,
+			settings,
+			options,
+			emit: send,
+		});
+		return result.ok ? { ok: true as const } : { ok: false as const, error: result.error };
+	});
+
+	ipcMain.handle('agent:wait', async (_event, payload: { threadId?: string; agentIds?: string[]; timeoutMs?: number }) => {
+		const threadId = String(payload?.threadId ?? '').trim();
+		const agentIds = Array.isArray(payload?.agentIds)
+			? payload.agentIds.map((value) => String(value ?? '').trim()).filter(Boolean)
+			: [];
+		if (!threadId || agentIds.length === 0) {
+			return { ok: false as const, error: 'missing wait payload' };
+		}
+		const timeoutMsRaw = Number(payload?.timeoutMs ?? 30000);
+		const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 30000;
+		const statuses = await waitForManagedAgents(threadId, agentIds, timeoutMs);
+		return {
+			ok: true as const,
+			statuses,
+			timedOut: Object.keys(statuses).length < agentIds.length,
+		};
+	});
+
+	ipcMain.handle('agent:resume', async (event, payload: { threadId?: string; agentId?: string }) => {
+		const threadId = String(payload?.threadId ?? '').trim();
+		const agentId = String(payload?.agentId ?? '').trim();
+		if (!threadId || !agentId) {
+			return { ok: false as const, error: 'missing resume payload' };
+		}
+		const workspaceRoot = senderWorkspaceRoot(event);
+		const settings = getSettings();
+		const options = resolveManagedAgentLoopOptions(
+			settings,
+			workspaceRoot,
+			getWorkspaceLspManagerForWebContents(event.sender),
+			event.sender.id
+		);
+		if (!options) {
+			return { ok: false as const, error: 'no-model' };
+		}
+		const send = (evt: import('../agent/managedSubagents.js').ManagedAgentUiEvent) =>
+			event.sender.send('async-shell:chat', evt);
+		const result = await resumeManagedAgent({
+			threadId,
+			agentId,
+			settings,
+			options,
+			emit: send,
+		});
+		return result.ok ? { ok: true as const } : { ok: false as const, error: result.error };
+	});
+
+	ipcMain.handle('agent:close', (event, payload: { threadId?: string; agentId?: string }) => {
+		const threadId = String(payload?.threadId ?? '').trim();
+		const agentId = String(payload?.agentId ?? '').trim();
+		if (!threadId || !agentId) {
+			return { ok: false as const, error: 'missing close payload' };
+		}
+		const send = (evt: import('../agent/managedSubagents.js').ManagedAgentUiEvent) =>
+			event.sender.send('async-shell:chat', evt);
+		const result = closeManagedAgent({ threadId, agentId, emit: send });
+		return result.ok ? { ok: true as const } : { ok: false as const, error: result.error };
+	});
+
+	ipcMain.handle(
+		'agent:userInputRespond',
+		(_e, payload: { requestId?: string; answers?: Record<string, unknown> }) => {
+			const requestId = String(payload?.requestId ?? '');
+			if (!requestId) {
+				return { ok: false as const, error: 'missing requestId' as const };
+			}
+			const ok = resolveRequestUserInput(requestId, {
+				answers: payload?.answers,
+			});
+			return ok ? ({ ok: true as const } as const) : ({ ok: false as const, error: 'unknown request' as const });
+		}
+	);
 
 	ipcMain.handle(
 		'agent:toolApprovalRespond',
@@ -2584,14 +2780,17 @@ ipcMain.handle(
 	ipcMain.handle('shell:openDefault', async (event, relPath: string) => {
 		try {
 			const root = senderWorkspaceRoot(event);
-			if (!root) {
-				return { ok: false as const, error: 'No workspace' };
-			}
 			const rel = String(relPath ?? '').trim();
 			if (!rel) {
 				return { ok: false as const, error: 'empty path' };
 			}
-			const full = resolveWorkspacePath(rel, root);
+			let full = rel;
+			if (!path.isAbsolute(full)) {
+				if (!root) {
+					return { ok: false as const, error: 'No workspace' };
+				}
+				full = resolveWorkspacePath(rel, root);
+			}
 			if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
 				return { ok: false as const, error: 'not a file' };
 			}

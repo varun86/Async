@@ -45,7 +45,13 @@ export function agentToolsForComposerMode(
 	all: AgentToolDef[] = AGENT_TOOLS
 ): AgentToolDef[] {
 	if (mode === 'plan') {
-		return all.filter((d) => isReadOnlyAgentTool(d.name) || d.name === 'ask_plan_question' || d.name === 'plan_submit_draft');
+		return all.filter(
+			(d) =>
+				isReadOnlyAgentTool(d.name) ||
+				d.name === 'ask_plan_question' ||
+				d.name === 'request_user_input' ||
+				d.name === 'plan_submit_draft'
+		);
 	}
 	return all.filter((d) => d.name !== 'ask_plan_question');
 }
@@ -230,7 +236,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 	{
 		name: 'Browser',
 		description:
-			'Control the app\'s built-in browser sidebar in the current Async window. Use this to open or steer pages, read visible page content, capture webpage screenshots, and inspect/update browser networking settings such as User-Agent, Accept-Language, extra request headers, and proxy configuration.',
+			'Control the app\'s dedicated browser window for the current Async session. Use this to open or steer pages, read visible page content, capture webpage screenshots, and inspect/update browser networking settings such as User-Agent, Accept-Language, extra request headers, and proxy configuration.',
 		parameters: {
 			type: 'object',
 			properties: {
@@ -370,7 +376,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 	{
 		name: 'Agent',
 		description:
-			'Spawn a focused sub-agent. Use for scoped, autonomous work: deep codebase exploration, refactors isolated to a module, or keeping your main context clean. The sub-agent runs a full tool loop and returns its final text. With background fork enabled, omitting subagent_type (or setting run_in_background) lets work continue asynchronously while the tool returns immediately. Set subagent_type to "explore" for read-only exploration; use a custom name from user subagent settings for tailored instructions. Nested Agent calls are blocked. Maximum nesting depth is 1.',
+			'Spawn a focused sub-agent. Use for scoped, autonomous work: deep codebase exploration, refactors isolated to a module, or keeping your main context clean. The sub-agent runs a full tool loop and returns its final text. With background fork enabled, omitting subagent_type (or setting run_in_background) lets work continue asynchronously while the tool returns immediately. Set subagent_type to "explore" for read-only exploration; use a custom name from user subagent settings for tailored instructions. Set fork_context to true to copy the current visible thread history into the child agent. Nested Agent calls are blocked. Maximum nesting depth is 1.',
 		parameters: {
 			type: 'object',
 			properties: {
@@ -392,8 +398,137 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 					description:
 						'If true, the sub-agent runs in the background: the tool returns immediately with a short notice, nested activity still streams, and the user gets a completion toast when it finishes.',
 				},
+				fork_context: {
+					type: 'boolean',
+					description:
+						'If true, copy the current visible conversation history into the spawned agent before adding the new task message.',
+				},
 			},
 			required: ['prompt'],
+		},
+	},
+	{
+		name: 'send_input',
+		description:
+			'Send a follow-up message to an existing sub-agent. Use interrupt=true to stop its current run and handle the new message immediately.',
+		parameters: {
+			type: 'object',
+			properties: {
+				target: {
+					type: 'string',
+					description: 'Agent id returned or shown for the target sub-agent.',
+				},
+				message: {
+					type: 'string',
+					description: 'Plain text message to deliver to the target sub-agent.',
+				},
+				interrupt: {
+					type: 'boolean',
+					description: 'If true, abort the current run and prioritize this new message.',
+				},
+			},
+			required: ['target', 'message'],
+		},
+	},
+	{
+		name: 'wait_agent',
+		description:
+			'Wait for one or more sub-agents to finish. Returns the final statuses that completed before the timeout.',
+		parameters: {
+			type: 'object',
+			properties: {
+				targets: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'One or more agent ids to wait for.',
+				},
+				timeout_ms: {
+					type: 'number',
+					description: 'Optional timeout in milliseconds. Defaults to 30000.',
+				},
+			},
+			required: ['targets'],
+		},
+	},
+	{
+		name: 'resume_agent',
+		description:
+			'Resume a paused or previously closed sub-agent when it has stored context and can continue.',
+		parameters: {
+			type: 'object',
+			properties: {
+				id: {
+					type: 'string',
+					description: 'Agent id to resume.',
+				},
+			},
+			required: ['id'],
+		},
+	},
+	{
+		name: 'close_agent',
+		description:
+			'Close a running or resumable sub-agent and any of its descendants.',
+		parameters: {
+			type: 'object',
+			properties: {
+				target: {
+					type: 'string',
+					description: 'Agent id to close.',
+				},
+			},
+			required: ['target'],
+		},
+	},
+	{
+		name: 'request_user_input',
+		description:
+			'Ask the user for 1-3 short structured answers. Each question must include an id, a short header, the question text, and 2-3 recommended options. The UI automatically adds a freeform "Other" field for each question, and the tool result returns a JSON object mapping question ids to the user\'s final answers.',
+		parameters: {
+			type: 'object',
+			properties: {
+				questions: {
+					type: 'array',
+					description: '1-3 structured questions to ask the user.',
+					items: {
+						type: 'object',
+						properties: {
+							id: {
+								type: 'string',
+								description: 'Stable snake_case id used in the returned answers object.',
+							},
+							header: {
+								type: 'string',
+								description: 'Short header label shown in the UI.',
+							},
+							question: {
+								type: 'string',
+								description: 'Single user-facing question.',
+							},
+							options: {
+								type: 'array',
+								description: '2-3 recommended options shown before the automatic Other field.',
+								items: {
+									type: 'object',
+									properties: {
+										label: {
+											type: 'string',
+											description: 'Short option label.',
+										},
+										description: {
+											type: 'string',
+											description: 'One sentence explaining the tradeoff or impact of selecting it.',
+										},
+									},
+									required: ['label', 'description'],
+								},
+							},
+						},
+						required: ['id', 'header', 'question', 'options'],
+					},
+				},
+			},
+			required: ['questions'],
 		},
 	},
 	{

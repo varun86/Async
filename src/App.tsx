@@ -36,6 +36,7 @@ import {
 	applyThemePresetToAppearance,
 	applyAppearanceSettingsToDom,
 	defaultAppearanceSettings,
+	normalizeAppearanceSettings,
 	nativeWindowChromeFromAppearance,
 	replaceBuiltinChromeColorsForScheme,
 	shouldMigrateChromeWhenLeavingScheme,
@@ -45,7 +46,9 @@ import { useAppColorScheme } from './useAppColorScheme';
 import {
 	type AppColorMode,
 	getVoidMonacoTheme,
+	readPrefersDark,
 	readStoredColorMode,
+	resolveEffectiveScheme,
 	type ThemeTransitionOrigin,
 	writeStoredColorMode,
 } from './colorMode';
@@ -112,12 +115,15 @@ import { useAgentFileReview, type AgentFilePreviewState } from './hooks/useAgent
 import { useComposer } from './hooks/useComposer';
 import { useEditorTabs, type EditorInlineDiffState, clampEditorTerminalHeight } from './hooks/useEditorTabs';
 import { useTeamSession } from './hooks/useTeamSession';
+import { useAgentSession } from './hooks/useAgentSession';
+import type { AgentUserInputRequest } from './agentSessionTypes';
 import { buildTeamWorkflowItems } from './teamWorkflowItems';
 import { AppWorkspaceWelcome } from './app/AppWorkspaceWelcome';
 import { AgentAgentCenterColumn } from './app/AgentAgentCenterColumn';
 import type { ComposerAnchorSlot } from './ChatComposer';
 import { AppProvider } from './AppContext';
 import { ComposerActionsProvider } from './ComposerActionsContext';
+import { AgentBrowserWindowSurface } from './AgentRightSidebar';
 import { runDesktopShellInit } from './app/desktopShellInit';
 import {
 	DEFAULT_SHELL_LAYOUT_MODE_KEY,
@@ -151,9 +157,9 @@ import {
 const EditorMainPanel = lazy(() => import('./EditorMainPanel').then((m) => ({ default: m.EditorMainPanel })));
 
 type LayoutMode = ShellLayoutMode;
-type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team' | 'browser';
+type AgentRightSidebarView = 'git' | 'plan' | 'file' | 'team' | 'browser' | 'agents';
 type EditorLeftSidebarView = 'explorer' | 'search' | 'git';
-import { useI18n, type AppLocale } from './i18n';
+import { useI18n, normalizeLocale, type AppLocale } from './i18n';
 import { hideBootSplash } from './bootSplash';
 import { debugDiffHead, diffCreatesNewFile, sameStringArray } from './appDiffUtils';
 
@@ -193,7 +199,13 @@ type OnSendOptions = {
 	planBuildPathKey?: string;
 };
 
-export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
+export default function App({
+	appSurface,
+	browserWindow = false,
+}: {
+	appSurface?: LayoutMode;
+	browserWindow?: boolean;
+} = {}) {
 	const shell = useAsyncShell();
 	const layoutPinnedBySurface = appSurface !== undefined;
 	const shellLsPrefix = appSurface === 'editor' ? 'void-shell:editor:' : '';
@@ -492,9 +504,50 @@ export default function App({ appSurface }: { appSurface?: LayoutMode } = {}) {
 
 	return (
 		<AppShellProviders chrome={chromeSlice} workspace={workspaceSlice} settings={settingsSlice}>
-			<AppMainWorkspace />
+			{browserWindow ? <AppBrowserWindow /> : <AppMainWorkspace />}
 		</AppShellProviders>
 	);
+}
+
+function AppBrowserWindow() {
+	const { shell, setLocale, setColorMode, setAppearanceSettings } = useAppShellChrome();
+
+	useEffect(() => {
+		if (!shell) {
+			return;
+		}
+		let cancelled = false;
+		void (async () => {
+			try {
+				const settings = (await shell.invoke('settings:get')) as {
+					language?: string;
+					ui?: {
+						colorMode?: string;
+					} & Record<string, unknown>;
+				};
+				if (cancelled) {
+					return;
+				}
+				setLocale(normalizeLocale(settings.language));
+				const colorMode =
+					settings.ui?.colorMode === 'light' ||
+					settings.ui?.colorMode === 'dark' ||
+					settings.ui?.colorMode === 'system'
+						? settings.ui.colorMode
+						: readStoredColorMode();
+				setColorMode(colorMode);
+				const scheme = resolveEffectiveScheme(colorMode, readPrefersDark());
+				setAppearanceSettings(normalizeAppearanceSettings(settings.ui, scheme));
+			} catch {
+				/* ignore */
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [shell, setAppearanceSettings, setColorMode, setLocale]);
+
+	return <AgentBrowserWindowSurface />;
 }
 
 function AppMainWorkspaceInner() {
@@ -692,12 +745,20 @@ function AppMainWorkspaceInner() {
 		applyTeamPayload,
 		getTeamSession,
 		setSelectedTask,
+		clearTeamSession,
 		clearPendingQuestion: clearTeamPendingQuestion,
+		clearPendingUserInput: clearTeamPendingUserInput,
 		abortTeamSession,
 		startTeamSession,
 		restoreTeamSession,
 		markTeamPlanProposalDecided,
 	} = useTeamSession();
+	const {
+		restoreAgentSession,
+		clearAgentSession,
+		setSelectedAgent,
+		getAgentSession,
+	} = useAgentSession();
 	const {
 		agentReviewPendingByThread,
 		setAgentReviewPendingByThread,
@@ -761,6 +822,9 @@ function AppMainWorkspaceInner() {
 		resetPlanState,
 	} = usePlanSystem(shell, currentId, currentIdRef, messages, messagesThreadId, messagesRef, workspace, streaming, defaultModel);
 
+	const [rootUserInputRequestsByThread, setRootUserInputRequestsByThread] = useState<
+		Record<string, AgentUserInputRequest>
+	>({});
 	const { wizardPending, setWizardPending } = useWizardPending();
 	const [agentRightSidebarOpen, setAgentRightSidebarOpen] = useState(false);
 	const [agentRightSidebarView, setAgentRightSidebarView] = useState<AgentRightSidebarView>('git');
@@ -827,12 +891,41 @@ function AppMainWorkspaceInner() {
 		setPlanQuestionRequestId(null);
 	}, [setPlanQuestion, setPlanQuestionRequestId]);
 
+	const setRootUserInputRequest = useCallback((threadId: string, request: AgentUserInputRequest | null) => {
+		if (!threadId) {
+			return;
+		}
+		setRootUserInputRequestsByThread((prev) => {
+			if (!request) {
+				if (!prev[threadId]) {
+					return prev;
+				}
+				const next = { ...prev };
+				delete next[threadId];
+				return next;
+			}
+			return {
+				...prev,
+				[threadId]: request,
+			};
+		});
+	}, []);
+
+	const clearRootUserInputRequest = useCallback((threadId?: string | null) => {
+		if (!threadId) {
+			setRootUserInputRequestsByThread({});
+			return;
+		}
+		setRootUserInputRequest(threadId, null);
+	}, [setRootUserInputRequest]);
+
 	const { sendMessage, abortActiveStream } = useStreamingChatControls({
 		shell,
 		currentId,
 		setCurrentId,
 		loadMessages,
 		refreshThreads,
+		restoreAgentSession,
 		defaultModel,
 		composerMode,
 		teamSettings,
@@ -853,6 +946,7 @@ function AppMainWorkspaceInner() {
 		flashComposerAttachErr,
 		t,
 		clearAgentReviewForThread,
+		clearRootUserInputRequest,
 		startTeamSession,
 		clearPlanQuestion,
 		clearMistakeLimitRequest: () => setMistakeLimitRequest(null),
@@ -875,6 +969,7 @@ function AppMainWorkspaceInner() {
 		setStreaming,
 		setStreamingThinking,
 		setToolApprovalRequest,
+		setRootUserInputRequest,
 		setPlanQuestion,
 		setPlanQuestionRequestId,
 		setMistakeLimitRequest,
@@ -892,11 +987,13 @@ function AppMainWorkspaceInner() {
 		setExecutedPlanKeys,
 		setAgentReviewPendingByThread,
 		setMessages,
+		clearRootUserInputRequest,
 		setParsedPlan,
 		setPlanFilePath,
 		setPlanFileRelPath,
 		loadMessages,
 		refreshThreads,
+		restoreAgentSession,
 		applyTeamPayload,
 	});
 
@@ -1850,13 +1947,19 @@ function AppMainWorkspaceInner() {
 	 * 避免 messages 变化后 useEffect 级联触发额外 render 轮次。
 	 */
 	const onMessagesLoaded = useCallback(
-		(msgs: ChatMessage[], threadId: string, extra?: { teamSession?: unknown }) => {
+		(msgs: ChatMessage[], threadId: string, extra?: { teamSession?: unknown; agentSession?: unknown }) => {
 			restoreFileChangesState(threadId, msgs, threadId);
 			if (extra?.teamSession && typeof extra.teamSession === 'object') {
 				restoreTeamSession(threadId, extra.teamSession as import('./hooks/useTeamSession').TeamSessionSnapshot);
 			}
+			if (extra?.agentSession && typeof extra.agentSession === 'object') {
+				restoreAgentSession(threadId, extra.agentSession as import('./agentSessionTypes').AgentSessionSnapshot);
+				if (shell) {
+					void shell.invoke('agent:getSession', threadId);
+				}
+			}
 		},
-		[restoreFileChangesState, restoreTeamSession]
+		[restoreFileChangesState, restoreTeamSession, restoreAgentSession, shell]
 	);
 
 	useEffect(() => {
@@ -2497,6 +2600,8 @@ function AppMainWorkspaceInner() {
 			}
 			await shell.invoke('threads:delete', id, threadWorkspaceRoot ?? undefined);
 			clearPersistedAgentFileChanges(id);
+			clearTeamSession(id);
+			clearAgentSession(id);
 			planQuestionDismissedByThreadRef.current.delete(id);
 			await refreshThreads();
 		},
@@ -2507,6 +2612,8 @@ function AppMainWorkspaceInner() {
 			awaitingReply,
 			refreshThreads,
 			workspace,
+			clearTeamSession,
+			clearAgentSession,
 			clearStreamingToolPreviewNow,
 			resetLiveAgentBlocks,
 		]
@@ -2713,6 +2820,50 @@ function AppMainWorkspaceInner() {
 		getCurrentPlanQuestionState,
 		recordPlanQuestionDismissed,
 	]);
+
+	const getCurrentUserInputRequest = useCallback(() => {
+		const threadId = currentIdRef.current;
+		if (!threadId) {
+			return null;
+		}
+		if (composerMode === 'team') {
+			return getTeamSession(threadId)?.pendingUserInput ?? null;
+		}
+		return rootUserInputRequestsByThread[threadId] ?? null;
+	}, [composerMode, currentIdRef, getTeamSession, rootUserInputRequestsByThread]);
+
+	const onUserInputSubmit = useCallback(
+		async (answers: Record<string, string>) => {
+			const threadId = currentIdRef.current;
+			const request = getCurrentUserInputRequest();
+			if (!threadId || !request?.requestId || !shell) {
+				return;
+			}
+			const result = (await shell.invoke('agent:userInputRespond', {
+				requestId: request.requestId,
+				answers,
+			})) as { ok?: boolean; error?: string };
+			if (!result?.ok) {
+				showTransientToast(false, result?.error || t('app.chatSendFailed'));
+				return;
+			}
+			if (composerMode === 'team') {
+				clearTeamPendingUserInput(threadId);
+			}
+			clearRootUserInputRequest(threadId);
+			showTransientToast(true, t('agent.userInput.submittedToast'));
+		},
+		[
+			clearRootUserInputRequest,
+			clearTeamPendingUserInput,
+			composerMode,
+			currentIdRef,
+			getCurrentUserInputRequest,
+			shell,
+			showTransientToast,
+			t,
+		]
+	);
 
 
 	const onPlanBuild = useCallback(
@@ -3737,6 +3888,7 @@ function AppMainWorkspaceInner() {
 	const showPlanFileEditorChrome =
 		hasConversation && !!currentId && isPlanMdPath(filePath.trim());
 	const teamSession = useMemo(() => getTeamSession(currentId), [getTeamSession, currentId]);
+	const agentSession = useMemo(() => getAgentSession(currentId), [getAgentSession, currentId]);
 	const activePlanQuestion = useMemo(
 		() =>
 			resendFromUserIndex !== null
@@ -3745,6 +3897,17 @@ function AppMainWorkspaceInner() {
 					? teamSession?.pendingQuestion ?? planQuestion
 					: planQuestion,
 		[composerMode, teamSession, planQuestion, resendFromUserIndex]
+	);
+	const activeUserInputRequest = useMemo(
+		() =>
+			resendFromUserIndex !== null
+				? null
+				: composerMode === 'team'
+					? teamSession?.pendingUserInput ?? null
+					: currentId
+						? rootUserInputRequestsByThread[currentId] ?? null
+						: null,
+		[composerMode, currentId, resendFromUserIndex, rootUserInputRequestsByThread, teamSession]
 	);
 	const hasActiveTeamSidebarContent = useMemo(
 		() => composerMode === 'team' && buildTeamWorkflowItems(teamSession).length > 0,
@@ -4474,17 +4637,6 @@ function AppMainWorkspaceInner() {
 		return idx;
 	}, [displayMessages]);
 
-	/** 中间消息区滚动时，最后一条用户消息 sticky 在视口顶部（参考 Cursor） */
-	const lastUserMessageIndex = useMemo(() => {
-		let idx = -1;
-		for (let j = 0; j < displayMessages.length; j++) {
-			if (displayMessages[j]!.role === 'user') {
-				idx = j;
-			}
-		}
-		return idx;
-	}, [displayMessages]);
-
 	const displayMessagesRef = useRef(displayMessages);
 	displayMessagesRef.current = displayMessages;
 
@@ -4974,6 +5126,145 @@ function AppMainWorkspaceInner() {
 			});
 		},
 		[currentId, markTeamPlanProposalDecided, shell]
+	);
+
+	const onSelectAgentSession = useCallback(
+		(agentId: string | null) => {
+			if (!currentId) {
+				return;
+			}
+			setSelectedAgent(currentId, agentId);
+			setAgentRightSidebarView('agents');
+			if (layoutMode === 'agent') {
+				setAgentRightSidebarOpen(true);
+			}
+		},
+		[currentId, setSelectedAgent, layoutMode]
+	);
+
+	const onSendAgentInput = useCallback(
+		async (agentId: string, message: string, interrupt: boolean) => {
+			if (!currentId || !shell) {
+				return;
+			}
+			const result = (await shell.invoke('agent:sendInput', {
+				threadId: currentId,
+				agentId,
+				message,
+				interrupt,
+			})) as { ok?: boolean; error?: string };
+			if (!result?.ok) {
+				showTransientToast(false, result?.error || t('app.chatSendFailed'));
+				return;
+			}
+			setSelectedAgent(currentId, agentId);
+			showTransientToast(true, t('agent.session.sentToast'));
+		},
+		[currentId, shell, showTransientToast, t, setSelectedAgent]
+	);
+
+	const onSubmitAgentUserInput = useCallback(
+		async (requestId: string, answers: Record<string, string>) => {
+			if (!currentId || !shell) {
+				return;
+			}
+			const result = (await shell.invoke('agent:userInputRespond', {
+				requestId,
+				answers,
+			})) as { ok?: boolean; error?: string };
+			if (!result?.ok) {
+				showTransientToast(false, result?.error || t('app.chatSendFailed'));
+				return;
+			}
+			showTransientToast(true, t('agent.userInput.submittedToast'));
+		},
+		[currentId, shell, showTransientToast, t]
+	);
+
+	const onWaitAgent = useCallback(
+		async (agentId: string) => {
+			if (!currentId || !shell) {
+				return;
+			}
+			const result = (await shell.invoke('agent:wait', {
+				threadId: currentId,
+				agentIds: [agentId],
+				timeoutMs: 30000,
+			})) as { ok?: boolean; timedOut?: boolean; statuses?: Record<string, { status: string }> };
+			if (!result?.ok) {
+				showTransientToast(false, t('agent.session.waitFailed'));
+				return;
+			}
+			const status = result.statuses?.[agentId]?.status ?? 'running';
+			showTransientToast(
+				true,
+				result.timedOut ? t('agent.session.waitTimedOut') : t('agent.session.waitDone', { status })
+			);
+		},
+		[currentId, shell, showTransientToast, t]
+	);
+
+	const onResumeAgent = useCallback(
+		async (agentId: string) => {
+			if (!currentId || !shell) {
+				return;
+			}
+			const result = (await shell.invoke('agent:resume', { threadId: currentId, agentId })) as {
+				ok?: boolean;
+				error?: string;
+			};
+			if (!result?.ok) {
+				showTransientToast(false, result?.error || t('agent.session.resumeFailed'));
+				return;
+			}
+			showTransientToast(true, t('agent.session.resumeDone'));
+		},
+		[currentId, shell, showTransientToast, t]
+	);
+
+	const onCloseAgent = useCallback(
+		async (agentId: string) => {
+			if (!currentId || !shell) {
+				return;
+			}
+			const result = (await shell.invoke('agent:close', { threadId: currentId, agentId })) as {
+				ok?: boolean;
+				error?: string;
+			};
+			if (!result?.ok) {
+				showTransientToast(false, result?.error || t('agent.session.closeFailed'));
+				return;
+			}
+			showTransientToast(true, t('agent.session.closeDone'));
+		},
+		[currentId, shell, showTransientToast, t]
+	);
+
+	const onOpenAgentTranscript = useCallback(
+		(absPath: string) => {
+			if (!shell || !absPath.trim()) {
+				return;
+			}
+			void shell.invoke('shell:openDefault', absPath.trim());
+		},
+		[shell]
+	);
+
+	const onSubAgentToastClick = useCallback(
+		async (threadId: string, agentId: string) => {
+			if (!shell) {
+				return;
+			}
+			if (threadId !== currentIdRef.current) {
+				await shell.invoke('threads:select', threadId);
+				setCurrentId(threadId);
+				await loadMessages(threadId, onMessagesLoaded);
+			}
+			setSelectedAgent(threadId, agentId);
+			setAgentRightSidebarView('agents');
+			setAgentRightSidebarOpen(true);
+		},
+		[shell, loadMessages, onMessagesLoaded, setSelectedAgent]
 	);
 
 	useEffect(() => {
@@ -5505,7 +5796,6 @@ function AppMainWorkspaceInner() {
 		messagesThreadId,
 		currentId,
 		lastAssistantMessageIndex,
-		lastUserMessageIndex,
 		messagesViewportRef,
 		messagesTrackRef,
 		inlineResendRootRef,
@@ -5545,6 +5835,8 @@ function AppMainWorkspaceInner() {
 		planQuestion: activePlanQuestion,
 		onPlanQuestionSubmit,
 		onPlanQuestionSkip,
+		userInputRequest: activeUserInputRequest,
+		onUserInputSubmit,
 		wizardPending,
 		setWizardPending,
 		executeSkillCreatorSend,
@@ -5624,6 +5916,15 @@ function AppMainWorkspaceInner() {
 		onOpenTeamAgentFile: onAgentConversationOpenFile,
 		revertedPaths: revertedFiles,
 		revertedChangeKeys,
+		agentSession,
+		currentThreadId: currentId,
+		onSelectAgentSession,
+		onSendAgentInput,
+		onSubmitAgentUserInput,
+		onWaitAgent,
+		onResumeAgent,
+		onCloseAgent,
+		onOpenAgentTranscript,
 	});
 
 	const editorMainPanelProps = useEditorMainPanelProps({
@@ -5748,6 +6049,11 @@ function AppMainWorkspaceInner() {
 					agentRightSidebarOpen={agentRightSidebarOpen}
 					agentRightSidebarView={agentRightSidebarView}
 					toggleAgentRightSidebarView={toggleAgentRightSidebarView}
+					onOpenBrowserWindow={() => {
+						void shell?.invoke('browser:openWindow').catch(() => {
+							/* ignore */
+						});
+					}}
 					onLaunchWorkspaceWithTool={(tool) => {
 						void launchWorkspaceWithTool(tool);
 					}}
@@ -5782,6 +6088,7 @@ function AppMainWorkspaceInner() {
 		agentRightSidebarOpen,
 		agentRightSidebarView,
 		toggleAgentRightSidebarView,
+		shell,
 		launchWorkspaceWithTool,
 		agentChatPanelProps,
 		editorMainPanelProps,
@@ -6161,6 +6468,7 @@ function AppMainWorkspaceInner() {
 				saveToastKey={saveToastKey}
 				subAgentBgToast={subAgentBgToast}
 				composerAttachErr={composerAttachErr}
+				onSubAgentToastClick={onSubAgentToastClick}
 			/>
 
 
