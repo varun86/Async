@@ -16631,6 +16631,28 @@ select.ref-settings-native-select:focus {
 	gap: 4px;
 }
 
+.ref-mcp-server-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 28px;
+	padding: 0 8px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.04);
+	color: var(--void-fg-2);
+	font-size: 11px;
+}
+
+.ref-mcp-server-toggle input {
+	margin: 0;
+	accent-color: var(--color-accent, #4f8cff);
+	cursor: pointer;
+}
+
+.ref-mcp-server-toggle input:disabled {
+	cursor: wait;
+}
+
 .ref-mcp-server-action {
 	display: inline-flex;
 	align-items: center;
@@ -16673,20 +16695,30 @@ select.ref-settings-native-select:focus {
 	background: rgba(34, 197, 94, 0.12);
 }
 
+.ref-mcp-status--not-started {
+	color: var(--void-fg-2);
+	background: rgba(255, 255, 255, 0.04);
+}
+
 .ref-mcp-status--connecting {
 	color: #fcd34d;
 	background: rgba(250, 204, 21, 0.12);
 	animation: ref-mcp-status-pulse 1.5s ease-in-out infinite;
 }
 
-.ref-mcp-status--disconnected {
-	color: var(--void-fg-3);
-	background: rgba(255, 255, 255, 0.04);
+.ref-mcp-status--stopped {
+	color: #fdba74;
+	background: rgba(251, 146, 60, 0.12);
 }
 
 .ref-mcp-status--error {
 	color: #fca5a5;
 	background: rgba(248, 113, 113, 0.12);
+}
+
+.ref-mcp-status--disabled {
+	color: rgba(255, 255, 255, 0.45);
+	background: rgba(255, 255, 255, 0.03);
 }
 
 @keyframes ref-mcp-status-pulse {

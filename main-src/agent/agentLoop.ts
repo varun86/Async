@@ -469,7 +469,8 @@ function appendMessagesToAnthropicConversation(conversation: MessageParam[], mes
 }
 
 /**
- * 为工具会话准备 MCP 连接：Agent 需要动态工具；Plan 仅需连接以便 ListMcpResourcesTool / ReadMcpResourceTool。
+ * 为工具会话准备 MCP 配置与已连客户端视图。
+ * 不在发送前自动拉起未连接 MCP，避免非已连接服务拖慢对话发送。
  */
 async function prepareMcpConnectionsForSession(
 	composerMode: ComposerMode,
@@ -482,11 +483,8 @@ async function prepareMcpConnectionsForSession(
 	const mcpT0 = Date.now();
 	const mgr = getMcpManager();
 	mgr.loadConfigs(getEffectiveMcpServerConfigs(userMcpServers, workspaceRoot));
-	await mgr.startAll().catch((e) => {
-		console.warn('[AgentLoop] MCP startAll:', e instanceof Error ? e.message : e);
-	});
 	console.log(
-		`[AgentLoop] MCP prepare done (${Date.now() - mcpT0}ms) mode=${composerMode} — slow here usually means MCP servers starting or timing out`
+		`[AgentLoop] MCP prepare done (${Date.now() - mcpT0}ms) mode=${composerMode} connected=${mgr.getConnectedClients().length} — disconnected MCP servers are not auto-started during send`
 	);
 }
 

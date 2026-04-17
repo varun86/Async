@@ -48,6 +48,7 @@ let runtimeCache:
 	| {
 			key: string;
 			version: number;
+			overrideKey: string;
 			state: PluginRuntimeState;
 	  }
 	| null = null;
@@ -176,6 +177,45 @@ function buildContributionKey(scope: PluginInstallScope, installDir: string): st
 
 function relativePluginPath(root: string, filePath: string): string {
 	return path.relative(root, filePath).replace(/\\/g, '/');
+}
+
+function pluginMcpOverridesCacheKey(
+	overrides: ReturnType<typeof getSettings>['pluginMcpOverrides']
+): string {
+	if (!overrides || typeof overrides !== 'object') {
+		return '';
+	}
+	return Object.entries(overrides)
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([id, override]) => {
+			if (!override || typeof override !== 'object' || Array.isArray(override)) {
+				return `${id}::`;
+			}
+			const enabled = typeof override.enabled === 'boolean' ? String(override.enabled) : '';
+			const autoStart = typeof override.autoStart === 'boolean' ? String(override.autoStart) : '';
+			return `${id}:${enabled}:${autoStart}`;
+		})
+		.join('|');
+}
+
+function applyPluginMcpOverrides(
+	servers: McpServerConfig[],
+	overrides: ReturnType<typeof getSettings>['pluginMcpOverrides']
+): McpServerConfig[] {
+	if (!overrides || typeof overrides !== 'object' || servers.length === 0) {
+		return servers;
+	}
+	return servers.map((server) => {
+		const override = overrides[server.id];
+		if (!override || typeof override !== 'object' || Array.isArray(override)) {
+			return server;
+		}
+		return {
+			...server,
+			...(typeof override.enabled === 'boolean' ? { enabled: override.enabled } : {}),
+			...(typeof override.autoStart === 'boolean' ? { autoStart: override.autoStart } : {}),
+		};
+	});
 }
 
 function collectSkillItemsFromDir(
@@ -551,20 +591,31 @@ function aggregatePluginState(plugins: PluginContribution[]): PluginRuntimeState
 export function getPluginRuntimeState(workspaceRoot: string | null): PluginRuntimeState {
 	const cacheKey = normalizeWorkspaceKey(workspaceRoot);
 	const version = getPluginDiscoveryVersion();
-	if (runtimeCache && runtimeCache.key === cacheKey && runtimeCache.version === version) {
+	const settings = getSettings();
+	const overrideKey = pluginMcpOverridesCacheKey(settings.pluginMcpOverrides);
+	if (
+		runtimeCache &&
+		runtimeCache.key === cacheKey &&
+		runtimeCache.version === version &&
+		runtimeCache.overrideKey === overrideKey
+	) {
 		return runtimeCache.state;
 	}
-	const settings = getSettings();
 	const userPluginsRoot = resolveUserPluginsRoot(settings);
 	const projectPluginsRoot = workspaceRoot ? path.join(path.resolve(workspaceRoot), '.async', 'plugins') : null;
 	const plugins = [
 		...scanInstalledPluginDirs(userPluginsRoot, 'user'),
 		...scanInstalledPluginDirs(projectPluginsRoot, 'project'),
 	];
-	const state = aggregatePluginState(plugins);
+	const baseState = aggregatePluginState(plugins);
+	const state: PluginRuntimeState = {
+		...baseState,
+		mcpServers: applyPluginMcpOverrides(baseState.mcpServers, settings.pluginMcpOverrides),
+	};
 	runtimeCache = {
 		key: cacheKey,
 		version,
+		overrideKey,
 		state,
 	};
 	return state;

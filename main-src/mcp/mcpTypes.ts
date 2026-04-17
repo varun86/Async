@@ -58,7 +58,7 @@ export type McpPromptDef = {
 /** MCP Server 状态 */
 export type McpServerStatus = {
 	id: string;
-	status: 'disconnected' | 'connecting' | 'connected' | 'error';
+	status: 'not_started' | 'connecting' | 'connected' | 'stopped' | 'disconnected' | 'error' | 'disabled';
 	error?: string;
 	tools: McpToolDef[];
 	resources: McpResourceDef[];

@@ -165,4 +165,64 @@ Design the system.`
 			expect.stringMatching(/^plugin-command:/),
 		]);
 	});
+
+	it('applies persisted plugin MCP overrides without requiring a plugin rescan', () => {
+		const userData = makeTempRoot('async-plugin-runtime-settings-');
+		const userPluginsRoot = makeTempRoot('async-plugin-runtime-plugins-');
+		initSettingsStore(userData);
+		patchSettings({
+			plugins: {
+				userPluginsDir: userPluginsRoot,
+			},
+		});
+
+		const pluginRoot = path.join(userPluginsRoot, 'ecc');
+		writeFile(
+			path.join(pluginRoot, '.codex-plugin', 'plugin.json'),
+			JSON.stringify(
+				{
+					name: 'ecc',
+					mcpServers: './.mcp.json',
+				},
+				null,
+				2
+			)
+		);
+		writeFile(
+			path.join(pluginRoot, '.mcp.json'),
+			JSON.stringify(
+				{
+					mcpServers: {
+						github: {
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-github'],
+						},
+					},
+				},
+				null,
+				2
+			)
+		);
+
+		bumpPluginDiscoveryVersion();
+		const initial = getPluginRuntimeState(null);
+		expect(initial.mcpServers).toHaveLength(1);
+		const github = initial.mcpServers[0];
+		expect(github?.enabled).toBe(true);
+		expect(github?.autoStart).toBe(true);
+
+		patchSettings({
+			pluginMcpOverrides: {
+				[github!.id]: {
+					enabled: false,
+					autoStart: false,
+				},
+			},
+		});
+
+		const overridden = getPluginRuntimeState(null);
+		expect(overridden.mcpServers[0]?.id).toBe(github?.id);
+		expect(overridden.mcpServers[0]?.enabled).toBe(false);
+		expect(overridden.mcpServers[0]?.autoStart).toBe(false);
+	});
 });
