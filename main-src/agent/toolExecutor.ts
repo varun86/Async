@@ -12,25 +12,19 @@ import { resolveWorkspacePath, isPathInsideRoot } from '../workspace.js';
 import { formatSymbolSearchResults, searchWorkspaceSymbols, ensureSymbolIndexLoaded } from '../workspaceSymbolIndex.js';
 import type { ToolCall, ToolResult } from './agentTools.js';
 import type { WorkspaceLspManager } from '../lsp/workspaceLspManager.js';
-import type { AgentLoopOptions, AgentLoopHandlers } from './agentLoop.js';
+import type { AgentLoopOptions } from './agentLoop.js';
 import type { ShellSettings } from '../settingsStore.js';
-import { getMcpManager } from '../mcp/index.js';
-import type { McpToolResult } from '../mcp/mcpTypes.js';
+import { getMcpManager } from '../mcp';
+import type { McpToolResult } from '../mcp';
 import type { NestedAgentStreamEmit } from '../ipc/nestedAgentStream.js';
-import { assembleAgentToolPool } from './agentToolPool.js';
 import { executeAskPlanQuestionTool, type TeamPlanQuestionRoleScope } from './planQuestionTool.js';
 import { executePlanSubmitDraftTool } from './planDraftTool.js';
 import { executeTeamPlanDecideTool } from './teamPlanDecideTool.js';
 import { executeTeamEscalateToLeadTool } from './teamEscalateTool.js';
 import { executeTeamPeerRequestTool } from './teamPeerRequestTool.js';
 import { executeTeamReplyToPeerTool } from './teamReplyToPeerTool.js';
-import type { ComposerMode } from '../llm/composerMode.js';
-import { buildSubagentSystemAppend, findConfiguredSubagent, resolveSubagentProfile } from './subagentProfile.js';
 import { shouldRunAgentInBackground } from './agentForkPolicy.js';
 import { windowsPowerShellUtf8Command } from '../winUtf8.js';
-import { ensureAgentMemoryDirExists, loadAgentMemoryPrompt } from './agentMemory.js';
-import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.js';
-import { extractMemoriesToDir } from '../services/extractMemories/extractMemories.js';
 import { setTodos, type TodoItem } from './todoStore.js';
 import { minimatch } from 'minimatch';
 import * as gitService from '../gitService.js';
@@ -55,10 +49,8 @@ import {
 	stopBrowserCaptureForHostId,
 } from '../browser/browserCapture.js';
 import {
-	attachManagedAgentEmitter,
 	closeManagedAgent,
 	getManagedAgentSession,
-	getManagedAgentTranscriptPath,
 	resumeManagedAgent,
 	sendInputToManagedAgent,
 	spawnManagedAgent,
@@ -66,11 +58,6 @@ import {
 	waitForManagedAgents,
 	type ManagedAgentUiEvent,
 } from './managedSubagents.js';
-
-/** @deprecated 已由 WorkspaceLspManager 取代 */
-export function setToolLspSession(_session: unknown): void {
-	/* no-op */
-}
 
 export type SubAgentBackgroundDonePayload = {
 	parentToolCallId: string;
@@ -116,10 +103,7 @@ export function setDelegateContext(
 export function clearDelegateContext(): void {
 	_delegateContext = null;
 }
-
-/** 与 Claude `AgentTool` 一致：主名 `Agent`，兼容旧会话/权限里的 `Task`。 */
-const SUBAGENT_TOOL_NAMES = new Set(['Agent', 'Task']);
-
+new Set(['Agent', 'Task']);
 function coerceAgentDelegateArgs(call: ToolCall): {
 	task: string;
 	context: string;
@@ -188,12 +172,6 @@ function formatMcpToolResultForAgent(result: McpToolResult): string {
 	const text = parts.join('\n\n').trim();
 	return text || '(empty MCP result)';
 }
-
-const MAX_MCP_RESOURCE_LIST_CHARS = 100_000;
-/** ReadMcpResource：与 Claude `ReadMcpResourceTool.maxResultSizeChars` 一致 */
-const MAX_MCP_RESOURCE_READ_CHARS = 100_000;
-/** Bash：与 Claude `BashTool.maxResultSizeChars` 一致 */
-const MAX_BASH_OUTPUT_CHARS = 30_000;
 
 function makeBrowserCommandId(): string {
 	return `browser-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -884,10 +862,7 @@ async function executeListMcpResources(call: ToolCall): Promise<ToolResult> {
 			});
 		}
 	}
-	let text = JSON.stringify(rows, null, 2);
-	if (text.length > MAX_MCP_RESOURCE_LIST_CHARS) {
-		text = text.slice(0, MAX_MCP_RESOURCE_LIST_CHARS) + '\n... (truncated)';
-	}
+	const text = JSON.stringify(rows, null, 2);
 	return { toolCallId: call.id, name: call.name, content: text || '[]', isError: false };
 }
 
@@ -923,11 +898,7 @@ async function executeReadMcpResource(call: ToolCall, execCtx: ToolExecutionCont
 	try {
 		const raw = await client.readResource(uri, execCtx.signal);
 		const text = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
-		const clipped =
-			text.length > MAX_MCP_RESOURCE_READ_CHARS
-				? text.slice(0, MAX_MCP_RESOURCE_READ_CHARS) + '\n... (truncated)'
-				: text;
-		return { toolCallId: call.id, name: call.name, content: clipped, isError: false };
+		return { toolCallId: call.id, name: call.name, content: text, isError: false };
 	} catch (e) {
 		if (e instanceof Error && e.name === 'AbortError') {
 			throw e;
@@ -1953,9 +1924,6 @@ async function executeCommand(
 		if (stdout) output += stdout;
 		if (stderr) output += (output ? '\n--- stderr ---\n' : '') + stderr;
 		if (!output.trim()) output = '(command completed with no output)';
-		if (output.length > MAX_BASH_OUTPUT_CHARS) {
-			output = output.slice(0, MAX_BASH_OUTPUT_CHARS) + '\n... (truncated)';
-		}
 		return { toolCallId: call.id, name: call.name, content: output, isError: false };
 	} catch (e: unknown) {
 		if (e instanceof Error && e.name === 'AbortError') {
@@ -1967,9 +1935,6 @@ async function executeCommand(
 		if (err.stdout) output += err.stdout;
 		if (err.stderr) output += (output ? '\n--- stderr ---\n' : '') + err.stderr;
 		if (!output.trim()) output = err.message ?? String(e);
-		if (output.length > MAX_BASH_OUTPUT_CHARS) {
-			output = output.slice(0, MAX_BASH_OUTPUT_CHARS) + '\n... (truncated)';
-		}
 		return { toolCallId: call.id, name: call.name, content: `Exit code ${err.code ?? 'unknown'}\n${output}`, isError: true };
 	}
 }
@@ -2214,8 +2179,6 @@ function executeTodoWrite(call: ToolCall, execCtx: ToolExecutionContext): ToolRe
 	};
 }
 
-const LSP_MAX_OUTPUT_CHARS = 100_000;
-
 const LSP_OPERATION_SET = new Set([
 	'goToDefinition',
 	'findReferences',
@@ -2230,11 +2193,6 @@ const LSP_OPERATION_SET = new Set([
 ]);
 
 const LSP_POSITION_OPTIONAL = new Set(['getDiagnostics', 'workspaceSymbol']);
-
-function clampLspText(s: string): string {
-	if (s.length <= LSP_MAX_OUTPUT_CHARS) return s;
-	return s.slice(0, LSP_MAX_OUTPUT_CHARS) + '\n... (truncated)';
-}
 
 function lspRelUriPath(uri: string, workspaceRoot: string): string {
 	if (!uri.startsWith('file:')) return uri;
@@ -2520,7 +2478,7 @@ async function executeLspTool(call: ToolCall, execCtx: ToolExecutionContext): Pr
 			default:
 				out = `Unsupported operation: ${op}`;
 		}
-		return { toolCallId: call.id, name: call.name, content: clampLspText(out), isError: false };
+		return { toolCallId: call.id, name: call.name, content: out, isError: false };
 	} catch (e) {
 		return {
 			toolCallId: call.id,

@@ -322,6 +322,8 @@ export type TeamOrchestratorInput = {
 	workspaceLspManager?: WorkspaceLspManager | null;
 	hostWebContentsId?: number | null;
 	toolHooks?: ToolExecutionHooks;
+	discoveredDeferredToolNames?: string[];
+	onDiscoveredDeferredToolsChange?: (names: string[]) => void;
 	emit: (evt: TeamEmit) => void;
 	onDone: (fullText: string, usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number }, teamSnapshot?: TeamSessionSnapshot) => void;
 	onError: (message: string) => void;
@@ -846,6 +848,8 @@ async function llmPlanTasks(params: {
 		hostWebContentsId: params.hostWebContentsId ?? null,
 		threadId,
 		toolHooks,
+		discoveredDeferredToolNames,
+		onDiscoveredDeferredToolsChange,
 		teamToolRoleScope: teamLeadScope,
 	};
 
@@ -1194,6 +1198,8 @@ async function runPreflightReviewerAgent(params: {
 		hostWebContentsId: params.hostWebContentsId ?? null,
 		threadId,
 		toolHooks,
+		discoveredDeferredToolNames,
+		onDiscoveredDeferredToolsChange,
 		teamToolRoleScope: teamRoleScope,
 	};
 
@@ -1346,6 +1352,8 @@ async function runReviewerAgent(params: {
 		hostWebContentsId: params.hostWebContentsId ?? null,
 		threadId,
 		toolHooks,
+		discoveredDeferredToolNames,
+		onDiscoveredDeferredToolsChange,
 		teamToolRoleScope: teamRoleScope,
 	};
 
@@ -1518,6 +1526,8 @@ async function runOneSpecialist(params: {
 		hostWebContentsId: params.hostWebContentsId ?? null,
 		threadId,
 		toolHooks,
+		discoveredDeferredToolNames,
+		onDiscoveredDeferredToolsChange,
 		teamToolRoleScope: teamRoleScope,
 		beforeRoundMessages: pullPeerMailboxMessages,
 	};
@@ -1753,7 +1763,7 @@ export async function runTeamSession(input: TeamOrchestratorInput): Promise<void
 	const {
 		settings, threadId, messages, modelSelection, resolvedModel,
 		agentSystemAppend, signal, thinkingLevel, workspaceRoot, workspaceLspManager,
-		toolHooks, emit, onDone, onError,
+		toolHooks, discoveredDeferredToolNames, onDiscoveredDeferredToolsChange, emit, onDone, onError,
 	} = input;
 
 	try {

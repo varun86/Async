@@ -19,6 +19,7 @@ const TOOL_ICONS: Record<string, string> = {
 	execute_command: '⚡',
 	ListMcpResourcesTool: '📎',
 	ReadMcpResourceTool: '📎',
+	ToolSearch: '🧭',
 	Agent: '🤖',
 	delegate_task: '🤖',
 	Task: '🤖',
@@ -58,6 +59,8 @@ function summarizeArgs(name: string, args: Record<string, unknown>): string {
 			return String(args.server ?? '') || '(all servers)';
 		case 'ReadMcpResourceTool':
 			return `${String(args.server ?? '')} ${String(args.uri ?? '')}`.trim();
+		case 'ToolSearch':
+			return String(args.query ?? args.pattern ?? args.term ?? '') || '(all deferred tools)';
 		case 'Agent':
 		case 'delegate_task':
 		case 'Task':

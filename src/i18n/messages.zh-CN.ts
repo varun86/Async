@@ -901,6 +901,7 @@ export const messagesZhCN: Record<string, string> = {
 	'agent.tool.get_diagnostics': '诊断',
 	'agent.tool.ListMcpResourcesTool': '列出 MCP 资源',
 	'agent.tool.ReadMcpResourceTool': '读取 MCP 资源',
+	'agent.tool.ToolSearch': '搜索延迟工具',
 	'agent.tool.search_files': '搜索文件',
 	'agent.tool.Bash': 'Bash',
 	'agent.tool.execute_command': '执行命令',

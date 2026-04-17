@@ -90,6 +90,8 @@ import {
 	getExecutedPlanFileKeys,
 	markPlanFileExecuted,
 	incrementThreadAgentToolCallCount,
+	getDiscoveredDeferredToolNames,
+	saveDiscoveredDeferredToolNames,
 	saveTeamSession,
 	getAgentSession,
 	type ChatMessage,
@@ -733,6 +735,9 @@ function runChatStream(
 						workspaceRoot,
 						workspaceLspManager,
 						hostWebContentsId: win.webContents.id,
+						discoveredDeferredToolNames: getDiscoveredDeferredToolNames(threadId),
+						onDiscoveredDeferredToolsChange: (names: string[]) =>
+							saveDiscoveredDeferredToolNames(threadId, names),
 						emit: (evt) => send(evt),
 						onDone: (full, usage, teamSnapshot) => {
 							updateLastAssistant(threadId, full);
@@ -791,6 +796,7 @@ function runChatStream(
 					mistakeLimitWaiters
 				);
 			const ag = getSettings().agent;
+			const discoveredDeferredTools = getDiscoveredDeferredToolNames(threadId);
 			const customToolHandlers = {
 					request_user_input: createRequestUserInputToolHandler({
 						threadId,
@@ -819,6 +825,9 @@ function runChatStream(
 					workspaceRoot,
 					workspaceLspManager,
 					hostWebContentsId: win.webContents.id,
+					discoveredDeferredToolNames: discoveredDeferredTools,
+					onDiscoveredDeferredToolsChange: (names: string[]) =>
+						saveDiscoveredDeferredToolNames(threadId, names),
 				};
 			try {
 				setDelegateContext(
@@ -887,6 +896,9 @@ function runChatStream(
 						workspaceLspManager,
 						threadId,
 						hostWebContentsId: win.webContents.id,
+						discoveredDeferredToolNames: discoveredDeferredTools,
+						onDiscoveredDeferredToolsChange: (names: string[]) =>
+							saveDiscoveredDeferredToolNames(threadId, names),
 						toolHooks: {
 							beforeWrite: ({ path, previousContent }) => {
 								const snapshots = agentRevertSnapshotsByThread.get(threadId);

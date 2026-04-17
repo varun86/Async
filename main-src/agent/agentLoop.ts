@@ -19,7 +19,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { MessageParam, ContentBlockParam, ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import type { ChatMessage } from '../threadStore.js';
 import type { ShellSettings, ModelRequestParadigm, ThinkingLevel } from '../settingsStore.js';
-import { assembleAgentToolPool, filterMcpToolsByDenyPrefixes } from './agentToolPool.js';
+import {
+	assembleAgentToolPool,
+	assembleVisibleAgentToolPool,
+	filterMcpToolsByDenyPrefixes,
+} from './agentToolPool.js';
 import type { TurnTokenUsage } from '../llm/types.js';
 import { llmSdkResponseHeadTimeoutMs } from '../llm/sdkResponseHeadTimeoutMs.js';
 import { withLlmTransportRetry } from '../llm/llmTransportRetry.js';
@@ -61,6 +65,7 @@ import { repairAgentThreadMessagesForApi } from './agentToolProtocolRepair.js';
 import { StructuredAssistantBuilder } from './structuredAssistantBuilder.js';
 import { parseAgentAssistantPayload } from '../../src/agentStructuredMessage.js';
 import { repairAnthropicToolPairing, repairOpenAIToolPairing } from './apiConversationRepair.js';
+import { createToolSearchToolHandler } from './toolSearchTool.js';
 import {
 	mergeAdjacentAnthropicUserMessages,
 	mergeAdjacentOpenAIUserMessages,
@@ -73,6 +78,7 @@ import {
 } from './structuredAssistantToApi.js';
 import type { MistakeLimitContext, MistakeLimitDecision } from './mistakeLimitGate.js';
 import { resolveStreamTimeouts, createStreamTimeoutManager } from '../llm/streamTimeouts.js';
+import { persistLargeToolResultIfNeeded } from './toolResultPersistence.js';
 
 export type { MistakeLimitContext, MistakeLimitDecision } from './mistakeLimitGate.js';
 
@@ -88,6 +94,7 @@ const READ_TOOLS_SKIP_INPUT_DELTA = new Set([
 	'Grep',
 	'list_dir',
 	'LSP',
+	'ToolSearch',
 	'ListMcpResourcesTool',
 	'ReadMcpResourceTool',
 	'ask_plan_question',
@@ -213,6 +220,10 @@ export type AgentLoopOptions = {
 			execCtx: ToolExecutionContext
 		) => Promise<ToolResult> | ToolResult
 	>;
+	/** 线程级延迟工具发现状态（当前主要用于动态 MCP 工具）。 */
+	discoveredDeferredToolNames?: string[];
+	/** 当 ToolSearch 加载了新工具后回调，用于把状态持久化到线程。 */
+	onDiscoveredDeferredToolsChange?: (names: string[]) => void;
 	/** 在 executeTool 之前调用；用于 shell 写入等需用户确认的闸门 */
 	beforeExecuteTool?: (call: ToolCall) => Promise<BeforeExecuteToolResult>;
 	thinkingLevel?: ThinkingLevel;
@@ -321,6 +332,19 @@ function agentToolDefsForLoop(
 	});
 }
 
+function visibleAgentToolDefsForLoop(
+	composerMode: ComposerMode,
+	settings: ShellSettings,
+	discoveredDeferredToolNames: Iterable<string>,
+	override?: AgentToolDef[]
+): AgentToolDef[] {
+	return assembleVisibleAgentToolPool(composerMode, {
+		mcpToolDenyPrefixes: settings.mcpToolDenyPrefixes,
+		discoveredDeferredToolNames,
+		override,
+	});
+}
+
 function appendMcpToolsSystemHint(
 	systemContent: string,
 	composerMode: ComposerMode,
@@ -341,7 +365,8 @@ function appendMcpToolsSystemHint(
 		systemContent,
 		'',
 		`## MCP tools (${n})`,
-		'Additional tools from configured Model Context Protocol servers are registered with names prefixed `mcp__`.',
+		'Additional tools from configured Model Context Protocol servers use names prefixed `mcp__`.',
+		'Most MCP tools are loaded on demand. Use `ToolSearch` to discover and load the relevant MCP tool before calling it directly.',
 		'Use `ListMcpResourcesTool` / `ReadMcpResourceTool` to browse MCP resources when needed.',
 		'Use them when the user needs integrations beyond the built-in workspace tools (e.g. web, APIs, databases). Follow each tool\'s description and parameter schema.',
 	].join('\n');
@@ -567,10 +592,40 @@ async function runOpenAILoop(
 		settings
 	);
 	const temperature = temperatureForMode(options.composerMode);
-
-	const tools = toOpenAITools(
-		agentToolDefsForLoop(options.composerMode, settings, options.toolPoolOverride)
-	);
+	const discoveredDeferredToolNames = new Set(options.discoveredDeferredToolNames ?? []);
+	const markDeferredToolsDiscovered = (names: string[]): string[] => {
+		const added: string[] = [];
+		for (const name of names) {
+			const trimmed = String(name ?? '').trim();
+			if (!trimmed || discoveredDeferredToolNames.has(trimmed)) {
+				continue;
+			}
+			discoveredDeferredToolNames.add(trimmed);
+			added.push(trimmed);
+		}
+		if (added.length > 0) {
+			options.onDiscoveredDeferredToolsChange?.(
+				[...discoveredDeferredToolNames].sort((a, b) => a.localeCompare(b))
+			);
+		}
+		return added;
+	};
+	const resolveFullToolPool = () =>
+		agentToolDefsForLoop(options.composerMode, settings, options.toolPoolOverride);
+	const resolveVisibleToolPool = () =>
+		visibleAgentToolDefsForLoop(
+			options.composerMode,
+			settings,
+			discoveredDeferredToolNames,
+			options.toolPoolOverride
+		);
+	const mergedCustomToolHandlers = {
+		ToolSearch: createToolSearchToolHandler({
+			resolveFullToolPool,
+			discoverTools: markDeferredToolsDiscovered,
+		}),
+		...(options.customToolHandlers ?? {}),
+	};
 
 	let conversation: OAIMsg[] = normalizeOpenAIMessagesForApi(threadToOpenAI(threadMessages, systemContent));
 	conversation = repairOpenAIToolPairing(conversation);
@@ -669,21 +724,31 @@ async function runOpenAILoop(
 			hostWebContentsId: options.hostWebContentsId ?? null,
 			signal: options.signal,
 			teamToolRoleScope: options.teamToolRoleScope,
-			customToolHandlers: options.customToolHandlers,
+			customToolHandlers: mergedCustomToolHandlers,
 		});
-		console.log(`[AgentLoop] tool=${tc.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
+		const persistedResult = await persistLargeToolResultIfNeeded(result, {
+			delegateExecutionDepth: options.delegateExecutionDepth ?? 0,
+			workspaceRoot: options.workspaceRoot ?? null,
+			workspaceLspManager: options.workspaceLspManager ?? null,
+			threadId: options.threadId ?? null,
+			hostWebContentsId: options.hostWebContentsId ?? null,
+			signal: options.signal,
+			teamToolRoleScope: options.teamToolRoleScope,
+			customToolHandlers: mergedCustomToolHandlers,
+		});
+		console.log(`[AgentLoop] tool=${tc.name} — executeTool done (${Date.now() - execStart}ms, error=${persistedResult.isError})`);
 		if (mistakeLimitEnabled) {
-			if (result.isError) {
+			if (persistedResult.isError) {
 				consecutiveToolFailures++;
 			} else {
 				consecutiveToolFailures = 0;
 			}
 		}
 
-		structured.pushTool(tc.id, tc.name, args, result.content, !result.isError);
-		handlers.onToolResult(tc.name, result.content, !result.isError, tc.id);
+		structured.pushTool(tc.id, tc.name, args, persistedResult.content, !persistedResult.isError);
+		handlers.onToolResult(tc.name, persistedResult.content, !persistedResult.isError, tc.id);
 
-		return { role: 'tool', tool_call_id: tc.id, content: result.content };
+		return { role: 'tool', tool_call_id: tc.id, content: persistedResult.content };
 	}
 
 	async function flushOpenAIToolsInOrder(turnToolCalls: TurnTc[]): Promise<void> {
@@ -716,7 +781,7 @@ async function runOpenAILoop(
 	const streamTimeoutConfig = resolveStreamTimeouts(settings);
 	const maxRounds = resolveAgentMaxRounds(settings);
 	console.log(
-		`[AgentLoop] OpenAI sync prep done (${Date.now() - openaiSyncPrepStart}ms) convMsgs=${conversation.length} tools=${tools.length} thread=${options.threadId ?? 'n/a'}`
+		`[AgentLoop] OpenAI sync prep done (${Date.now() - openaiSyncPrepStart}ms) convMsgs=${conversation.length} deferredLoaded=${discoveredDeferredToolNames.size} thread=${options.threadId ?? 'n/a'}`
 	);
 	console.log(
 		`[AgentLoop] OpenAI loop start — idleMs=${streamTimeoutConfig.idleMs} hardMs=${streamTimeoutConfig.hardMs} watchdog=${streamTimeoutConfig.idleWatchdogEnabled} maxRounds=${maxRounds ?? '∞'}`
@@ -737,6 +802,7 @@ async function runOpenAILoop(
 
 		console.log(`[AgentLoop] round ${round} — starting LLM call`);
 		const roundStartAt = Date.now();
+		const tools = toOpenAITools(resolveVisibleToolPool());
 		let turnText = '';
 		const turnToolCalls: TurnTc[] = [];
 		let turnFinishReason: string | null = null;
@@ -1003,10 +1069,40 @@ async function runAnthropicLoop(
 	conversation = repairAnthropicToolPairing(conversation);
 	conversation = mergeAdjacentAnthropicUserMessages(conversation);
 	if (conversation.length === 0) { handlers.onError('没有可发送的对话消息。'); return; }
-
-	const tools = toAnthropicTools(
-		agentToolDefsForLoop(options.composerMode, settings, options.toolPoolOverride)
-	);
+	const discoveredDeferredToolNames = new Set(options.discoveredDeferredToolNames ?? []);
+	const markDeferredToolsDiscovered = (names: string[]): string[] => {
+		const added: string[] = [];
+		for (const name of names) {
+			const trimmed = String(name ?? '').trim();
+			if (!trimmed || discoveredDeferredToolNames.has(trimmed)) {
+				continue;
+			}
+			discoveredDeferredToolNames.add(trimmed);
+			added.push(trimmed);
+		}
+		if (added.length > 0) {
+			options.onDiscoveredDeferredToolsChange?.(
+				[...discoveredDeferredToolNames].sort((a, b) => a.localeCompare(b))
+			);
+		}
+		return added;
+	};
+	const resolveFullToolPool = () =>
+		agentToolDefsForLoop(options.composerMode, settings, options.toolPoolOverride);
+	const resolveVisibleToolPool = () =>
+		visibleAgentToolDefsForLoop(
+			options.composerMode,
+			settings,
+			discoveredDeferredToolNames,
+			options.toolPoolOverride
+		);
+	const mergedCustomToolHandlers = {
+		ToolSearch: createToolSearchToolHandler({
+			resolveFullToolPool,
+			discoverTools: markDeferredToolsDiscovered,
+		}),
+		...(options.customToolHandlers ?? {}),
+	};
 	const structured = new StructuredAssistantBuilder();
 	const anthropicMetadata = buildAnthropicProviderIdentityMetadata(settings);
 	const thinkBudget = anthropicThinkingBudget(options.thinkingLevel ?? 'off');
@@ -1101,25 +1197,35 @@ async function runAnthropicLoop(
 			hostWebContentsId: options.hostWebContentsId ?? null,
 			signal: options.signal,
 			teamToolRoleScope: options.teamToolRoleScope,
-			customToolHandlers: options.customToolHandlers,
+			customToolHandlers: mergedCustomToolHandlers,
 		});
-		console.log(`[AgentLoop/A] tool=${tu.name} — executeTool done (${Date.now() - execStart}ms, error=${result.isError})`);
+		const persistedResult = await persistLargeToolResultIfNeeded(result, {
+			delegateExecutionDepth: options.delegateExecutionDepth ?? 0,
+			workspaceRoot: options.workspaceRoot ?? null,
+			workspaceLspManager: options.workspaceLspManager ?? null,
+			threadId: options.threadId ?? null,
+			hostWebContentsId: options.hostWebContentsId ?? null,
+			signal: options.signal,
+			teamToolRoleScope: options.teamToolRoleScope,
+			customToolHandlers: mergedCustomToolHandlers,
+		});
+		console.log(`[AgentLoop/A] tool=${tu.name} — executeTool done (${Date.now() - execStart}ms, error=${persistedResult.isError})`);
 		if (mistakeLimitEnabled) {
-			if (result.isError) {
+			if (persistedResult.isError) {
 				consecutiveToolFailures++;
 			} else {
 				consecutiveToolFailures = 0;
 			}
 		}
 
-		structured.pushTool(tu.id, tu.name, args, result.content, !result.isError);
-		handlers.onToolResult(tu.name, result.content, !result.isError, tu.id);
+		structured.pushTool(tu.id, tu.name, args, persistedResult.content, !persistedResult.isError);
+		handlers.onToolResult(tu.name, persistedResult.content, !persistedResult.isError, tu.id);
 
 		return {
 			type: 'tool_result',
 			tool_use_id: tu.id,
-			content: result.content,
-			is_error: result.isError,
+			content: persistedResult.content,
+			is_error: persistedResult.isError,
 		};
 	}
 
@@ -1170,6 +1276,7 @@ async function runAnthropicLoop(
 
 		console.log(`[AgentLoop/A] round ${round} — starting LLM call`);
 		const roundStartAtA = Date.now();
+		const tools = toAnthropicTools(resolveVisibleToolPool());
 		let turnText = '';
 		let turnThinking = '';
 		let turnThinkingSignature = '';

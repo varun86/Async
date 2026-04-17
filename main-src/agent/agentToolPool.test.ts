@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { assembleAgentToolPool, filterMcpToolsByDenyPrefixes } from './agentToolPool.js';
+import {
+	assembleAgentToolPool,
+	assembleVisibleAgentToolPool,
+	filterMcpToolsByDenyPrefixes,
+} from './agentToolPool.js';
 import type { AgentToolDef } from './agentTools.js';
 
 const mockGetAgentTools = vi.fn<() => AgentToolDef[]>(() => []);
@@ -73,5 +77,21 @@ describe('assembleAgentToolPool', () => {
 		mockGetAgentTools.mockReturnValue([tool('Write')]);
 		const pool = assembleAgentToolPool('agent');
 		expect(pool.filter((t) => t.name === 'Write').length).toBe(1);
+	});
+
+	it('visible pool hides deferred mcp tools until discovered', () => {
+		mockGetAgentTools.mockReturnValue([tool('mcp__srv__ping')]);
+		const pool = assembleVisibleAgentToolPool('agent');
+		expect(pool.some((t) => t.name === 'ToolSearch')).toBe(true);
+		expect(pool.some((t) => t.name === 'mcp__srv__ping')).toBe(false);
+	});
+
+	it('visible pool shows discovered deferred tools', () => {
+		mockGetAgentTools.mockReturnValue([tool('mcp__srv__ping')]);
+		const pool = assembleVisibleAgentToolPool('agent', {
+			discoveredDeferredToolNames: ['mcp__srv__ping'],
+		});
+		expect(pool.some((t) => t.name === 'ToolSearch')).toBe(true);
+		expect(pool.some((t) => t.name === 'mcp__srv__ping')).toBe(true);
 	});
 });

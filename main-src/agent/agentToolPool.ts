@@ -1,11 +1,22 @@
-/**
- * Agent 工具池组装：
- * 内置工具 +（仅 Agent 模式）动态 MCP 工具；按前缀 deny 过滤 MCP；同名以内置为准。
- */
-
 import type { ComposerMode } from '../llm/composerMode.js';
-import { agentToolsForComposerMode, type AgentToolDef } from './agentTools.js';
+import { AGENT_TOOLS, agentToolsForComposerMode, type AgentToolDef } from './agentTools.js';
 import { getMcpManager } from '../mcp/index.js';
+
+export const TOOL_SEARCH_TOOL_NAME = 'ToolSearch';
+
+export function isDeferredAgentToolName(name: string): boolean {
+	return name.startsWith('mcp__');
+}
+
+function modeForBaseTools(
+	composerMode: ComposerMode
+): 'agent' | 'plan' | 'team' {
+	return composerMode === 'plan' ? 'plan' : composerMode === 'team' ? 'team' : 'agent';
+}
+
+function toolSearchDef(): AgentToolDef | undefined {
+	return AGENT_TOOLS.find((tool) => tool.name === TOOL_SEARCH_TOOL_NAME);
+}
 
 /** 若工具名以任一前缀开头则剔除（前缀区分大小写，与 Claude deny 规则用法一致） */
 export function filterMcpToolsByDenyPrefixes(
@@ -23,7 +34,7 @@ export function assembleAgentToolPool(
 	composerMode: ComposerMode,
 	options?: { mcpToolDenyPrefixes?: string[] }
 ): AgentToolDef[] {
-	const modeForBase: 'agent' | 'plan' | 'team' = composerMode === 'plan' ? 'plan' : composerMode === 'team' ? 'team' : 'agent';
+	const modeForBase = modeForBaseTools(composerMode);
 	const base = agentToolsForComposerMode(modeForBase);
 	const baseNames = new Set(base.map((d) => d.name));
 
@@ -39,4 +50,54 @@ export function assembleAgentToolPool(
 
 	// 内置顺序在前，与 Claude「built-ins 为前缀」一致；MCP 段按名排序以利缓存稳定
 	return [...base, ...mcpNoBuiltinCollision];
+}
+
+export function getDeferredAgentToolDefs(fullPool: AgentToolDef[]): AgentToolDef[] {
+	return fullPool.filter((tool) => isDeferredAgentToolName(tool.name));
+}
+
+export function assembleVisibleAgentToolPool(
+	composerMode: ComposerMode,
+	options?: {
+		mcpToolDenyPrefixes?: string[];
+		discoveredDeferredToolNames?: Iterable<string>;
+		override?: AgentToolDef[];
+	}
+): AgentToolDef[] {
+	const fullPool =
+		options?.override && options.override.length > 0
+			? options.override
+			: assembleAgentToolPool(composerMode, {
+					mcpToolDenyPrefixes: options?.mcpToolDenyPrefixes,
+				});
+	if (composerMode !== 'agent' && composerMode !== 'team') {
+		return fullPool;
+	}
+
+	const deferred = getDeferredAgentToolDefs(fullPool);
+	const discovered = new Set(options?.discoveredDeferredToolNames ?? []);
+	const visible = fullPool.filter((tool) => {
+		if (tool.name === TOOL_SEARCH_TOOL_NAME) {
+			return false;
+		}
+		return !isDeferredAgentToolName(tool.name) || discovered.has(tool.name);
+	});
+
+	if (deferred.length === 0) {
+		return visible;
+	}
+
+	const searchTool = toolSearchDef();
+	if (!searchTool || visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME)) {
+		return visible;
+	}
+	const firstDeferredIndex = visible.findIndex((tool) => isDeferredAgentToolName(tool.name));
+	if (firstDeferredIndex === -1) {
+		return [...visible, searchTool];
+	}
+	return [
+		...visible.slice(0, firstDeferredIndex),
+		searchTool,
+		...visible.slice(firstDeferredIndex),
+	];
 }

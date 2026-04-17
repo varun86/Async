@@ -60,6 +60,8 @@ export type ThreadRecord = {
 	agentToolCallsCompleted?: number;
 	/** 上次记忆抽取完成时的 `agentToolCallsCompleted`，用于计算间隔内工具调用数 */
 	memoryExtractionToolBaseline?: number;
+	/** 线程中已通过 ToolSearch 加载过的延迟工具名（当前主要是 MCP 动态工具）。 */
+	discoveredDeferredToolNames?: string[];
 	plan?: ThreadPlan;
 	executedPlanFileKeys?: string[];
 	teamSession?: TeamSessionSnapshot;
@@ -525,6 +527,27 @@ export function incrementThreadAgentToolCallCount(threadId: string): void {
 		return;
 	}
 	thread.agentToolCallsCompleted = (thread.agentToolCallsCompleted ?? 0) + 1;
+	thread.updatedAt = Date.now();
+	save();
+}
+
+export function getDiscoveredDeferredToolNames(threadId: string): string[] {
+	const thread = getThread(threadId);
+	if (!thread?.discoveredDeferredToolNames) {
+		return [];
+	}
+	return [...new Set(thread.discoveredDeferredToolNames.map((item) => String(item).trim()).filter(Boolean))];
+}
+
+export function saveDiscoveredDeferredToolNames(threadId: string, names: string[]): void {
+	const thread = getThread(threadId);
+	if (!thread) {
+		return;
+	}
+	const normalized = [...new Set(names.map((item) => String(item).trim()).filter(Boolean))].sort((a, b) =>
+		a.localeCompare(b)
+	);
+	thread.discoveredDeferredToolNames = normalized;
 	thread.updatedAt = Date.now();
 	save();
 }

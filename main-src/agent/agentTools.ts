@@ -3,6 +3,8 @@
  * 每个工具包含名称、描述和 JSON Schema 参数，供 OpenAI / Anthropic / Gemini 的 tool calling 使用。
  */
 
+import { buildCachedAnthropicTools, buildCachedOpenAITools } from './toolSchemaCache.js';
+
 export type AgentToolDef = {
 	name: string;
 	description: string;
@@ -34,6 +36,7 @@ export const READ_ONLY_AGENT_TOOL_NAMES = [
 	'LSP',
 	'ListMcpResourcesTool',
 	'ReadMcpResourceTool',
+	'ToolSearch',
 ] as const;
 
 export function isReadOnlyAgentTool(name: string): boolean {
@@ -47,7 +50,7 @@ export function agentToolsForComposerMode(
 	if (mode === 'plan') {
 		return all.filter(
 			(d) =>
-				isReadOnlyAgentTool(d.name) ||
+				(isReadOnlyAgentTool(d.name) && d.name !== 'ToolSearch') ||
 				d.name === 'ask_plan_question' ||
 				d.name === 'request_user_input' ||
 				d.name === 'plan_submit_draft'
@@ -637,6 +640,29 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 		},
 	},
 	{
+		name: 'ToolSearch',
+		description:
+			'Search deferred tools that are not currently loaded into the model-visible tool list. Use this when you need an MCP integration but do not yet know the exact `mcp__server__tool` name. Matching tools are loaded for the next assistant turn so you can call them directly after this tool returns.',
+		parameters: {
+			type: 'object',
+			properties: {
+				query: {
+					type: 'string',
+					description: 'Keywords for the capability you need, such as "github issues", "postgres query", or "browser automation".',
+				},
+				server: {
+					type: 'string',
+					description: 'Optional MCP server id/name fragment to narrow the search before matching tools.',
+				},
+				limit: {
+					type: 'number',
+					description: 'Maximum number of matching tools to load. Default 8, maximum 12.',
+				},
+			},
+			required: [],
+		},
+	},
+	{
 		name: 'TodoWrite',
 		description:
 			'Update the todo list for the current session. Use proactively to track progress on complex multi-step tasks. Always provide the COMPLETE updated todo list (not just changes). Maintain exactly one task as in_progress at all times. Provide both content (imperative form) and activeForm (present continuous form) for each task.',
@@ -777,20 +803,9 @@ export const AGENT_TOOLS: AgentToolDef[] = [
 ];
 
 export function toOpenAITools(defs: AgentToolDef[]) {
-	return defs.map((d) => ({
-		type: 'function' as const,
-		function: {
-			name: d.name,
-			description: d.description,
-			parameters: d.parameters,
-		},
-	}));
+	return buildCachedOpenAITools(defs);
 }
 
 export function toAnthropicTools(defs: AgentToolDef[]) {
-	return defs.map((d) => ({
-		name: d.name,
-		description: d.description,
-		input_schema: d.parameters as Record<string, unknown>,
-	}));
+	return buildCachedAnthropicTools(defs);
 }

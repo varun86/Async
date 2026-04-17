@@ -898,6 +898,7 @@ export const messagesEn: Record<string, string> = {
 	'agent.tool.get_diagnostics': 'Diagnostics',
 	'agent.tool.ListMcpResourcesTool': 'List MCP resources',
 	'agent.tool.ReadMcpResourceTool': 'Read MCP resource',
+	'agent.tool.ToolSearch': 'Search deferred tools',
 	'agent.tool.search_files': 'Search files',
 	'agent.tool.Bash': 'Bash',
 	'agent.tool.execute_command': 'Run command',
