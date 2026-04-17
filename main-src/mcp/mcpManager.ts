@@ -25,6 +25,34 @@ export type McpToolWithSource = McpToolDef & {
 	serverName: string;
 };
 
+function normalizeMcpServerStatus(status: McpServerStatus['status']): McpServerStatus['status'] {
+	return status === 'disconnected' ? 'stopped' : status;
+}
+
+function mcpConfigsEquivalent(a: McpServerConfig, b: McpServerConfig): boolean {
+	const normRecord = (value?: Record<string, string>): string =>
+		value
+			? Object.entries(value)
+					.sort(([ak], [bk]) => ak.localeCompare(bk))
+					.map(([k, v]) => `${k}=${v}`)
+					.join('\n')
+			: '';
+	const normArgs = (value?: string[]): string => (value ?? []).join('\u0000');
+	return (
+		a.id === b.id &&
+		a.name === b.name &&
+		a.enabled === b.enabled &&
+		a.transport === b.transport &&
+		(a.command ?? '') === (b.command ?? '') &&
+		(a.url ?? '') === (b.url ?? '') &&
+		(a.autoStart ?? true) === (b.autoStart ?? true) &&
+		(a.timeout ?? 30_000) === (b.timeout ?? 30_000) &&
+		normArgs(a.args) === normArgs(b.args) &&
+		normRecord(a.env) === normRecord(b.env) &&
+		normRecord(a.headers) === normRecord(b.headers)
+	);
+}
+
 /** 将 MCP 工具转换为 Agent 工具格式 */
 function mcpToolToAgentTool(tool: McpToolWithSource): AgentToolDef {
 	return {
@@ -48,7 +76,32 @@ export class McpManager extends EventEmitter<McpManagerEvents> {
 
 	/** 获取所有服务器状态 */
 	getServerStatuses(): McpServerStatus[] {
-		return Array.from(this.clients.values()).map((c) => c.getServerStatus());
+		return this.configs.map((config) => {
+			if (!config.enabled) {
+				return {
+					id: config.id,
+					status: 'disabled',
+					tools: [],
+					resources: [],
+					prompts: [],
+				};
+			}
+			const client = this.clients.get(config.id);
+			if (!client) {
+				return {
+					id: config.id,
+					status: 'not_started',
+					tools: [],
+					resources: [],
+					prompts: [],
+				};
+			}
+			const status = client.getServerStatus();
+			return {
+				...status,
+				status: normalizeMcpServerStatus(status.status),
+			};
+		});
 	}
 
 	/** 获取所有可用工具（含来源信息） */
@@ -63,13 +116,18 @@ export class McpManager extends EventEmitter<McpManagerEvents> {
 
 	/** 加载配置 */
 	loadConfigs(configs: McpServerConfig[]): void {
-		const nextIds = new Set(configs.map((config) => config.id));
+		const nextById = new Map(configs.map((config) => [config.id, config] as const));
 		for (const [id, client] of this.clients.entries()) {
-			if (nextIds.has(id)) {
+			const next = nextById.get(id);
+			if (!next) {
+				client.destroy();
+				this.clients.delete(id);
 				continue;
 			}
-			client.destroy();
-			this.clients.delete(id);
+			if (!next.enabled || !mcpConfigsEquivalent(client.config, next)) {
+				client.destroy();
+				this.clients.delete(id);
+			}
 		}
 		this.configs = configs;
 		this.updateTools();

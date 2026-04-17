@@ -10,6 +10,9 @@ import type { McpServerConfig, McpServerStatus, McpServerTemplate } from './mcpT
 import { MCP_SERVER_TEMPLATES } from './mcpTypes';
 import type { PluginRuntimeState } from './pluginRuntimeTypes';
 
+type PluginMcpOverrideMap = Record<string, { enabled?: boolean; autoStart?: boolean }>;
+type DisplayMcpStatus = Exclude<McpServerStatus['status'], 'disconnected'>;
+
 function newId(): string {
 	return globalThis.crypto?.randomUUID?.() ?? `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -96,21 +99,25 @@ function IconPlug({ className }: { className?: string }) {
 	);
 }
 
-function StatusBadge({ status, error }: { status: McpServerStatus['status']; error?: string }) {
+function StatusBadge({ status, error }: { status: DisplayMcpStatus; error?: string }) {
 	const { t } = useI18n();
 	
 	const statusClass = {
+		not_started: 'ref-mcp-status--not-started',
 		connected: 'ref-mcp-status--connected',
 		connecting: 'ref-mcp-status--connecting',
-		disconnected: 'ref-mcp-status--disconnected',
+		stopped: 'ref-mcp-status--stopped',
 		error: 'ref-mcp-status--error',
+		disabled: 'ref-mcp-status--disabled',
 	}[status];
 	
 	const statusText = {
+		not_started: t('mcp.status.notStarted'),
 		connected: t('mcp.status.connected'),
 		connecting: t('mcp.status.connecting'),
-		disconnected: t('mcp.status.disconnected'),
+		stopped: t('mcp.status.stopped'),
 		error: t('mcp.status.error'),
+		disabled: t('mcp.status.disabled'),
 	}[status];
 	
 	return (
@@ -390,16 +397,50 @@ type McpServerRowProps = {
 	onStart: () => void;
 	onStop: () => void;
 	onRestart: () => void;
+	onToggleEnabled?: (next: boolean) => void;
+	toggleBusy?: boolean;
 	onEdit?: () => void;
 	onDelete?: () => void;
 	readOnly?: boolean;
 };
 
-function McpServerRow({ config, status, onEdit, onStart, onStop, onRestart, onDelete, readOnly = false }: McpServerRowProps) {
+function deriveDisplayMcpStatus(config: McpServerConfig, status: McpServerStatus | null): DisplayMcpStatus {
+	if (!config.enabled) {
+		return 'disabled';
+	}
+	if (!status) {
+		return 'not_started';
+	}
+	switch (status.status) {
+		case 'connected':
+		case 'connecting':
+		case 'error':
+		case 'disabled':
+		case 'not_started':
+		case 'stopped':
+			return status.status;
+		case 'disconnected':
+		default:
+			return 'stopped';
+	}
+}
+
+function McpServerRow({
+	config,
+	status,
+	onEdit,
+	onStart,
+	onStop,
+	onRestart,
+	onToggleEnabled,
+	toggleBusy = false,
+	onDelete,
+	readOnly = false,
+}: McpServerRowProps) {
 	const { t } = useI18n();
 	const [expanded, setExpanded] = useState(false);
 	
-	const currentStatus = status?.status ?? 'disconnected';
+	const currentStatus = deriveDisplayMcpStatus(config, status);
 	const tools = status?.tools ?? [];
 	
 	return (
@@ -417,24 +458,37 @@ function McpServerRow({ config, status, onEdit, onStart, onStop, onRestart, onDe
 					<StatusBadge status={currentStatus} error={status?.error} />
 				</div>
 				<div className="ref-mcp-server-actions">
-					{currentStatus === 'connected' ? (
-						<>
-							<button type="button" className="ref-mcp-server-action" onClick={onStop} title={t('mcp.action.stop')}>
-								<IconStop />
-							</button>
-							<button type="button" className="ref-mcp-server-action" onClick={onRestart} title={t('mcp.action.restart')}>
-								<IconRefresh />
-							</button>
-						</>
-					) : currentStatus === 'connecting' ? (
-						<button type="button" className="ref-mcp-server-action" onClick={onStop} title={t('mcp.action.stop')}>
-							<IconStop />
-						</button>
-					) : (
-						<button type="button" className="ref-mcp-server-action" onClick={onStart} title={t('mcp.action.start')}>
-							<IconPlay />
-						</button>
-					)}
+					{onToggleEnabled ? (
+						<label className="ref-mcp-server-toggle" title={t('mcp.form.enabled')}>
+							<input
+								type="checkbox"
+								checked={config.enabled}
+								disabled={toggleBusy}
+								onChange={(e) => onToggleEnabled(e.target.checked)}
+							/>
+							<span>{t('mcp.form.enabled')}</span>
+						</label>
+					) : null}
+					{config.enabled
+						? currentStatus === 'connected' ? (
+								<>
+									<button type="button" className="ref-mcp-server-action" onClick={onStop} title={t('mcp.action.stop')}>
+										<IconStop />
+									</button>
+									<button type="button" className="ref-mcp-server-action" onClick={onRestart} title={t('mcp.action.restart')}>
+										<IconRefresh />
+									</button>
+								</>
+							) : currentStatus === 'connecting' ? (
+								<button type="button" className="ref-mcp-server-action" onClick={onStop} title={t('mcp.action.stop')}>
+									<IconStop />
+								</button>
+							) : currentStatus === 'disabled' ? null : (
+								<button type="button" className="ref-mcp-server-action" onClick={onStart} title={t('mcp.action.start')}>
+									<IconPlay />
+								</button>
+							)
+						: null}
 					{!readOnly && onEdit ? (
 						<button type="button" className="ref-mcp-server-action" onClick={onEdit} title={t('mcp.action.edit')}>
 							<IconGear />
@@ -526,6 +580,7 @@ export function SettingsMcpPanel({
 	const [editingConfig, setEditingConfig] = useState<McpServerConfig | null>(null);
 	const [showTemplates, setShowTemplates] = useState(false);
 	const [pluginServers, setPluginServers] = useState<McpServerConfig[]>([]);
+	const [pendingPluginToggleIds, setPendingPluginToggleIds] = useState<string[]>([]);
 	
 	const statusMap = useMemo(() => {
 		const map = new Map<string, McpServerStatus>();
@@ -594,6 +649,42 @@ export function SettingsMcpPanel({
 		setEditingConfig(newConfig);
 		setShowTemplates(false);
 	}, []);
+
+	const listPluginServers = useCallback(async (): Promise<McpServerConfig[]> => {
+		if (!shell) {
+			return [];
+		}
+		try {
+			const runtime = (await shell.invoke('plugins:getRuntimeState')) as PluginRuntimeState;
+			return Array.isArray(runtime?.mcpServers) ? runtime.mcpServers : [];
+		} catch {
+			return [];
+		}
+	}, [shell]);
+
+	const togglePluginServerEnabled = useCallback(async (config: McpServerConfig, enabled: boolean) => {
+		if (!shell) {
+			return;
+		}
+		setPendingPluginToggleIds((prev) => (prev.includes(config.id) ? prev : [...prev, config.id]));
+		try {
+			const current = (await shell.invoke('settings:get')) as { pluginMcpOverrides?: PluginMcpOverrideMap } | undefined;
+			const nextOverrides: PluginMcpOverrideMap = { ...(current?.pluginMcpOverrides ?? {}) };
+			nextOverrides[config.id] = {
+				...(nextOverrides[config.id] ?? {}),
+				enabled,
+			};
+			await shell.invoke('settings:set', { pluginMcpOverrides: nextOverrides });
+			if (enabled) {
+				await onRefreshStatuses();
+			} else {
+				await onStopServer(config.id);
+			}
+			setPluginServers(await listPluginServers());
+		} finally {
+			setPendingPluginToggleIds((prev) => prev.filter((id) => id !== config.id));
+		}
+	}, [listPluginServers, onRefreshStatuses, onStopServer, shell]);
 	
 	// Auto-refresh statuses on mount
 	useEffect(() => {
@@ -607,16 +698,9 @@ export function SettingsMcpPanel({
 		}
 		let cancelled = false;
 		const loadPluginServers = async () => {
-			try {
-				const runtime = (await shell.invoke('plugins:getRuntimeState')) as PluginRuntimeState;
-				if (cancelled) {
-					return;
-				}
-				setPluginServers(Array.isArray(runtime?.mcpServers) ? runtime.mcpServers : []);
-			} catch {
-				if (!cancelled) {
-					setPluginServers([]);
-				}
+			const next = await listPluginServers();
+			if (!cancelled) {
+				setPluginServers(next);
 			}
 		};
 		void loadPluginServers();
@@ -627,7 +711,7 @@ export function SettingsMcpPanel({
 			cancelled = true;
 			unsubscribe?.();
 		};
-	}, [shell]);
+	}, [listPluginServers, shell]);
 	
 	return (
 		<div className="ref-settings-panel ref-settings-panel--mcp">
@@ -723,6 +807,8 @@ export function SettingsMcpPanel({
 									onStart={() => onStartServer(config.id)}
 									onStop={() => onStopServer(config.id)}
 									onRestart={() => onRestartServer(config.id)}
+									onToggleEnabled={(next) => void togglePluginServerEnabled(config, next)}
+									toggleBusy={pendingPluginToggleIds.includes(config.id)}
 									readOnly
 								/>
 							</li>

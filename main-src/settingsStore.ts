@@ -140,6 +140,11 @@ export type TeamSettings = {
 	deliveryReviewer?: TeamExpertConfig | null;
 };
 
+type PluginMcpServerOverride = {
+	enabled?: boolean;
+	autoStart?: boolean;
+};
+
 export type ShellSettings = {
 	/** 界面语言：zh-CN 简体中文（默认）、en 英文 */
 	language?: 'zh-CN' | 'en';
@@ -188,6 +193,8 @@ export type ShellSettings = {
 	lsp?: ShellLspSettings;
 	/** MCP 服务器配置 */
 	mcpServers?: McpServerConfig[];
+	/** 对插件注入的 MCP 服务器做本地覆盖（如启用/禁用）。 */
+	pluginMcpOverrides?: Record<string, PluginMcpServerOverride>;
 	/**
 	 * MCP 工具全名前缀拒绝列表（按 `mcp__server` 等规则做预过滤）。
 	 * 若某工具名以列表中任一条目开头，则不会进入模型可见工具表（仅影响动态 MCP 工具，不含 ListMcpResourcesTool 等内置项）。
