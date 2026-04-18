@@ -1,9 +1,9 @@
-import { formatTokenCountShort } from './contextMeterFormat';
+import { formatTokenCountShort, type ContextEstimate } from './contextMeterFormat';
 import type { TFunction } from './i18n';
 
 export type ComposerContextMeterProps = {
 	maxTokens: number;
-	usedEstimate: number;
+	usedEstimate: ContextEstimate;
 	isDefaultMax: boolean;
 	t: TFunction;
 };
@@ -21,7 +21,8 @@ export function ComposerContextMeter({
 	t,
 }: ComposerContextMeterProps) {
 	const max = Math.max(1, maxTokens);
-	const ratio = Math.min(1, Math.max(0, usedEstimate / max));
+	const tokens = usedEstimate.tokens;
+	const ratio = Math.min(1, Math.max(0, tokens / max));
 	const dashOffset = C * (1 - ratio);
 	const stroke =
 		ratio >= 0.95
@@ -30,11 +31,21 @@ export function ComposerContextMeter({
 				? 'var(--void-git-modified, #d4a017)'
 				: 'color-mix(in srgb, var(--void-accent) 82%, var(--void-fg-2))';
 
-	const usedStr = formatTokenCountShort(usedEstimate);
+	const usedStr = formatTokenCountShort(tokens);
 	const maxStr = formatTokenCountShort(maxTokens);
 	const detailKey = isDefaultMax ? 'app.contextMeter.detailDefault' : 'app.contextMeter.detailCustom';
 	const detailRaw = t(detailKey, { used: usedStr, max: maxStr });
 	const detailLines = detailRaw.split('\n').map((line) => line.trim()).filter(Boolean);
+	if (usedEstimate.confidence !== 'high') {
+		const confKey =
+			usedEstimate.confidence === 'low'
+				? 'app.contextMeter.confidenceLow'
+				: 'app.contextMeter.confidenceMedium';
+		const confNote = t(confKey);
+		if (confNote) {
+			detailLines.push(confNote);
+		}
+	}
 	const ariaSummary = t('app.contextMeter.ariaSummary', {
 		used: usedStr,
 		max: maxStr,

@@ -659,6 +659,10 @@ export const messagesEn: Record<string, string> = {
 	'app.contextMeter.ariaSummary': 'Context: {{used}} used, {{max}} max. {{note}}',
 	'app.contextMeter.ariaDefaultNote': 'Using the app default limit.',
 	'app.contextMeter.ariaCustomNote': 'Limit comes from model settings.',
+	'app.contextMeter.confidenceMedium':
+		'Image tokens are priced from known dimensions — treat as an upper bound.',
+	'app.contextMeter.confidenceLow':
+		'Image dimensions missing; used a conservative fallback — real cost may differ.',
 	'app.voiceSoonTitle': 'Voice input (not available)',
 	'app.voiceSoonAria': 'Voice input (not available)',
 	'app.stopGeneration': 'Stop',

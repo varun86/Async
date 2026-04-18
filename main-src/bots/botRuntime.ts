@@ -14,8 +14,9 @@ import { streamChatUnified } from '../llm/llmRouter.js';
 import { buildAgentGlobalRuleAppend, prepareUserTurnForChat } from '../llm/agentMessagePrep.js';
 import { formatLlmSdkError } from '../llm/formatLlmSdkError.js';
 import { resolveModelRequest, resolveThinkingLevelForSelection } from '../llm/modelResolve.js';
-import { buildWorkspaceTreeSummary, cloneMessagesWithExpandedLastUser, modeExpandsWorkspaceFileContext } from '../llm/workspaceContextExpand.js';
+import { buildWorkspaceTreeSummary, modeExpandsWorkspaceFileContext } from '../llm/workspaceContextExpand.js';
 import type { ComposerMode } from '../llm/composerMode.js';
+import { resolveMessagesForSend } from '../llm/sendResolved.js';
 import { buildRelevantMemoryContextBlock } from '../memdir/findRelevantMemories.js';
 import { loadMemoryPrompt } from '../memdir/memdir.js';
 import { type ShellSettings, getRecentWorkspaces } from '../settingsStore.js';
@@ -1144,7 +1145,7 @@ async function runBotAsyncTask(args: RunBotAsyncTaskArgs): Promise<string> {
 
 		if ((mode === 'agent' || mode === 'plan') && resolved.paradigm !== 'gemini') {
 			const messagesForAgent = modeExpandsWorkspaceFileContext(mode)
-				? cloneMessagesWithExpandedLastUser(sendMessages, session.workspaceRoot)
+				? await resolveMessagesForSend(sendMessages, session.workspaceRoot)
 				: sendMessages;
 			let innerStreamFull = '';
 			return await new Promise<string>(async (resolve, reject) => {

@@ -198,14 +198,16 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 				// Build streaming callbacks if CardKit is enabled
 				let streamReply: StreamReplyCallbacks | undefined;
 				if (this.cardKitClient) {
-					const session = new FeishuStreamingSession(this.cardKitClient);
+					const session = new FeishuStreamingSession(this.cardKitClient, {
+						uploadImage: async (filePath) => this.uploadImageKey(filePath),
+					});
 					streamReply = {
 						onStart: async () => {
 							await session.start(chatId, messageId);
 						},
-						onDelta: async (fullText) => {
+						onDelta: async (fullText, channel) => {
 							if (session.isFailed) return;
-							session.update(fullText);
+							session.update(fullText, channel);
 						},
 						onToolStatus: (name, state, detail) => {
 							if (session.isFailed) return;
@@ -214,6 +216,12 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 						onTodoUpdate: (todos) => {
 							if (session.isFailed) return;
 							session.setTodos(normalizeBotTodos(todos));
+						},
+						onAttachment: async (attachment) => {
+							if (session.isFailed || attachment.kind !== 'image') {
+								return false;
+							}
+							return await session.attachImage(attachment.filePath, attachment.name);
 						},
 						onDone: async (fullText) => {
 							if (session.isFailed) {
@@ -225,9 +233,14 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 						},
 						onError: async (error) => {
 							if (session.isActive) {
-								await session.close(`❌ ${error}`);
+								await session.fail(error);
 							} else {
 								await this.replyPlainText(messageId, `❌ ${error}`);
+							}
+						},
+						onAbort: async (reason) => {
+							if (session.isActive) {
+								await session.abort(reason);
 							}
 						},
 					};
@@ -323,8 +336,10 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 		}
 	}
 
-	private async replyImage(messageId: string, filePath: string): Promise<void> {
-		if (!this.client) return;
+	private async uploadImageKey(filePath: string): Promise<string> {
+		if (!this.client) {
+			throw new Error('飞书客户端尚未初始化。');
+		}
 		const fullPath = String(filePath ?? '').trim();
 		if (!fullPath) {
 			throw new Error('截图文件路径为空。');
@@ -340,6 +355,12 @@ export class FeishuBotAdapter implements BotPlatformAdapter {
 		if (!imageKey) {
 			throw new Error('飞书图片上传失败，未返回 image_key。');
 		}
+		return imageKey;
+	}
+
+	private async replyImage(messageId: string, filePath: string): Promise<void> {
+		if (!this.client) return;
+		const imageKey = await this.uploadImageKey(filePath);
 		await this.client.im.message.reply({
 			path: { message_id: messageId },
 			data: {

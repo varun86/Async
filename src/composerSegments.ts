@@ -43,10 +43,24 @@ function buildSlashParseOrder(knownSlashCommands?: readonly string[]): string[] 
 	return [...set].sort((a, b) => slashCommandWire(b).length - slashCommandWire(a).length);
 }
 
+export type ComposerImageMeta = {
+	mimeType: string;
+	sizeBytes: number;
+	width: number;
+	height: number;
+	sha256: string;
+};
+
 export type ComposerSegment =
 	| { id: string; kind: 'text'; text: string }
-	| { id: string; kind: 'file'; path: string }
+	| { id: string; kind: 'file'; path: string; imageMeta?: ComposerImageMeta }
 	| { id: string; kind: 'command'; command: SlashCommandToken };
+
+/** 组合器附件持久化结果（拖放/粘贴文件落盘后返回给 UI） */
+export type PersistedComposerAttachment = {
+	relPath: string;
+	imageMeta?: ComposerImageMeta;
+};
 
 export function newSegmentId(): string {
 	return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;

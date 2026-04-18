@@ -5,6 +5,7 @@ import {
 	segmentsContentKey,
 	segmentsToWireText,
 	type ComposerSegment,
+	type PersistedComposerAttachment,
 } from './composerSegments';
 import {
 	type FileChipDomHandlers,
@@ -26,7 +27,7 @@ type Props = {
 	/** 点击文件 chip：打开侧栏预览 */
 	onFilePreview: (relPath: string) => void;
 	/** 将拖放/粘贴的文件写入工作区并返回相对路径（与 @ 引用一致） */
-	onComposerAttachFiles?: (files: File[]) => Promise<string[]>;
+	onComposerAttachFiles?: (files: File[]) => Promise<PersistedComposerAttachment[]>;
 	/** 与 useComposerAtMention 联动 */
 	onRichInput: (root: HTMLElement) => void;
 	onRichSelect: (root: HTMLElement) => void;
@@ -112,9 +113,9 @@ export function ComposerRichInput({
 			if (nonEmpty.length === 0) {
 				return;
 			}
-			let rels: string[];
+			let attachments: PersistedComposerAttachment[];
 			try {
-				rels = await onComposerAttachFiles(nonEmpty);
+				attachments = await onComposerAttachFiles(nonEmpty);
 			} catch {
 				return;
 			}
@@ -123,8 +124,8 @@ export function ComposerRichInput({
 				return;
 			}
 			el.focus();
-			for (const rel of rels) {
-				insertFileChipAtCaret(el, rel, newSegmentId(), domHandlers);
+			for (const att of attachments) {
+				insertFileChipAtCaret(el, att.relPath, newSegmentId(), domHandlers, att.imageMeta);
 			}
 		},
 		[innerRef, onComposerAttachFiles, domHandlers]

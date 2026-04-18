@@ -13,11 +13,12 @@ import {
 	type GitUnavailableReason,
 } from './gitAvailability';
 import { ComposerContextMeter } from './ComposerContextMeter';
+import type { ContextEstimate } from './contextMeterFormat';
 import { IconChevron, IconGitSCM } from './icons';
 
 export type ComposerContextMeterState = {
 	maxTokens: number;
-	usedEstimate: number;
+	usedEstimate: ContextEstimate;
 	/** 未在设置中填写上下文窗口，UI 使用默认 200K */
 	isDefaultMax: boolean;
 };

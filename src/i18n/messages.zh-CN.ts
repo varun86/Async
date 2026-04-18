@@ -650,6 +650,8 @@ export const messagesZhCN: Record<string, string> = {
 	'app.contextMeter.ariaSummary': '上下文：已用 {{used}}，上限 {{max}}。{{note}}',
 	'app.contextMeter.ariaDefaultNote': '当前为应用默认上限。',
 	'app.contextMeter.ariaCustomNote': '上限来自模型设置。',
+	'app.contextMeter.confidenceMedium': '图片 token 由已知尺寸估算，作为上界参考。',
+	'app.contextMeter.confidenceLow': '图片尺寸缺失，已使用保守兜底值，实际消耗可能有出入。',
 	'app.voiceSoonTitle': '语音输入（暂未支持）',
 	'app.voiceSoonAria': '语音输入（暂未支持）',
 	'app.stopGeneration': '停止生成',

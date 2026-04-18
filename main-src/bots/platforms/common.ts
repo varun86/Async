@@ -14,13 +14,21 @@ export type BotTodoListItem = {
 
 export type BotStreamChannel = 'leader' | 'worker';
 
+export type BotOutboundAttachment = {
+	kind: 'image' | 'file';
+	filePath: string;
+	name?: string;
+};
+
 export type StreamReplyCallbacks = {
 	onStart: () => Promise<void>;
 	onDelta: (fullText: string, channel?: BotStreamChannel) => Promise<void>;
 	onToolStatus: (name: string, state: 'running' | 'completed' | 'error', detail?: string) => void;
 	onTodoUpdate: (todos: BotTodoListItem[]) => void;
+	onAttachment?: (attachment: BotOutboundAttachment) => Promise<boolean>;
 	onDone: (fullText: string) => Promise<void>;
 	onError: (error: string) => Promise<void>;
+	onAbort?: (reason?: string) => Promise<void>;
 };
 
 export type BotInboundAttachment = {
@@ -48,9 +56,9 @@ export type BotPlatformAdapter = {
 };
 
 const CANCEL_INTENT_PATTERNS = [
-	/^\s*\/(stop|cancel|abort)\b/i,
-	/^\s*(stop|cancel|abort|halt)\b[!.。]?$/i,
-	/^\s*(停|取消|别做了|别再|中止|停一下|打断)[!。.!]?$/,
+	/^\s*\/(stop|cancel|abort|pause)\b/i,
+	/^\s*(stop|cancel|abort|halt|pause)\b[!.。]?$/i,
+	/^\s*(停|暂停|取消|别做了|别再|中止|停一下|暂停一下|打断)[!。.!]?$/,
 ];
 
 export function looksLikeCancelIntent(text: string): boolean {
@@ -84,6 +92,7 @@ export function parseBotSlashCommand(text: string): BotSlashCommand | null {
 		case '/stop':
 		case '/cancel':
 		case '/abort':
+		case '/pause':
 			return { kind: 'stop' };
 		case '/reset':
 		case '/new':

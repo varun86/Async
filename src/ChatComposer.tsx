@@ -9,7 +9,7 @@ import { ComposerGitBranchRow, type ComposerContextMeterState } from './Composer
 import { ComposerActionsContext } from './ComposerActionsContext';
 import { ComposerModeIcon, composerModeLabel, type ComposerMode } from './ComposerPlusMenu';
 import { ComposerRichInput } from './ComposerRichInput';
-import { type ComposerSegment } from './composerSegments';
+import { type ComposerSegment, type PersistedComposerAttachment } from './composerSegments';
 import { useI18n } from './i18n';
 import {
 	IconArrowUp,
@@ -64,7 +64,7 @@ interface ChatComposerProps {
 	onSend?: () => void;
 	onNewThread?: () => void;
 	onExplorerOpenFile?: (rel: string) => void;
-	persistComposerAttachments: (files: File[]) => Promise<string[]>;
+	persistComposerAttachments: (files: File[]) => Promise<PersistedComposerAttachment[]>;
 	syncComposerOverlays: (root: HTMLElement, slot: AtComposerSlot) => void;
 	setResendFromUserIndex: Dispatch<SetStateAction<number | null>>;
 	setInlineResendSegments: Dispatch<SetStateAction<ComposerSegment[]>>;

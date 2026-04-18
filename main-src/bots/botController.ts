@@ -198,7 +198,7 @@ class BotController {
 				if (active) {
 					active.abort.abort();
 					this.activeTurns.delete(key);
-					await reply('已中止当前任务。');
+					await reply('已暂停当前任务。需要继续时，直接发送下一条消息即可。');
 				} else {
 					await reply('当前没有正在运行的任务。');
 				}
@@ -222,6 +222,7 @@ class BotController {
 				await reply(
 					[
 						'可用命令：',
+						'/pause 暂停当前任务（等同于 /stop）',
 						'/stop 中止当前任务',
 						'/reset 清空当前对话上下文',
 						'/status 显示当前 model / workspace / mode',
@@ -304,7 +305,7 @@ class BotController {
 		if (active && looksLikeCancelIntent(message.text)) {
 			active.abort.abort();
 			this.activeTurns.delete(key);
-			await message.reply('已中止上一个任务。').catch(() => {});
+			await message.reply('已暂停上一个任务。').catch(() => {});
 			return;
 		}
 
@@ -384,6 +385,18 @@ class BotController {
 									if (dedupeKey && sentAttachmentPaths.has(dedupeKey)) {
 										return `已跳过重复附件：${filePath}`;
 									}
+									if (stream?.onAttachment && looksLikeImagePath(filePath)) {
+										const handled = await stream.onAttachment({
+											kind: 'image',
+											filePath,
+										});
+										if (handled) {
+											if (dedupeKey) {
+												sentAttachmentPaths.add(dedupeKey);
+											}
+											return `已将图片插入流式卡片：${filePath}`;
+										}
+									}
 									if (looksLikeImagePath(filePath) && message.replyImage) {
 										await message.replyImage(filePath);
 										if (dedupeKey) {
@@ -420,6 +433,23 @@ class BotController {
 					extractBotReplyImagePaths(text || ''),
 					sentAttachmentPaths
 				);
+				const unsentImagePaths: string[] = [];
+				for (const imagePath of imagePaths) {
+					const dedupeKey = botAttachmentDedupeKey(imagePath);
+					if (stream?.onAttachment) {
+						const handled = await stream.onAttachment({
+							kind: 'image',
+							filePath: imagePath,
+						}).catch(() => false);
+						if (handled) {
+							if (dedupeKey) {
+								sentAttachmentPaths.add(dedupeKey);
+							}
+							continue;
+						}
+					}
+					unsentImagePaths.push(imagePath);
+				}
 				if (stream) {
 					await stream!.onDone(effectiveDisplayText || '已完成，但没有返回可展示的文本结果。');
 				} else {
@@ -427,20 +457,23 @@ class BotController {
 						await message.reply(renderForPlatform(effectiveDisplayText, integration.platform));
 					}
 				}
-				if (message.replyImage && imagePaths.length > 0) {
-					for (const imagePath of imagePaths) {
+				if (message.replyImage && unsentImagePaths.length > 0) {
+					for (const imagePath of unsentImagePaths) {
 						await message.replyImage(imagePath).catch((error) => {
 							console.warn('[bots] send image failed', error instanceof Error ? error.message : error);
 						});
 					}
 				}
-				if (!stream && !effectiveDisplayText && imagePaths.length === 0) {
+				if (!stream && !effectiveDisplayText && unsentImagePaths.length === 0) {
 					await message.reply('已完成，但没有返回可展示的文本结果。');
 				}
 			} catch (error) {
 				const msg = error instanceof Error ? error.message : String(error);
 				const aborted = ac.signal.aborted;
 				if (aborted) {
+					if (stream?.onAbort) {
+						await stream.onAbort('已按指令暂停当前任务。').catch(() => {});
+					}
 					return;
 				}
 				if (stream) {

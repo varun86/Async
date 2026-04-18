@@ -12,6 +12,7 @@ import { streamingStore } from '../streamingStore';
 import type { ComposerMode } from '../ComposerPlusMenu';
 import type { TeamSettings } from '../agentSettingsTypes';
 import { userMessageToSegments, type ComposerSegment } from '../composerSegments';
+import { segmentsToParts, type UserMessagePart } from '../messageParts';
 import { applyLiveAgentChatPayload, type LiveAgentBlocksState } from '../liveAgentBlocks';
 import type { UserModelEntry } from '../modelCatalog';
 import {
@@ -47,6 +48,8 @@ export type StreamingSendOptions = {
 	modelIdOverride?: string;
 	planExecute?: ChatPlanExecutePayload;
 	planBuildPathKey?: string;
+	/** 结构化消息 parts（v2 schema）。传入时主进程以 parts 为准（图片等附件在此承载元数据）。 */
+	segments?: ComposerSegment[];
 };
 
 type StreamingSendRuntime = {
@@ -347,6 +350,12 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 		rt.resetLiveAgentBlocks();
 		const streamNonce = rt.beginStream(targetThreadId);
 
+		const structuredParts: UserMessagePart[] | undefined = opts?.segments
+			? segmentsToParts(opts.segments)
+			: undefined;
+		const partsPayload =
+			structuredParts && structuredParts.length > 0 ? structuredParts : undefined;
+
 		if (opts?.planExecute && opts.planBuildPathKey) {
 			const pathKey = opts.planBuildPathKey.trim().toLowerCase();
 			if (pathKey) {
@@ -362,6 +371,7 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 					threadId: targetThreadId,
 					visibleIndex: resendIdx,
 					text,
+					parts: partsPayload,
 					mode: effectiveMode,
 					modelId: effectiveModelId,
 					streamNonce,
@@ -399,6 +409,7 @@ export function useStreamingChatControls(runtime: StreamingSendRuntime) {
 			const sendResult = (await rt.shell.invoke('chat:send', {
 				threadId: targetThreadId,
 				text,
+				parts: partsPayload,
 				mode: effectiveMode,
 				modelId: effectiveModelId,
 				planExecute: opts?.planExecute,

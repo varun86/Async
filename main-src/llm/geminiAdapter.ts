@@ -1,6 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import type { Content } from '@google/generative-ai';
-import type { ChatMessage } from '../threadStore.js';
+import type { Content, Part } from '@google/generative-ai';
 import type { ShellSettings } from '../settingsStore.js';
 import { composeSystem, temperatureForMode } from './modePrompts.js';
 import type { StreamHandlers, TurnTokenUsage, UnifiedChatOptions } from './types.js';
@@ -8,20 +7,40 @@ import { llmSdkResponseHeadTimeoutMs } from './sdkResponseHeadTimeoutMs.js';
 import { withLlmTransportRetry } from './llmTransportRetry.js';
 import { formatLlmSdkError } from './formatLlmSdkError.js';
 import { prependProviderIdentitySystemPrompt } from './providerIdentity.js';
+import type { SendableMessage } from './sendResolved.js';
+import { userMessageTextForSend } from './sendResolved.js';
+import { buildGeminiUserParts } from './resolvedUserSerialize.js';
 
-function toGeminiContents(messages: ChatMessage[]): Content[] {
+function appendTextToLastTextPart(last: Content, text: string): boolean {
+	for (let i = last.parts.length - 1; i >= 0; i--) {
+		const p = last.parts[i]!;
+		if ('text' in p && typeof p.text === 'string') {
+			last.parts[i] = { text: `${p.text}\n\n${text}` };
+			return true;
+		}
+	}
+	return false;
+}
+
+function toGeminiContents(messages: SendableMessage[]): Content[] {
 	const nonSystem = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
 	const contents: Content[] = [];
 	for (const m of nonSystem) {
 		const role = m.role === 'user' ? 'user' : 'model';
+		const parts: Part[] =
+			role === 'user' && m.resolved && m.resolved.hasImages
+				? buildGeminiUserParts(m.resolved)
+				: [{ text: role === 'user' ? userMessageTextForSend(m) : m.content }];
 		const last = contents[contents.length - 1];
 		if (last && last.role === role) {
-			const prev = last.parts[0];
-			if (prev && 'text' in prev && typeof prev.text === 'string') {
-				last.parts = [{ text: `${prev.text}\n\n${m.content}` }];
+			if (parts.length === 1 && 'text' in parts[0]! && typeof parts[0]!.text === 'string') {
+				if (appendTextToLastTextPart(last, parts[0]!.text)) {
+					continue;
+				}
 			}
+			last.parts.push(...parts);
 		} else {
-			contents.push({ role, parts: [{ text: m.content }] });
+			contents.push({ role, parts });
 		}
 	}
 	return contents;
@@ -29,7 +48,7 @@ function toGeminiContents(messages: ChatMessage[]): Content[] {
 
 export async function streamGemini(
 	settings: ShellSettings,
-	messages: ChatMessage[],
+	messages: SendableMessage[],
 	options: UnifiedChatOptions,
 	handlers: StreamHandlers
 ): Promise<void> {

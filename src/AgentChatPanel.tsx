@@ -50,6 +50,7 @@ import {
 } from './agentTurnFocus';
 import { useAppShellGitFiles, useAppShellGitMeta } from './app/appShellContexts';
 import { userMessageToSegments, type ComposerSegment } from './composerSegments';
+import { partsToSegments, type UserMessagePart } from './messageParts';
 import type { WizardPending } from './hooks/useWizardPending';
 import type { TFunction } from './i18n';
 import { isChatAssistantErrorLine } from './i18n';
@@ -98,7 +99,7 @@ export type AgentChatPanelProps = {
 	canSendComposer: boolean;
 	canSendInlineResend: boolean;
 	sharedComposerProps: SharedComposerProps;
-	onStartInlineResend: (userMessageIndex: number, content: string) => void;
+	onStartInlineResend: (userMessageIndex: number, content: string, parts?: UserMessagePart[]) => void;
 	onOpenWorkspaceFile: (rel: string) => void;
 	onOpenAgentConversationFile: (
 		rel: string,
@@ -323,7 +324,19 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		result: ReturnType<typeof segmentAssistantContentUnified>;
 	} | null>(null);
 	const userSegsCacheRef = useRef<Map<string, ComposerSegment[]>>(new Map());
-	const cachedUserMessageToSegments = (content: string): ComposerSegment[] => {
+	const userPartsCacheRef = useRef<WeakMap<UserMessagePart[], ComposerSegment[]>>(new WeakMap());
+	const cachedUserMessageToSegments = (
+		content: string,
+		parts?: UserMessagePart[]
+	): ComposerSegment[] => {
+		if (parts && parts.length > 0) {
+			const partsCache = userPartsCacheRef.current;
+			const cached = partsCache.get(parts);
+			if (cached) return cached;
+			const result = partsToSegments(parts);
+			partsCache.set(parts, result);
+			return result;
+		}
 		const cache = userSegsCacheRef.current;
 		const cacheKey = `${knownSlashCommands.join('\u241f')}::${content}`;
 		const cached = cache.get(cacheKey);
@@ -728,7 +741,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			}
 
 			if (m.role === 'user') {
-				const userSegs = cachedUserMessageToSegments(m.content);
+				const userSegs = cachedUserMessageToSegments(m.content, m.parts);
 
 				// Look ahead: does the next assistant message contain TodoWrite?
 				const nextMsg = displayMessages[i + 1];
@@ -754,7 +767,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 								if (awaitingReply) {
 									return;
 								}
-								onStartInlineResend(userMessageIndex, m.content);
+								onStartInlineResend(userMessageIndex, m.content, m.parts);
 							}}
 						>
 							<UserMessageRich segments={userSegs} onFileClick={onOpenWorkspaceFile} />

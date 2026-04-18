@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
-import type { ChatMessage } from '../threadStore.js';
+import type { MessageParam, ContentBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import type { ShellSettings } from '../settingsStore.js';
 import { composeSystemSections, temperatureForMode } from './modePrompts.js';
 import type { StreamHandlers, TurnTokenUsage, UnifiedChatOptions } from './types.js';
@@ -23,33 +22,41 @@ import {
 	buildAnthropicProviderIdentityMetadata,
 	prependProviderIdentitySystemPrompt,
 } from './providerIdentity.js';
+import type { SendableMessage } from './sendResolved.js';
+import { userMessageTextForSend } from './sendResolved.js';
+import { buildAnthropicUserBlocks } from './resolvedUserSerialize.js';
 
-function toAnthropicMessages(messages: ChatMessage[]): MessageParam[] {
+function toAnthropicMessages(messages: SendableMessage[]): MessageParam[] {
 	const nonSystem = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
 	const out: MessageParam[] = [];
-	let buf = '';
-	let lastRole: 'user' | 'assistant' | null = null;
+	type Pending = { role: 'user' | 'assistant'; blocks: ContentBlockParam[] };
+	let cur: Pending | null = null;
+	const flush = () => {
+		if (cur && cur.blocks.length > 0) {
+			out.push({ role: cur.role, content: cur.blocks });
+		}
+		cur = null;
+	};
 	for (const m of nonSystem) {
 		const role = m.role as 'user' | 'assistant';
-		if (lastRole === role) {
-			buf += (buf ? '\n\n' : '') + m.content;
+		const blocks: ContentBlockParam[] =
+			role === 'user' && m.resolved && m.resolved.hasImages
+				? buildAnthropicUserBlocks(m.resolved)
+				: [{ type: 'text', text: role === 'user' ? userMessageTextForSend(m) : m.content }];
+		if (cur && cur.role === role) {
+			cur.blocks.push(...blocks);
 		} else {
-			if (lastRole && buf) {
-				out.push({ role: lastRole, content: buf });
-			}
-			buf = m.content;
-			lastRole = role;
+			flush();
+			cur = { role, blocks: [...blocks] };
 		}
 	}
-	if (lastRole && buf) {
-		out.push({ role: lastRole, content: buf });
-	}
+	flush();
 	return out;
 }
 
 export async function streamAnthropic(
 	settings: ShellSettings,
-	messages: ChatMessage[],
+	messages: SendableMessage[],
 	options: UnifiedChatOptions,
 	handlers: StreamHandlers
 ): Promise<void> {

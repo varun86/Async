@@ -4,12 +4,13 @@ import { streamAnthropic } from './anthropicAdapter.js';
 import { streamGemini } from './geminiAdapter.js';
 import { streamOpenAICompatible } from './openaiAdapter.js';
 import type { StreamHandlers, UnifiedChatOptions } from './types.js';
-import { cloneMessagesWithExpandedLastUser, modeExpandsWorkspaceFileContext } from './workspaceContextExpand.js';
+import { modeExpandsWorkspaceFileContext } from './workspaceContextExpand.js';
+import { resolveMessagesForSend, type SendableMessage } from './sendResolved.js';
 
 /**
  * Agent 模式的多轮工具循环已由 agent/agentLoop.ts 实现。
- * 此文件仅处理非 Agent 模式（Ask / Plan / Debug）的简单流式补全；Ask 与 Plan/Debug 一样会展开 @ 文件引用。
- * Gemini paradigm 的 Agent 模式暂回退到此处（无工具循环）。
+ * 此文件仅处理非 Agent 模式（Ask / Plan / Debug）的简单流式补全。
+ * 当消息带 `parts` 时走结构化解析；否则回退到基于 @path 的文本内联展开。
  */
 
 export async function streamChatUnified(
@@ -18,10 +19,9 @@ export async function streamChatUnified(
 	options: UnifiedChatOptions,
 	handlers: StreamHandlers
 ): Promise<void> {
-	const forModel =
-		modeExpandsWorkspaceFileContext(options.mode)
-			? cloneMessagesWithExpandedLastUser(messages, options.workspaceRoot ?? null)
-			: messages;
+	const forModel: SendableMessage[] = modeExpandsWorkspaceFileContext(options.mode)
+		? await resolveMessagesForSend(messages, options.workspaceRoot ?? null)
+		: messages.map((m) => ({ ...m }));
 	switch (options.paradigm) {
 		case 'anthropic':
 			await streamAnthropic(settings, forModel, options, handlers);

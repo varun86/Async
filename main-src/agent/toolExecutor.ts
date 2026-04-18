@@ -5,6 +5,8 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
+import { getThread } from '../threadStore.js';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -1169,6 +1171,37 @@ function executeViewImage(call: ToolCall, execCtx: ToolExecutionContext): ToolRe
 			content: `Error: image is too large for view_image (${bytes.length} bytes). Maximum supported size is ${VIEW_IMAGE_MAX_BYTES} bytes.`,
 			isError: true,
 		};
+	}
+
+	const diskSha = crypto.createHash('sha256').update(bytes).digest('hex');
+	const threadId = execCtx.threadId ?? null;
+	if (threadId) {
+		const thread = getThread(threadId);
+		const alreadyAttached = !!thread?.messages?.some(
+			(m) =>
+				m.role === 'user' &&
+				!!m.parts?.some((p) => p.kind === 'image_ref' && typeof p.sha256 === 'string' && p.sha256.length > 0 && p.sha256 === diskSha)
+		);
+		if (alreadyAttached) {
+			return {
+				toolCallId: call.id,
+				name: call.name,
+				content: JSON.stringify(
+					{
+						path: resolved.full,
+						relPath: resolved.rel,
+						mediaType,
+						sizeBytes: bytes.length,
+						sha256: diskSha,
+						deduped: true,
+						note: 'Image already attached to this conversation by the user (sha256 match). Reference it directly by relPath instead of reloading.',
+					},
+					null,
+					2
+				),
+				isError: false,
+			};
+		}
 	}
 
 	const structuredContent: AnthropicToolResultContent = [

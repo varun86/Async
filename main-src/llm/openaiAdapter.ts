@@ -1,6 +1,5 @@
 import OpenAI from 'openai';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import type { ChatMessage } from '../threadStore.js';
 import type { ShellSettings } from '../settingsStore.js';
 import { composeSystem, temperatureForMode } from './modePrompts.js';
 import type { StreamHandlers, TurnTokenUsage, UnifiedChatOptions } from './types.js';
@@ -13,10 +12,13 @@ import {
 	applyOpenAIProviderIdentity,
 	prependProviderIdentitySystemPrompt,
 } from './providerIdentity.js';
+import type { SendableMessage } from './sendResolved.js';
+import { userMessageTextForSend } from './sendResolved.js';
+import { buildOpenAIUserContent } from './resolvedUserSerialize.js';
 
 export async function streamOpenAICompatible(
 	settings: ShellSettings,
-	messages: ChatMessage[],
+	messages: SendableMessage[],
 	options: UnifiedChatOptions,
 	handlers: StreamHandlers
 ): Promise<void> {
@@ -58,7 +60,14 @@ export async function streamOpenAICompatible(
 
 	const apiMessages = messages
 		.filter((m) => m.role !== 'system')
-		.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+		.map((m) => {
+			const role = m.role as 'user' | 'assistant';
+			if (role === 'user' && m.resolved && m.resolved.hasImages) {
+				return { role, content: buildOpenAIUserContent(m.resolved) };
+			}
+			const text = role === 'user' ? userMessageTextForSend(m) : m.content;
+			return { role, content: text };
+		});
 
 	const storedSystem = messages.find((m) => m.role === 'system');
 	const systemContent = prependProviderIdentitySystemPrompt(

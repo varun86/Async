@@ -17,7 +17,58 @@ export type ThreadInfo = {
 	fileStateCount?: number;
 };
 
-export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+import type { UserMessagePart } from './messageParts';
+
+export type ChatMessage = {
+	role: 'user' | 'assistant';
+	content: string;
+	/** Present on v2 user messages. When set, `parts` is the source of truth for
+	 * rendering / send / estimate; `content` is a derived display cache. */
+	parts?: UserMessagePart[];
+};
+
+function sameUserParts(a: UserMessagePart[] | undefined, b: UserMessagePart[] | undefined): boolean {
+	if (a === b) {
+		return true;
+	}
+	const ax = a ?? [];
+	const bx = b ?? [];
+	if (ax.length !== bx.length) {
+		return false;
+	}
+	for (let i = 0; i < ax.length; i++) {
+		const x = ax[i]!;
+		const y = bx[i]!;
+		if (x.kind !== y.kind) {
+			return false;
+		}
+		if (x.kind === 'text' && y.kind === 'text' && x.text !== y.text) {
+			return false;
+		}
+		if (x.kind === 'command' && y.kind === 'command' && x.command !== y.command) {
+			return false;
+		}
+		if (x.kind === 'file_ref' && y.kind === 'file_ref' && x.relPath !== y.relPath) {
+			return false;
+		}
+		if (
+			x.kind === 'image_ref' &&
+			y.kind === 'image_ref' &&
+			(
+				x.relPath !== y.relPath ||
+				x.mimeType !== y.mimeType ||
+				x.sizeBytes !== y.sizeBytes ||
+				x.width !== y.width ||
+				x.height !== y.height ||
+				x.sha256 !== y.sha256 ||
+				(x.staleRef ?? false) !== (y.staleRef ?? false)
+			)
+		) {
+			return false;
+		}
+	}
+	return true;
+}
 
 /** 列表项引用或 role/content 均相同则视为相等，供 loadMessages 避免无意义的新数组引用 */
 export function chatMessagesListEqual(a: ChatMessage[], b: ChatMessage[]): boolean {
@@ -30,7 +81,7 @@ export function chatMessagesListEqual(a: ChatMessage[], b: ChatMessage[]): boole
 		if (x === y) {
 			continue;
 		}
-		if (x.role !== y.role || x.content !== y.content) {
+		if (x.role !== y.role || x.content !== y.content || !sameUserParts(x.parts, y.parts)) {
 			return false;
 		}
 	}

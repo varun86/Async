@@ -63,6 +63,12 @@ import {
 	buildAnthropicProviderIdentityMetadata,
 	prependProviderIdentitySystemPrompt,
 } from '../llm/providerIdentity.js';
+import {
+	buildAnthropicUserBlocks,
+	buildOpenAIUserContent,
+} from '../llm/resolvedUserSerialize.js';
+import type { SendableMessage } from '../llm/sendResolved.js';
+import { userMessageTextForSend } from '../llm/sendResolved.js';
 import { repairAgentThreadMessagesForApi } from './agentToolProtocolRepair.js';
 import { StructuredAssistantBuilder } from './structuredAssistantBuilder.js';
 import { parseAgentAssistantPayload } from '../../src/agentStructuredMessage.js';
@@ -262,7 +268,7 @@ export type AgentLoopOptions = {
 	/**
 	 * Called before each LLM round. Use this to inject additional user/assistant messages into a running loop.
 	 */
-	beforeRoundMessages?: () => Promise<ChatMessage[]>;
+	beforeRoundMessages?: () => Promise<SendableMessage[]>;
 	/**
 	 * Anthropic：prompt cache 断点挂在倒数第二条消息，避免无后续读取的尾部写入 KVCC。
 	 */
@@ -429,7 +435,7 @@ function appendMcpToolsSystemHint(
 	].join('\n');
 }
 
-function appendMessagesToOpenAIConversation(conversation: OAIMsg[], messages: ChatMessage[]): OAIMsg[] {
+function appendMessagesToOpenAIConversation(conversation: OAIMsg[], messages: SendableMessage[]): OAIMsg[] {
 	let next = [...conversation];
 	for (const message of messages) {
 		if (message.role === 'system') {
@@ -444,12 +450,21 @@ function appendMessagesToOpenAIConversation(conversation: OAIMsg[], messages: Ch
 			}
 			continue;
 		}
-		next.push({ role: 'user', content: message.content });
+		next.push({
+			role: 'user',
+			content:
+				message.resolved && message.resolved.hasImages
+					? buildOpenAIUserContent(message.resolved)
+					: userMessageTextForSend(message),
+		});
 	}
 	return mergeAdjacentOpenAIUserMessages(next);
 }
 
-function appendMessagesToAnthropicConversation(conversation: MessageParam[], messages: ChatMessage[]): MessageParam[] {
+function appendMessagesToAnthropicConversation(
+	conversation: MessageParam[],
+	messages: SendableMessage[]
+): MessageParam[] {
 	let next = [...conversation];
 	for (const message of messages) {
 		if (message.role === 'system') {
@@ -464,7 +479,13 @@ function appendMessagesToAnthropicConversation(conversation: MessageParam[], mes
 			}
 			continue;
 		}
-		next.push({ role: 'user', content: message.content });
+		next.push({
+			role: 'user',
+			content:
+				message.resolved && message.resolved.hasImages
+					? buildAnthropicUserBlocks(message.resolved)
+					: userMessageTextForSend(message),
+		});
 	}
 	return mergeAdjacentAnthropicUserMessages(next);
 }
@@ -491,7 +512,7 @@ async function prepareMcpConnectionsForSession(
 
 export async function runAgentLoop(
 	settings: ShellSettings,
-	threadMessages: ChatMessage[],
+	threadMessages: SendableMessage[],
 	options: AgentLoopOptions,
 	handlers: AgentLoopHandlers
 ): Promise<void> {
@@ -630,7 +651,7 @@ function buildOpenAIViewImageFollowupMessage(results: ToolResult[]): OAIMsg | nu
 }
 
 function threadToOpenAI(
-	messages: ChatMessage[],
+	messages: SendableMessage[],
 	systemContent: string
 ): OAIMsg[] {
 	const out: OAIMsg[] = [{ role: 'system', content: systemContent }];
@@ -644,7 +665,13 @@ function threadToOpenAI(
 				out.push({ role: 'assistant', content: m.content });
 			}
 		} else {
-			out.push({ role: 'user', content: m.content });
+			out.push({
+				role: 'user',
+				content:
+					m.resolved && m.resolved.hasImages
+						? buildOpenAIUserContent(m.resolved)
+						: userMessageTextForSend(m),
+			});
 		}
 	}
 	return out;
@@ -652,7 +679,7 @@ function threadToOpenAI(
 
 async function runOpenAILoop(
 	settings: ShellSettings,
-	threadMessages: ChatMessage[],
+	threadMessages: SendableMessage[],
 	options: AgentLoopOptions,
 	handlers: AgentLoopHandlers
 ): Promise<void> {
@@ -1162,47 +1189,48 @@ async function runOpenAILoop(
 
 // ─── Anthropic agent loop ───────────────────────────────────────────────────
 
-function threadToAnthropic(messages: ChatMessage[]): MessageParam[] {
+function threadToAnthropic(messages: SendableMessage[]): MessageParam[] {
 	const nonSystem = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
 	const out: MessageParam[] = [];
-	let mergeBuf = '';
-	let mergeRole: 'user' | 'assistant' | null = null;
+	type Pending = { role: 'user' | 'assistant'; blocks: ContentBlockParam[] };
+	let current: Pending | null = null;
 
-	const flushMerge = () => {
-		if (mergeRole !== null && mergeBuf !== '') {
-			out.push({ role: mergeRole, content: mergeBuf });
+	const flush = () => {
+		if (current && current.blocks.length > 0) {
+			out.push({ role: current.role, content: current.blocks });
 		}
-		mergeBuf = '';
-		mergeRole = null;
+		current = null;
 	};
 
 	for (const m of nonSystem) {
 		if (m.role === 'assistant') {
 			const p = parseAgentAssistantPayload(m.content);
 			if (p) {
-				flushMerge();
+				flush();
 				out.push(...expandStructuredAssistantPayloadToAnthropic(p));
 				continue;
 			}
 		}
 
 		const role = m.role as 'user' | 'assistant';
-		const piece = m.content;
-		if (mergeRole === role) {
-			mergeBuf += (mergeBuf ? '\n\n' : '') + piece;
+		const blocks: ContentBlockParam[] =
+			role === 'user' && m.resolved && m.resolved.hasImages
+				? buildAnthropicUserBlocks(m.resolved)
+				: [{ type: 'text', text: role === 'user' ? userMessageTextForSend(m) : m.content }];
+		if (current && current.role === role) {
+			current.blocks.push(...blocks);
 		} else {
-			flushMerge();
-			mergeBuf = piece;
-			mergeRole = role;
+			flush();
+			current = { role, blocks: [...blocks] };
 		}
 	}
-	flushMerge();
+	flush();
 	return out;
 }
 
 async function runAnthropicLoop(
 	settings: ShellSettings,
-	threadMessages: ChatMessage[],
+	threadMessages: SendableMessage[],
 	options: AgentLoopOptions,
 	handlers: AgentLoopHandlers
 ): Promise<void> {

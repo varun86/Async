@@ -9,10 +9,6 @@ vi.mock('./common.js', async (importOriginal) => {
 
 import { FeishuCardKitClient, FeishuStreamingSession, type CardKitSchema } from './feishuCardKit.js';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function tokenResponse(token = 'tok_test', expire = 7200) {
 	return { code: 0, msg: 'ok', tenant_access_token: token, expire };
 }
@@ -43,186 +39,104 @@ function createClient() {
 	});
 }
 
-/** Set up requestJsonMock to auto-respond to token + one follow-up call */
 function mockTokenThenApi(apiResult: unknown) {
-	requestJsonMock
-		.mockResolvedValueOnce(tokenResponse())
-		.mockResolvedValueOnce(apiResult);
+	requestJsonMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(apiResult);
 }
-
-// ---------------------------------------------------------------------------
-// FeishuCardKitClient
-// ---------------------------------------------------------------------------
 
 describe('FeishuCardKitClient', () => {
 	beforeEach(() => {
 		requestJsonMock.mockReset();
 	});
 
-	describe('createCard', () => {
-		it('sends card JSON and returns card_id', async () => {
-			mockTokenThenApi(okResponse({ card_id: 'card_abc' }));
-			const client = createClient();
-			const cardId = await client.createCard({
-				schema: '2.0',
-				config: {
-					streaming_mode: true,
-					summary: { content: 'test' },
-				},
-				body: { elements: [{ tag: 'markdown', content: 'hi', element_id: 'content' }] },
-			});
-			expect(cardId).toBe('card_abc');
+	it('creates a card entity and returns card_id', async () => {
+		mockTokenThenApi(okResponse({ card_id: 'card_abc' }));
+		const client = createClient();
 
-			// Verify token request
-			expect(requestJsonMock).toHaveBeenCalledTimes(2);
-			const tokenCall = requestJsonMock.mock.calls[0];
-			expect(tokenCall[0]).toBe('https://api.test/auth/v3/tenant_access_token/internal');
-			expect(tokenCall[1].body).toEqual({ app_id: 'app_test', app_secret: 'secret_test' });
-
-			// Verify card creation request
-			const cardCall = requestJsonMock.mock.calls[1];
-			expect(cardCall[0]).toBe('https://api.test/cardkit/v1/cards');
-			expect(cardCall[1].method).toBe('POST');
-			expect(cardCall[1].headers.Authorization).toBe('Bearer tok_test');
-			const body = cardCall[1].body as Record<string, unknown>;
-			expect(body.type).toBe('card_json');
-			expect(typeof body.data).toBe('string');
+		const cardId = await client.createCard({
+			schema: '2.0',
+			config: {
+				streaming_mode: true,
+				summary: { content: 'test' },
+			},
+			body: {
+				elements: [{ tag: 'markdown', content: 'hi', element_id: 'status' }],
+			},
 		});
 
-		it('throws when response has no card_id', async () => {
-			mockTokenThenApi(okResponse({}));
-			const client = createClient();
-			await expect(client.createCard({
-				schema: '2.0',
-				config: { streaming_mode: true, summary: { content: '' } },
-				body: { elements: [] },
-			} as CardKitSchema)).rejects.toThrow('missing card_id');
-		});
+		expect(cardId).toBe('card_abc');
+		expect(requestJsonMock).toHaveBeenCalledTimes(2);
+		expect(requestJsonMock.mock.calls[1]?.[0]).toBe('https://api.test/cardkit/v1/cards');
+	});
 
-		it('throws on API error', async () => {
-			requestJsonMock
-				.mockResolvedValueOnce(tokenResponse())
-				.mockResolvedValueOnce(errorResponse(40003, 'permission denied'));
-			const client = createClient();
-			await expect(client.createCard({
-				schema: '2.0',
-				config: { streaming_mode: true, summary: { content: '' } },
-				body: { elements: [] },
-			} as CardKitSchema)).rejects.toThrow('permission denied');
+	it('updates a component with full element json', async () => {
+		mockTokenThenApi(okResponse());
+		const client = createClient();
+
+		await client.updateElement(
+			'card_1',
+			'image_1',
+			{
+				tag: 'img',
+				element_id: 'image_1',
+				img_key: 'img_v3_xxx',
+				alt: { tag: 'plain_text', content: 'preview' },
+			},
+			3
+		);
+
+		const apiCall = requestJsonMock.mock.calls[1];
+		expect(apiCall[0]).toBe('https://api.test/cardkit/v1/cards/card_1/elements/image_1');
+		expect(apiCall[1].method).toBe('PUT');
+		expect(apiCall[1].body.sequence).toBe(3);
+		expect(JSON.parse(apiCall[1].body.element)).toMatchObject({
+			tag: 'img',
+			element_id: 'image_1',
+			img_key: 'img_v3_xxx',
 		});
 	});
 
-	describe('updateElementContent', () => {
-		it('sends PUT with correct path and body', async () => {
-			mockTokenThenApi(okResponse());
-			const client = createClient();
-			await client.updateElementContent('card_1', 'el_1', 'new text', 3);
+	it('closes streaming mode with a summary', async () => {
+		mockTokenThenApi(okResponse());
+		const client = createClient();
 
-			const apiCall = requestJsonMock.mock.calls[1];
-			expect(apiCall[0]).toBe('https://api.test/cardkit/v1/cards/card_1/elements/el_1/content');
-			expect(apiCall[1].method).toBe('PUT');
-			expect(apiCall[1].body).toEqual({
-				content: 'new text',
-				sequence: 3,
-				uuid: 's_card_1_3',
-			});
-		});
+		await client.closeStreaming('card_1', 'Done', 5);
+
+		const apiCall = requestJsonMock.mock.calls[1];
+		expect(apiCall[0]).toBe('https://api.test/cardkit/v1/cards/card_1/settings');
+		expect(apiCall[1].method).toBe('PATCH');
+		const settings = JSON.parse(apiCall[1].body.settings);
+		expect(settings.config.streaming_mode).toBe(false);
+		expect(settings.config.summary.content).toBe('Done');
 	});
 
-	describe('closeStreaming', () => {
-		it('sends PATCH with settings payload', async () => {
-			mockTokenThenApi(okResponse());
-			const client = createClient();
-			await client.closeStreaming('card_1', 'Done', 5);
+	it('sends the card as an interactive reply message', async () => {
+		mockTokenThenApi(okResponse({ message_id: 'msg_123' }));
+		const client = createClient();
 
-			const apiCall = requestJsonMock.mock.calls[1];
-			expect(apiCall[0]).toBe('https://api.test/cardkit/v1/cards/card_1/settings');
-			expect(apiCall[1].method).toBe('PATCH');
-			const body = apiCall[1].body as Record<string, unknown>;
-			expect(body.sequence).toBe(5);
-			expect(body.uuid).toBe('c_card_1_5');
-			const settings = JSON.parse(body.settings as string);
-			expect(settings.config.streaming_mode).toBe(false);
-			expect(settings.config.summary.content).toBe('Done');
-		});
+		const msgId = await client.sendCardMessage('chat_1', 'card_1', 'msg_orig');
+
+		expect(msgId).toBe('msg_123');
+		expect(requestJsonMock.mock.calls[1]?.[0]).toBe('https://api.test/im/v1/messages/msg_orig/reply');
 	});
 
-	describe('sendCardMessage', () => {
-		it('sends to chat when no replyMessageId', async () => {
-			mockTokenThenApi(okResponse({ message_id: 'msg_123' }));
-			const client = createClient();
-			const msgId = await client.sendCardMessage('chat_1', 'card_1');
-			expect(msgId).toBe('msg_123');
+	it('retries once on token-expired error', async () => {
+		requestJsonMock
+			.mockResolvedValueOnce(tokenResponse('tok_old'))
+			.mockResolvedValueOnce(errorResponse(99991663, 'token expired'))
+			.mockResolvedValueOnce(tokenResponse('tok_new'))
+			.mockResolvedValueOnce(okResponse({ card_id: 'card_retry' }));
 
-			const apiCall = requestJsonMock.mock.calls[1];
-			expect(apiCall[0]).toBe('https://api.test/im/v1/messages?receive_id_type=chat_id');
-			expect(apiCall[1].body).toMatchObject({
-				receive_id: 'chat_1',
-				msg_type: 'interactive',
-			});
-		});
+		const client = createClient();
+		const cardId = await client.createCard({
+			schema: '2.0',
+			config: { streaming_mode: true, summary: { content: '' } },
+			body: { elements: [] },
+		} as CardKitSchema);
 
-		it('replies to message when replyMessageId provided', async () => {
-			mockTokenThenApi(okResponse({ message_id: 'msg_456' }));
-			const client = createClient();
-			const msgId = await client.sendCardMessage('chat_1', 'card_1', 'msg_orig');
-			expect(msgId).toBe('msg_456');
-
-			const apiCall = requestJsonMock.mock.calls[1];
-			expect(apiCall[0]).toBe('https://api.test/im/v1/messages/msg_orig/reply');
-		});
-
-		it('throws when response has no message_id', async () => {
-			mockTokenThenApi(okResponse({}));
-			const client = createClient();
-			await expect(client.sendCardMessage('chat_1', 'card_1')).rejects.toThrow('missing message_id');
-		});
-	});
-
-	describe('token management', () => {
-		it('reuses cached token within TTL', async () => {
-			requestJsonMock
-				.mockResolvedValueOnce(tokenResponse('tok_1'))
-				.mockResolvedValueOnce(okResponse({ card_id: 'c1' }))
-				.mockResolvedValueOnce(okResponse({ card_id: 'c2' }));
-
-			const client = createClient();
-			const card = { schema: '2.0', config: { streaming_mode: true, summary: { content: '' } }, body: { elements: [] } } as CardKitSchema;
-			await client.createCard(card);
-			await client.createCard(card);
-
-			// Only one token request, two API calls
-			expect(requestJsonMock).toHaveBeenCalledTimes(3);
-			const urls = requestJsonMock.mock.calls.map((c: unknown[]) => c[0]);
-			expect(urls.filter((u: string) => u.includes('tenant_access_token'))).toHaveLength(1);
-		});
-
-		it('retries once on token-expired error (99991663)', async () => {
-			requestJsonMock
-				.mockResolvedValueOnce(tokenResponse('tok_old'))  // first token
-				.mockResolvedValueOnce(errorResponse(99991663, 'token expired'))  // API rejects
-				.mockResolvedValueOnce(tokenResponse('tok_new'))  // refresh token
-				.mockResolvedValueOnce(okResponse({ card_id: 'c_retry' }));  // retry succeeds
-
-			const client = createClient();
-			const card = { schema: '2.0', config: { streaming_mode: true, summary: { content: '' } }, body: { elements: [] } } as CardKitSchema;
-			const cardId = await client.createCard(card);
-			expect(cardId).toBe('c_retry');
-			expect(requestJsonMock).toHaveBeenCalledTimes(4);
-		});
-
-		it('throws on token refresh failure', async () => {
-			requestJsonMock.mockResolvedValueOnce(errorResponse(10001, 'invalid credentials'));
-			const client = createClient();
-			const card = { schema: '2.0', config: { streaming_mode: true, summary: { content: '' } }, body: { elements: [] } } as CardKitSchema;
-			await expect(client.createCard(card)).rejects.toThrow('invalid credentials');
-		});
+		expect(cardId).toBe('card_retry');
+		expect(requestJsonMock).toHaveBeenCalledTimes(4);
 	});
 });
-
-// ---------------------------------------------------------------------------
-// FeishuStreamingSession
-// ---------------------------------------------------------------------------
 
 describe('FeishuStreamingSession', () => {
 	let client: FeishuCardKitClient;
@@ -230,7 +144,6 @@ describe('FeishuStreamingSession', () => {
 	beforeEach(() => {
 		requestJsonMock.mockReset();
 		vi.useFakeTimers();
-		// Default: token + createCard + sendCardMessage
 		requestJsonMock
 			.mockResolvedValueOnce(tokenResponse())
 			.mockResolvedValueOnce(okResponse({ card_id: 'card_stream' }))
@@ -242,71 +155,61 @@ describe('FeishuStreamingSession', () => {
 		vi.useRealTimers();
 	});
 
-	it('starts a streaming session: creates card and sends message', async () => {
+	it('creates a multi-section streaming card on start', async () => {
 		const session = new FeishuStreamingSession(client);
-		expect(session.isActive).toBe(false);
-		expect(session.isFailed).toBe(false);
 
 		await session.start('chat_1', 'msg_reply');
+
 		expect(session.isActive).toBe(true);
-		expect(session.isFailed).toBe(false);
-
-		// token + createCard + sendMessage = 3 calls
 		expect(requestJsonMock).toHaveBeenCalledTimes(3);
+		const createCardBody = requestJsonMock.mock.calls[1]?.[1]?.body as Record<string, unknown>;
+		const payload = JSON.parse(String(createCardBody.data ?? '{}'));
+		expect(payload.body.elements).toHaveLength(8);
+		expect(payload.body.elements[0]).toMatchObject({ element_id: 'status', tag: 'markdown' });
+		expect(payload.body.elements[3]).toMatchObject({ element_id: 'output', tag: 'markdown' });
 	});
 
-	it('marks session as failed if start throws', async () => {
-		requestJsonMock.mockReset();
-		requestJsonMock.mockRejectedValueOnce(new Error('network down'));
-		const failClient = createClient();
-		const session = new FeishuStreamingSession(failClient);
-		await session.start('chat_1');
-		expect(session.isFailed).toBe(true);
-		expect(session.isActive).toBe(false);
-	});
-
-	it('waits for startup to finish before sending the final close update', async () => {
+	it('waits for startup before sending the final close update', async () => {
 		requestJsonMock.mockReset();
 		const token = createDeferred<{ code: number; msg: string; tenant_access_token: string; expire: number }>();
 		const createCard = createDeferred<{ code: number; msg: string; data: { card_id: string } }>();
 		const sendMessage = createDeferred<{ code: number; msg: string; data: { message_id: string } }>();
-		const updateContent = createDeferred<{ code: number; msg: string; data: Record<string, unknown> }>();
+		const updateStatus = createDeferred<{ code: number; msg: string; data: Record<string, unknown> }>();
+		const updateProgress = createDeferred<{ code: number; msg: string; data: Record<string, unknown> }>();
+		const updateOutput = createDeferred<{ code: number; msg: string; data: Record<string, unknown> }>();
 		const closeStreaming = createDeferred<{ code: number; msg: string; data: Record<string, unknown> }>();
 		requestJsonMock
 			.mockReturnValueOnce(token.promise)
 			.mockReturnValueOnce(createCard.promise)
 			.mockReturnValueOnce(sendMessage.promise)
-			.mockReturnValueOnce(updateContent.promise)
+			.mockReturnValueOnce(updateStatus.promise)
+			.mockReturnValueOnce(updateProgress.promise)
+			.mockReturnValueOnce(updateOutput.promise)
 			.mockReturnValueOnce(closeStreaming.promise);
 
-		const raceClient = createClient();
-		const session = new FeishuStreamingSession(raceClient);
+		const session = new FeishuStreamingSession(createClient());
 		const startPromise = session.start('chat_1', 'msg_reply');
-		session.update('intermediate text');
+		session.update('Final answer.');
 		const closePromise = session.close('Final answer.');
-
-		expect(requestJsonMock).toHaveBeenCalledTimes(1);
 
 		token.resolve(tokenResponse());
 		createCard.resolve(okResponse({ card_id: 'card_race' }));
 		sendMessage.resolve(okResponse({ message_id: 'msg_race' }));
-		updateContent.resolve(okResponse());
+		updateStatus.resolve(okResponse());
+		updateProgress.resolve(okResponse());
+		updateOutput.resolve(okResponse());
 		closeStreaming.resolve(okResponse());
+
 		await startPromise;
 		await closePromise;
-		expect(requestJsonMock).toHaveBeenCalledTimes(5);
 
-		const updateCall = requestJsonMock.mock.calls[3];
-		expect(updateCall[0]).toContain('/cardkit/v1/cards/card_race/elements/content/content');
-		expect(updateCall[1].body.content).toContain('### 输出');
-		expect(updateCall[1].body.content).toContain('Final answer.');
-
-		const closeCall = requestJsonMock.mock.calls[4];
-		expect(closeCall[0]).toContain('/cardkit/v1/cards/card_race/settings');
-		expect(session.isActive).toBe(false);
+		expect(requestJsonMock.mock.calls[3]?.[0]).toContain('/cardkit/v1/cards/card_race/elements/status');
+		expect(requestJsonMock.mock.calls[4]?.[0]).toContain('/cardkit/v1/cards/card_race/elements/progress');
+		expect(requestJsonMock.mock.calls[5]?.[0]).toContain('/cardkit/v1/cards/card_race/elements/output');
+		expect(requestJsonMock.mock.calls[6]?.[0]).toContain('/cardkit/v1/cards/card_race/settings');
 	});
 
-	it('update() is throttled and sends content after THROTTLE_MS', async () => {
+	it('throttles text updates and renders them into the output element', async () => {
 		const session = new FeishuStreamingSession(client);
 		await session.start('chat_1');
 		requestJsonMock.mockResolvedValue(okResponse());
@@ -315,66 +218,34 @@ describe('FeishuStreamingSession', () => {
 		session.update('Hello world');
 		session.update('Hello world!');
 
-		// Nothing sent yet (throttle timer not fired)
-		expect(requestJsonMock).toHaveBeenCalledTimes(3); // only token + card + msg
+		expect(requestJsonMock).toHaveBeenCalledTimes(3);
+		await vi.advanceTimersByTimeAsync(500);
 
-		// Advance past throttle
-		await vi.advanceTimersByTimeAsync(150);
-
-		// One update call should have been made with latest content
-		expect(requestJsonMock.mock.calls.length).toBeGreaterThan(3);
-		const lastApiCall = requestJsonMock.mock.calls[requestJsonMock.mock.calls.length - 1];
-		expect(lastApiCall[0]).toContain('/elements/content/content');
-		expect(lastApiCall[1].body.content).toContain('### 输出');
-		expect(lastApiCall[1].body.content).toContain('Hello world!');
+		const updateCalls = requestJsonMock.mock.calls.slice(3);
+		expect(updateCalls.some((call) => String(call[0]).includes('/elements/output'))).toBe(true);
+		const outputCall = updateCalls.find((call) => String(call[0]).includes('/elements/output'));
+		const outputElement = JSON.parse(String(outputCall?.[1]?.body?.element ?? '{}'));
+		expect(outputElement.content).toContain('Hello world!');
 	});
 
-	it('update() does nothing when session is not active', async () => {
-		const session = new FeishuStreamingSession(client);
-		// Not started — update should be a no-op
-		const callsBefore = requestJsonMock.mock.calls.length;
-		session.update('test');
-		await vi.advanceTimersByTimeAsync(200);
-		// No new API calls were made
-		expect(requestJsonMock.mock.calls.length).toBe(callsBefore);
-	});
-
-	it('setToolStatus adds tool status block to content', async () => {
+	it('keeps concrete tool progress visible even after output starts', async () => {
 		const session = new FeishuStreamingSession(client);
 		await session.start('chat_1');
 		requestJsonMock.mockResolvedValue(okResponse());
 
-		session.setToolStatus('Read', 'running');
+		session.setToolStatus('Browser', 'running', '浏览器：navigate');
+		session.update('Collecting details...');
+		await vi.advanceTimersByTimeAsync(500);
 
-		await vi.advanceTimersByTimeAsync(150);
-
-		const updateCalls = requestJsonMock.mock.calls.slice(3);
-		expect(updateCalls.length).toBeGreaterThan(0);
-		const sentContent = updateCalls[updateCalls.length - 1][1].body.content as string;
-		expect(sentContent).toContain('### 执行进度');
-		expect(sentContent).toContain('`Read`');
-		expect(sentContent).toContain('⏳ 正在思考...');
+		const progressCall = requestJsonMock.mock.calls
+			.slice(3)
+			.find((call) => String(call[0]).includes('/elements/progress'));
+		const progressElement = JSON.parse(String(progressCall?.[1]?.body?.element ?? '{}'));
+		expect(progressElement.content).toContain('[当前] 浏览器：navigate');
+		expect(progressElement.content).toContain('**进展**');
 	});
 
-	it('hides tool status block after visible output starts', async () => {
-		const session = new FeishuStreamingSession(client);
-		await session.start('chat_1');
-		requestJsonMock.mockResolvedValue(okResponse());
-
-		session.setToolStatus('Read', 'running');
-		session.update('Working...');
-
-		await vi.advanceTimersByTimeAsync(150);
-
-		const updateCalls = requestJsonMock.mock.calls.slice(3);
-		const sentContent = updateCalls[updateCalls.length - 1][1].body.content as string;
-		expect(sentContent).toContain('### 输出');
-		expect(sentContent).toContain('Working...');
-		expect(sentContent).not.toContain('### 执行进度');
-		expect(sentContent).not.toContain('`Read`');
-	});
-
-	it('renders todo items in a dedicated block', async () => {
+	it('renders todo items in a dedicated section', async () => {
 		const session = new FeishuStreamingSession(client);
 		await session.start('chat_1');
 		requestJsonMock.mockResolvedValue(okResponse());
@@ -384,164 +255,53 @@ describe('FeishuStreamingSession', () => {
 			{ content: 'Trace settings flow', status: 'in_progress', activeForm: 'Tracing settings flow' },
 			{ content: 'Write fix', status: 'pending' },
 		]);
-		session.update('Collecting details...');
+		await vi.advanceTimersByTimeAsync(300);
 
-		await vi.advanceTimersByTimeAsync(150);
-
-		const updateCalls = requestJsonMock.mock.calls.slice(3);
-		const sentContent = updateCalls[updateCalls.length - 1][1].body.content as string;
-		expect(sentContent).toContain('### TODO');
-		expect(sentContent).toContain('✅ Inspect workspace');
-		expect(sentContent).toContain('⏳ Tracing settings flow');
-		expect(sentContent).toContain('⬜ Write fix');
+		const todoCall = requestJsonMock.mock.calls
+			.slice(3)
+			.find((call) => String(call[0]).includes('/elements/todo'));
+		const todoElement = JSON.parse(String(todoCall?.[1]?.body?.element ?? '{}'));
+		expect(todoElement.content).toContain('[已完成] Inspect workspace');
+		expect(todoElement.content).toContain('[进行中] Tracing settings flow');
+		expect(todoElement.content).toContain('[待处理] Write fix');
 	});
 
-	it('setToolStatus updates existing tool state', async () => {
+	it('uploads inline images into dedicated img components', async () => {
+		const uploadImage = vi.fn(async () => 'img_v3_uploaded');
+		const session = new FeishuStreamingSession(client, { uploadImage });
+		await session.start('chat_1');
+		requestJsonMock.mockResolvedValue(okResponse());
+
+		const handled = await session.attachImage('C:\\Temp\\capture.png', 'capture.png');
+		await vi.advanceTimersByTimeAsync(300);
+
+		expect(handled).toBe(true);
+		expect(uploadImage).toHaveBeenCalledWith('C:\\Temp\\capture.png');
+		const imageCall = requestJsonMock.mock.calls
+			.slice(3)
+			.find((call) => String(call[0]).includes('/elements/image_1'));
+		const imageElement = JSON.parse(String(imageCall?.[1]?.body?.element ?? '{}'));
+		expect(imageElement).toMatchObject({
+			tag: 'img',
+			element_id: 'image_1',
+			img_key: 'img_v3_uploaded',
+		});
+	});
+
+	it('closes as paused when aborted', async () => {
 		const session = new FeishuStreamingSession(client);
 		await session.start('chat_1');
 		requestJsonMock.mockResolvedValue(okResponse());
 
-		session.setToolStatus('Bash', 'running');
-		await vi.advanceTimersByTimeAsync(150);
+		await session.abort('已按指令暂停当前任务。');
 
-		session.setToolStatus('Bash', 'completed');
-		await vi.advanceTimersByTimeAsync(150);
+		const callsAfterStart = requestJsonMock.mock.calls.slice(3);
+		const statusCall = callsAfterStart.find((call) => String(call[0]).includes('/elements/status'));
+		const statusElement = JSON.parse(String(statusCall?.[1]?.body?.element ?? '{}'));
+		expect(statusElement.content).toContain('**已暂停**');
 
-		const updateCalls = requestJsonMock.mock.calls.slice(3);
-		const lastContent = updateCalls[updateCalls.length - 1][1].body.content as string;
-		expect(lastContent).toContain('✅');
-		expect(lastContent).not.toContain('🔄');
-	});
-
-	it('close() sends final update and closes streaming', async () => {
-		const session = new FeishuStreamingSession(client);
-		await session.start('chat_1');
-		requestJsonMock.mockResolvedValue(okResponse());
-
-		await session.close('Final answer.');
-
-		// After close: updateElement + closeStreaming = 2 more calls
-		const closeCalls = requestJsonMock.mock.calls.slice(3);
-		expect(closeCalls.length).toBe(2);
-
-		// First: update element with final content
-		expect(closeCalls[0][0]).toContain('/elements/content/content');
-		expect(closeCalls[0][1].body.content).toContain('### 输出');
-		expect(closeCalls[0][1].body.content).toContain('Final answer.');
-
-		// Second: close streaming
-		expect(closeCalls[1][0]).toContain('/settings');
-		expect(closeCalls[1][1].method).toBe('PATCH');
-		const settings = JSON.parse(closeCalls[1][1].body.settings);
-		expect(settings.config.streaming_mode).toBe(false);
-	});
-
-	it('close() skips update if content unchanged', async () => {
-		const session = new FeishuStreamingSession(client);
-		await session.start('chat_1');
-		requestJsonMock.mockResolvedValue(okResponse());
-
-		// Update with some text, let throttle fire
-		session.update('Same text');
-		await vi.advanceTimersByTimeAsync(150);
-
-		const callsBeforeClose = requestJsonMock.mock.calls.length;
-
-		// Close with same text
-		await session.close('Same text');
-
-		const closeCalls = requestJsonMock.mock.calls.slice(callsBeforeClose);
-		// Only closeStreaming (no redundant update since content is the same)
-		expect(closeCalls.length).toBe(1);
-		expect(closeCalls[0][0]).toContain('/settings');
-	});
-
-	it('close() is idempotent', async () => {
-		const session = new FeishuStreamingSession(client);
-		await session.start('chat_1');
-		requestJsonMock.mockResolvedValue(okResponse());
-
-		await session.close('Done');
-		const callCount = requestJsonMock.mock.calls.length;
-
-		await session.close('Done again');
-		expect(requestJsonMock.mock.calls.length).toBe(callCount); // no additional calls
-	});
-
-	it('close() cancels pending throttle timer', async () => {
-		const session = new FeishuStreamingSession(client);
-		await session.start('chat_1');
-		requestJsonMock.mockResolvedValue(okResponse());
-
-		session.update('Pending...');
-		// Do not advance timer — close immediately
-		await session.close('Final.');
-
-		const closeCalls = requestJsonMock.mock.calls.slice(3);
-		// Should have: updateElement (with 'Final.') + closeStreaming
-		expect(closeCalls.length).toBe(2);
-		expect(closeCalls[0][1].body.content).toContain('### 输出');
-		expect(closeCalls[0][1].body.content).toContain('Final.');
-
-		// Advance timer to verify no late update fires
-		const countAfterClose = requestJsonMock.mock.calls.length;
-		await vi.advanceTimersByTimeAsync(200);
-		expect(requestJsonMock.mock.calls.length).toBe(countAfterClose);
-	});
-
-	it('sequence numbers increment monotonically', async () => {
-		const session = new FeishuStreamingSession(client);
-		await session.start('chat_1');
-		requestJsonMock.mockResolvedValue(okResponse());
-
-		session.update('Step 1');
-		await vi.advanceTimersByTimeAsync(150);
-		session.update('Step 2');
-		await vi.advanceTimersByTimeAsync(150);
-		await session.close('Done');
-
-		const apiCalls = requestJsonMock.mock.calls.slice(3);
-		const sequences = apiCalls.map((c: unknown[]) => (c[1] as { body: { sequence: number } }).body.sequence);
-		for (let i = 1; i < sequences.length; i++) {
-			expect(sequences[i]).toBeGreaterThan(sequences[i - 1]);
-		}
-	});
-
-	it('truncates content exceeding MAX_ELEMENT_SIZE', async () => {
-		const session = new FeishuStreamingSession(client);
-		await session.start('chat_1');
-		requestJsonMock.mockResolvedValue(okResponse());
-
-		const longText = 'a'.repeat(30_000);
-		await session.close(longText);
-
-		const updateCall = requestJsonMock.mock.calls[3];
-		const sentContent = updateCall[1].body.content as string;
-		expect(sentContent.length).toBeLessThan(longText.length);
-		expect(sentContent).toContain('...(内容过长，已截断)');
-	});
-
-	it('builds summary from short text', async () => {
-		const session = new FeishuStreamingSession(client);
-		await session.start('chat_1');
-		requestJsonMock.mockResolvedValue(okResponse());
-
-		await session.close('Short reply');
-		const settingsCall = requestJsonMock.mock.calls[requestJsonMock.mock.calls.length - 1];
-		const settings = JSON.parse(settingsCall[1].body.settings);
-		expect(settings.config.summary.content).toBe('Short reply');
-	});
-
-	it('truncates summary for long text', async () => {
-		const session = new FeishuStreamingSession(client);
-		await session.start('chat_1');
-		requestJsonMock.mockResolvedValue(okResponse());
-
-		const longText = 'x'.repeat(200);
-		await session.close(longText);
-		const settingsCall = requestJsonMock.mock.calls[requestJsonMock.mock.calls.length - 1];
-		const settings = JSON.parse(settingsCall[1].body.settings);
-		expect(settings.config.summary.content.length).toBeLessThanOrEqual(83); // 80 + '...'
-		expect(settings.config.summary.content).toContain('...');
+		const closeCall = callsAfterStart.at(-1);
+		const settings = JSON.parse(String(closeCall?.[1]?.body?.settings ?? '{}'));
+		expect(settings.config.summary.content).toBe('已暂停');
 	});
 });

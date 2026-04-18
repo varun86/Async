@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { BotIntegrationConfig } from '../../botSettingsTypes.js';
-import { resolveIntegrationProxyUrl, safeJsonParse, splitPlainText, websocketMessageToText } from './common.js';
+import {
+	looksLikeCancelIntent,
+	parseBotSlashCommand,
+	resolveIntegrationProxyUrl,
+	safeJsonParse,
+	splitPlainText,
+	websocketMessageToText,
+} from './common.js';
 
 describe('splitPlainText', () => {
 	it('splits long text on whitespace boundaries when possible', () => {
@@ -47,5 +54,19 @@ describe('resolveIntegrationProxyUrl', () => {
 			slack: { botToken: 'xoxb-token', appToken: 'xapp-token' },
 		};
 		expect(resolveIntegrationProxyUrl(integration)).toBeUndefined();
+	});
+});
+
+describe('parseBotSlashCommand', () => {
+	it('treats /pause as a stop command alias', () => {
+		expect(parseBotSlashCommand('/pause')).toEqual({ kind: 'stop' });
+	});
+});
+
+describe('looksLikeCancelIntent', () => {
+	it('recognizes pause wording in english and chinese', () => {
+		expect(looksLikeCancelIntent('pause')).toBe(true);
+		expect(looksLikeCancelIntent('暂停一下')).toBe(true);
+		expect(looksLikeCancelIntent('继续')).toBe(false);
 	});
 });

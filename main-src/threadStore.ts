@@ -5,10 +5,25 @@ import { resolveAsyncDataDir } from './dataDir.js';
 import { appendSuffixToStructuredAssistant, isStructuredAssistantMessage } from '../src/agentStructuredMessage.js';
 import type { AgentSessionSnapshot } from '../src/agentSessionTypes.js';
 import type { ToolResultReplacementState } from './agent/toolResultBudget.js';
+import {
+	THREAD_SCHEMA_VERSION_CURRENT,
+	THREAD_SCHEMA_VERSION_LEGACY,
+	deriveContentFromParts,
+	type ThreadSchemaVersion,
+	type UserMessagePart,
+} from '../src/messageParts.js';
+
+export type { UserMessagePart } from '../src/messageParts.js';
 
 export type ChatMessage = {
 	role: 'user' | 'assistant' | 'system';
 	content: string;
+	/**
+	 * Structured body for `role: 'user'` messages (v2 threads). When present,
+	 * `parts` is the single source of truth for send/estimate/render; `content`
+	 * is a derived display/fallback cache that must not be edited independently.
+	 */
+	parts?: UserMessagePart[];
 };
 
 export type ThreadTokenUsage = {
@@ -59,6 +74,12 @@ export type ThreadRecord = {
 	title: string;
 	createdAt: number;
 	updatedAt: number;
+	/**
+	 * Thread-level schema version. Missing or `1` = legacy, string-only user messages.
+	 * `2` = structured `parts` on user messages. New threads start at `2`; legacy
+	 * threads promote on first write after a `parts`-bearing message is appended.
+	 */
+	schemaVersion?: ThreadSchemaVersion;
 	messages: ChatMessage[];
 	tokenUsage?: ThreadTokenUsage;
 	fileStates?: Record<string, FileState>;
@@ -167,6 +188,22 @@ function migrateLegacyStore(legacy: LegacyStoreFile): StoreFile {
 	};
 }
 
+function inferThreadSchemaVersion(thread: ThreadRecord): ThreadSchemaVersion {
+	if (thread.schemaVersion === THREAD_SCHEMA_VERSION_CURRENT) {
+		return THREAD_SCHEMA_VERSION_CURRENT;
+	}
+	return thread.messages.some((message) => message.role === 'user' && !!message.parts?.length)
+		? THREAD_SCHEMA_VERSION_CURRENT
+		: THREAD_SCHEMA_VERSION_LEGACY;
+}
+
+function normalizeLoadedThread(thread: ThreadRecord): ThreadRecord {
+	return {
+		...thread,
+		schemaVersion: inferThreadSchemaVersion(thread),
+	};
+}
+
 export function initThreadStore(userData: string, initialWorkspaceRoot: string | null = null): void {
 	const dir = resolveAsyncDataDir(userData);
 	fs.mkdirSync(dir, { recursive: true });
@@ -192,7 +229,12 @@ function load(): void {
 						key,
 						{
 							currentThreadId: bucket?.currentThreadId ?? null,
-							threads: bucket?.threads ?? {},
+							threads: Object.fromEntries(
+								Object.entries(bucket?.threads ?? {}).map(([threadId, thread]) => [
+									threadId,
+									normalizeLoadedThread(thread),
+								])
+							),
 						},
 					])
 				),
@@ -295,6 +337,7 @@ export function createThread(
 		title: DEFAULT_THREAD_TITLE,
 		createdAt: now,
 		updatedAt: now,
+		schemaVersion: THREAD_SCHEMA_VERSION_CURRENT,
 		messages: [{ role: 'system', content: SYSTEM_PROMPT }],
 	};
 	bucket.threads[id] = thread;
@@ -347,13 +390,31 @@ export function appendMessage(threadId: string, msg: ChatMessage): ThreadRecord 
 		throw new Error('Thread not found');
 	}
 	const thread = located.thread;
-	thread.messages.push(msg);
+	const normalized = normalizeUserMessageForWrite(msg);
+	thread.messages.push(normalized);
 	thread.updatedAt = Date.now();
-	if (msg.role === 'user' && thread.messages.filter((m) => m.role === 'user').length === 1) {
-		thread.title = msg.content.slice(0, 48) + (msg.content.length > 48 ? '?' : '');
+	if (normalized.parts && normalized.parts.length > 0) {
+		thread.schemaVersion = THREAD_SCHEMA_VERSION_CURRENT;
+	}
+	if (normalized.role === 'user' && thread.messages.filter((m) => m.role === 'user').length === 1) {
+		thread.title = normalized.content.slice(0, 48) + (normalized.content.length > 48 ? '?' : '');
 	}
 	save();
 	return thread;
+}
+
+/**
+ * Ensure `content` is a faithful derivation of `parts` at write time.
+ * The renderer/estimator/send paths all consume `parts` first when present;
+ * `content` stays as a one-shot display/fallback string that callers must not
+ * mutate after write.
+ */
+function normalizeUserMessageForWrite(msg: ChatMessage): ChatMessage {
+	if (msg.role !== 'user' || !msg.parts || msg.parts.length === 0) {
+		return msg;
+	}
+	const derived = deriveContentFromParts(msg.parts);
+	return { ...msg, content: derived };
 }
 
 export function updateLastAssistant(threadId: string, fullContent: string): void {
@@ -430,7 +491,12 @@ export function accumulateTokenUsage(threadId: string, input: number | undefined
 	save();
 }
 
-export function replaceFromUserVisibleIndex(threadId: string, visibleIndex: number, newUserContent: string): ThreadRecord {
+export function replaceFromUserVisibleIndex(
+	threadId: string,
+	visibleIndex: number,
+	newUserContent: string,
+	newUserParts?: UserMessagePart[]
+): ThreadRecord {
 	const thread = getThread(threadId);
 	if (!thread) {
 		throw new Error('Thread not found');
@@ -445,10 +511,18 @@ export function replaceFromUserVisibleIndex(threadId: string, visibleIndex: numb
 		throw new Error('Invalid user message index');
 	}
 	const kept = rest.slice(0, visibleIndex);
-	thread.messages = [...system, ...kept, { role: 'user', content: newUserContent }];
+	const base: ChatMessage =
+		newUserParts && newUserParts.length > 0
+			? { role: 'user', content: newUserContent, parts: newUserParts }
+			: { role: 'user', content: newUserContent };
+	const replacement = normalizeUserMessageForWrite(base);
+	thread.messages = [...system, ...kept, replacement];
 	thread.updatedAt = Date.now();
+	if (replacement.parts && replacement.parts.length > 0) {
+		thread.schemaVersion = THREAD_SCHEMA_VERSION_CURRENT;
+	}
 	if (visibleIndex === 0) {
-		thread.title = newUserContent.slice(0, 48) + (newUserContent.length > 48 ? '?' : '');
+		thread.title = replacement.content.slice(0, 48) + (replacement.content.length > 48 ? '?' : '');
 	}
 	save();
 	return thread;

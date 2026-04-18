@@ -66,8 +66,11 @@ import {
 	segmentsToWireText,
 	segmentsTrimmedEmpty,
 	userMessageToSegments,
+	type ComposerImageMeta,
 	type ComposerSegment,
+	type PersistedComposerAttachment,
 } from './composerSegments';
+import { partsToSegments, type UserMessagePart } from './messageParts';
 import {
 	computeComposerContextUsedEstimate,
 	DEFAULT_CONTEXT_WINDOW_TOKENS_UI,
@@ -1838,7 +1841,7 @@ function AppMainWorkspaceInner() {
 	persistComposerTRef.current = t;
 	persistComposerFlashErrRef.current = flashComposerAttachErr;
 
-	const persistComposerAttachments = useCallback(async (files: File[]): Promise<string[]> => {
+	const persistComposerAttachments = useCallback(async (files: File[]): Promise<PersistedComposerAttachment[]> => {
 		const sh = persistComposerShellRef.current;
 		if (!sh) {
 			return [];
@@ -1850,16 +1853,20 @@ function AppMainWorkspaceInner() {
 			flash(tr('composer.attach.noWorkspace'));
 			return [];
 		}
-		const out: string[] = [];
+		const out: PersistedComposerAttachment[] = [];
 		for (const f of files) {
 			const droppedFilePath =
 				typeof sh.getPathForFile === 'function' ? sh.getPathForFile(f) : null;
 			if (droppedFilePath) {
 				const directRef = (await sh.invoke('workspace:resolveDroppedFilePath', {
 					fullPath: droppedFilePath,
-				})) as { ok?: boolean; relPath?: string };
+				})) as { ok?: boolean; relPath?: string; imageMeta?: ComposerImageMeta };
 				if (directRef?.ok && typeof directRef.relPath === 'string') {
-					out.push(directRef.relPath);
+					out.push(
+						directRef.imageMeta
+							? { relPath: directRef.relPath, imageMeta: directRef.imageMeta }
+							: { relPath: directRef.relPath }
+					);
 					continue;
 				}
 			}
@@ -1876,9 +1883,9 @@ function AppMainWorkspaceInner() {
 			const r = (await sh.invoke('workspace:saveComposerAttachment', {
 				base64: b64,
 				fileName: f.name,
-			})) as { ok?: boolean; relPath?: string; error?: string };
+			})) as { ok?: boolean; relPath?: string; error?: string; imageMeta?: ComposerImageMeta };
 			if (r?.ok && typeof r.relPath === 'string') {
-				out.push(r.relPath);
+				out.push(r.imageMeta ? { relPath: r.relPath, imageMeta: r.imageMeta } : { relPath: r.relPath });
 			} else {
 				const err = r?.error;
 				if (err === 'too-large') {
@@ -1904,10 +1911,13 @@ function AppMainWorkspaceInner() {
 	}, [composerRichBottomRef, composerRichHeroRef]);
 
 	const appendComposerFileReferences = useCallback(
-		(relPaths: string[]) => {
-			const normalized = relPaths
-				.map((rel) => rel.replace(/\\/g, '/').trim())
-				.filter((rel) => rel.length > 0);
+		(attachments: PersistedComposerAttachment[]) => {
+			const normalized = attachments
+				.map((att) => ({
+					relPath: att.relPath.replace(/\\/g, '/').trim(),
+					imageMeta: att.imageMeta,
+				}))
+				.filter((att) => att.relPath.length > 0);
 			if (normalized.length === 0) {
 				return;
 			}
@@ -1919,8 +1929,11 @@ function AppMainWorkspaceInner() {
 				} else if (last?.kind === 'file') {
 					next.push({ id: newSegmentId(), kind: 'text', text: '\n' });
 				}
-				for (let i = 0; i < normalized.length; i++) {
-					next.push({ id: newSegmentId(), kind: 'file', path: normalized[i]! });
+				for (const att of normalized) {
+					const seg: ComposerSegment = att.imageMeta
+						? { id: newSegmentId(), kind: 'file', path: att.relPath, imageMeta: att.imageMeta }
+						: { id: newSegmentId(), kind: 'file', path: att.relPath };
+					next.push(seg);
 					next.push({ id: newSegmentId(), kind: 'text', text: '\n' });
 				}
 				return next;
@@ -1932,11 +1945,11 @@ function AppMainWorkspaceInner() {
 
 	const onChatPanelDropFiles = useCallback(
 		async (files: File[]) => {
-			const relPaths = await persistComposerAttachments(files);
-			if (relPaths.length === 0) {
+			const attachments = await persistComposerAttachments(files);
+			if (attachments.length === 0) {
 				return;
 			}
-			appendComposerFileReferences(relPaths);
+			appendComposerFileReferences(attachments);
 		},
 		[persistComposerAttachments, appendComposerFileReferences]
 	);
@@ -2897,7 +2910,7 @@ function AppMainWorkspaceInner() {
 			flashComposerAttachErr(t('app.noModelSelected'));
 			return;
 		}
-		await sendMessage(text, opts);
+		await sendMessage(text, { ...opts, segments });
 	};
 
 	const onSend = useCallback(async (textOverride?: string, opts?: OnSendOptions) => {
@@ -5710,12 +5723,16 @@ function AppMainWorkspaceInner() {
 		]
 	);
 
-	/** 内联编辑历史用户消息：启发式解析 @ 引用（不拉全量路径列表） */
+	/** 内联编辑历史用户消息：v2 消息直接还原 parts；旧消息启发式解析 @ 引用（不拉全量路径列表） */
 	const onStartInlineResend = useCallback(
-		(userMessageIndex: number, content: string) => {
+		(userMessageIndex: number, content: string, parts?: UserMessagePart[]) => {
 			setPlanQuestion(null);
 			setPlanQuestionRequestId(null);
 			setResendFromUserIndex(userMessageIndex);
+			if (parts && parts.length > 0) {
+				setInlineResendSegments(partsToSegments(parts));
+				return;
+			}
 			setInlineResendSegments(
 				userMessageToSegments(
 					content,

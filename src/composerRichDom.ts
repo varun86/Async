@@ -4,6 +4,7 @@ import { fileTypeIconHtmlForRelPath, isRasterImageRelPath } from './fileTypeIcon
 import {
 	newSegmentId,
 	slashCommandWire,
+	type ComposerImageMeta,
 	type ComposerSegment,
 	type SlashCommandToken,
 } from './composerSegments';
@@ -179,7 +180,12 @@ function isBrNode(node: Node | null): node is HTMLBRElement {
 	return !!node && node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === 'BR';
 }
 
-export function createFileChipElement(relPath: string, segId: string, h: FileChipDomHandlers): HTMLElement {
+export function createFileChipElement(
+	relPath: string,
+	segId: string,
+	h: FileChipDomHandlers,
+	imageMeta?: ComposerImageMeta
+): HTMLElement {
 	const span = document.createElement('span');
 	span.contentEditable = 'false';
 	span.dataset.voidRel = relPath;
@@ -187,6 +193,13 @@ export function createFileChipElement(relPath: string, segId: string, h: FileChi
 	span.className = CHIP_CLASS;
 	if (isRasterImageRelPath(relPath)) {
 		span.classList.add('ref-inline-file-chip--image');
+	}
+	if (imageMeta) {
+		try {
+			span.dataset.voidImageMeta = JSON.stringify(imageMeta);
+		} catch {
+			/* ignore serialization failure */
+		}
 	}
 	span.setAttribute('role', 'button');
 	span.setAttribute('tabindex', '0');
@@ -282,13 +295,13 @@ export function createSlashCommandChipElement(
 	return span;
 }
 
-export function applyFileChipFromAtMention(root: HTMLElement, relPath: string, segId: string, h: FileChipDomHandlers): void {
+export function applyFileChipFromAtMention(root: HTMLElement, relPath: string, segId: string, h: FileChipDomHandlers, imageMeta?: ComposerImageMeta): void {
 	const r = findAtMentionDomRange(root);
 	if (!r) {
 		return;
 	}
 	r.deleteContents();
-	const chip = createFileChipElement(relPath, segId, h);
+	const chip = createFileChipElement(relPath, segId, h, imageMeta);
 	r.insertNode(chip);
 	/* 与常见 IM/IDE 一致：选完 @ 文件后插入尾随空格，正文与引用在文本上天然分隔 */
 	const pad = document.createTextNode(' ');
@@ -303,7 +316,7 @@ export function applyFileChipFromAtMention(root: HTMLElement, relPath: string, s
 }
 
 /** 在光标处插入文件 chip（拖放/粘贴附件），行为与 @ 选文件后的 chip 一致 */
-export function insertFileChipAtCaret(root: HTMLElement, relPath: string, segId: string, h: FileChipDomHandlers): void {
+export function insertFileChipAtCaret(root: HTMLElement, relPath: string, segId: string, h: FileChipDomHandlers, imageMeta?: ComposerImageMeta): void {
 	const sel = window.getSelection();
 	if (!sel || sel.rangeCount === 0 || !root.contains(sel.anchorNode)) {
 		placeCaretAtEndOfRichRoot(root);
@@ -314,7 +327,7 @@ export function insertFileChipAtCaret(root: HTMLElement, relPath: string, segId:
 	}
 	const range = sel2.getRangeAt(0).cloneRange();
 	range.deleteContents();
-	const chip = createFileChipElement(relPath, segId, h);
+	const chip = createFileChipElement(relPath, segId, h, imageMeta);
 	range.insertNode(chip);
 	const prev = chip.previousSibling;
 	const next = chip.nextSibling;
@@ -400,11 +413,34 @@ export function readSegmentsFromRoot(root: HTMLElement): ComposerSegment[] {
 		}
 		if (e.classList.contains(CHIP_CLASS) && e.dataset.voidRel) {
 			flush();
-			out.push({
-				id: e.dataset.segId || newSegmentId(),
-				kind: 'file',
-				path: e.dataset.voidRel,
-			});
+			let imageMeta: ComposerImageMeta | undefined;
+			const metaRaw = e.dataset.voidImageMeta;
+			if (metaRaw) {
+				try {
+					const parsed = JSON.parse(metaRaw) as Partial<ComposerImageMeta>;
+					if (
+						typeof parsed?.mimeType === 'string' &&
+						typeof parsed?.sizeBytes === 'number' &&
+						typeof parsed?.width === 'number' &&
+						typeof parsed?.height === 'number' &&
+						typeof parsed?.sha256 === 'string'
+					) {
+						imageMeta = {
+							mimeType: parsed.mimeType,
+							sizeBytes: parsed.sizeBytes,
+							width: parsed.width,
+							height: parsed.height,
+							sha256: parsed.sha256,
+						};
+					}
+				} catch {
+					/* ignore malformed */
+				}
+			}
+			const seg: ComposerSegment = imageMeta
+				? { id: e.dataset.segId || newSegmentId(), kind: 'file', path: e.dataset.voidRel, imageMeta }
+				: { id: e.dataset.segId || newSegmentId(), kind: 'file', path: e.dataset.voidRel };
+			out.push(seg);
 			return;
 		}
 		if (e.tagName === 'BR') {
@@ -481,7 +517,7 @@ export function writeSegmentsToRoot(
 		} else if (s.kind === 'command') {
 			root.appendChild(createSlashCommandChipElement(s.id, s.command, h));
 		} else if (s.kind === 'file') {
-			root.appendChild(createFileChipElement(s.path, s.id, h));
+			root.appendChild(createFileChipElement(s.path, s.id, h, s.imageMeta));
 		}
 	}
 }
