@@ -33,12 +33,19 @@ type ProfileEditorMode = 'create' | 'edit';
 type ProfileEditorTabId = 'general' | 'ports' | 'advanced' | 'ciphers' | 'colors' | 'loginScripts' | 'input';
 type TerminalSshConnectionMode = 'direct' | 'proxyCommand' | 'jumpHost';
 
+export type TerminalSettingsPanelOpenProfileRequest = {
+	profileId: string;
+	tab: ProfileEditorTabId;
+	nonce: number;
+};
+
 type Props = {
 	t: TFunction;
 	settings: TerminalAppSettings;
 	builtinProfiles: TerminalProfile[];
 	onChange(next: TerminalAppSettings): void;
 	onLaunchProfile(profileId: string): void;
+	openProfileRequest?: TerminalSettingsPanelOpenProfileRequest | null;
 };
 
 function IconProfilesNav() {
@@ -144,6 +151,7 @@ export const TerminalSettingsPanel = memo(function TerminalSettingsPanel({
 	builtinProfiles,
 	onChange,
 	onLaunchProfile,
+	openProfileRequest,
 }: Props) {
 	const [nav, setNav] = useState<SettingsNav>('profilesConnections');
 	const [profilesSubtab, setProfilesSubtab] = useState<ProfilesSubtab>('profiles');
@@ -222,6 +230,17 @@ export const TerminalSettingsPanel = memo(function TerminalSettingsPanel({
 		stageRef.current?.scrollTo({ top: 0 });
 	}, [nav, profilesSubtab]);
 
+	useEffect(() => {
+		if (!openProfileRequest) {
+			return;
+		}
+		startNavTransition(() => {
+			setNav('profilesConnections');
+		});
+		setProfilesSubtab('profiles');
+		setActiveProfileId(openProfileRequest.profileId);
+	}, [openProfileRequest]);
+
 	return (
 		<div className="ref-uterm-settings-workspace">
 			<aside className="ref-uterm-settings-sidebar">
@@ -282,6 +301,7 @@ export const TerminalSettingsPanel = memo(function TerminalSettingsPanel({
 						onPatchSettings={patch}
 						onLaunchProfile={onLaunchProfile}
 						builtinProfiles={builtinProfiles}
+						openProfileRequest={openProfileRequest}
 					/>
 				) : null}
 
@@ -313,6 +333,7 @@ type ProfilesSettingsStageProps = {
 	onPatchSettings(partial: Partial<TerminalAppSettings>): void;
 	onLaunchProfile(profileId: string): void;
 	builtinProfiles: TerminalProfile[];
+	openProfileRequest?: TerminalSettingsPanelOpenProfileRequest | null;
 };
 
 function ProfilesSettingsStage({
@@ -330,6 +351,7 @@ function ProfilesSettingsStage({
 	onPatchSettings,
 	onLaunchProfile,
 	builtinProfiles,
+	openProfileRequest,
 }: ProfilesSettingsStageProps) {
 	const [createDialogOpen, setCreateDialogOpen] = useState(false);
 	const [createFilter, setCreateFilter] = useState('');
@@ -340,6 +362,7 @@ function ProfilesSettingsStage({
 	const [editorHasSavedPassword, setEditorHasSavedPassword] = useState(false);
 	const [rowMenuProfileId, setRowMenuProfileId] = useState<string | null>(null);
 	const rowMenuRef = useRef<HTMLDivElement | null>(null);
+	const handledOpenProfileRequestRef = useRef<number | null>(null);
 	const displayBuiltinProfiles = useMemo(
 		() => builtinProfiles.map((profile) => withTerminalProfileDisplayName(profile, t)),
 		[builtinProfiles, t]
@@ -432,6 +455,24 @@ function ProfilesSettingsStage({
 		setEditorDraft(draft);
 		void loadPasswordState(draft.id);
 	}, [builtinProfiles, loadPasswordState, settings.profiles, t]);
+
+	useEffect(() => {
+		if (!openProfileRequest) {
+			return;
+		}
+		if (handledOpenProfileRequestRef.current === openProfileRequest.nonce) {
+			return;
+		}
+		handledOpenProfileRequestRef.current = openProfileRequest.nonce;
+		setCreateDialogOpen(false);
+		setRowMenuProfileId(null);
+		if (isBuiltinTerminalProfileId(openProfileRequest.profileId)) {
+			openTemplateEditor(openProfileRequest.profileId);
+		} else {
+			openProfileEditor(openProfileRequest.profileId);
+		}
+		setEditorTab(openProfileRequest.tab);
+	}, [openProfileEditor, openProfileRequest, openTemplateEditor]);
 
 	const openCreateDialog = useCallback(() => {
 		setRowMenuProfileId(null);

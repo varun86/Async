@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import * as pty from 'node-pty';
 import { isWindows } from './platform.js';
+import { appendTerminalAuthPromptTail, detectTerminalAuthPrompt, type TerminalSessionAuthPromptKind } from './terminalAuthPrompt.js';
 
 const MAX_BUFFER_BYTES = 256 * 1024;
 const MAX_PASSWORD_AUTOFILL_ATTEMPTS = 1;
@@ -38,8 +39,6 @@ export type TerminalSessionInfo = {
 	bufferBytes: number;
 	createdAt: number;
 };
-
-export type TerminalSessionAuthPromptKind = 'password' | 'passphrase';
 
 export type TerminalSessionAuthPrompt = {
 	prompt: string;
@@ -135,12 +134,6 @@ export function createTerminalSession(opts: TerminalSessionCreateOpts = {}): Ter
 		env: mergedEnv,
 		cols,
 		rows,
-		...(isWindows()
-			? ({
-					useConpty: true,
-					useConptyDll: true,
-			  } satisfies pty.IWindowsPtyForkOptions)
-			: {}),
 	});
 	const session: Session = {
 		id,
@@ -188,7 +181,21 @@ export function writeTerminalSession(id: string, data: string): boolean {
 		return false;
 	}
 	try {
-		s.pendingAuthPrompt = null;
+		resetSessionAuthPromptState(s);
+		s.pty.write(data);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export function respondToTerminalSessionAuthPrompt(id: string, data: string): boolean {
+	const s = sessions.get(id);
+	if (!s || !s.alive || !s.pendingAuthPrompt) {
+		return false;
+	}
+	try {
+		resetSessionAuthPromptState(s);
 		s.pty.write(data);
 		return true;
 	} catch {
@@ -201,7 +208,7 @@ export function clearTerminalSessionAuthPrompt(id: string): boolean {
 	if (!s) {
 		return false;
 	}
-	s.pendingAuthPrompt = null;
+	resetSessionAuthPromptState(s);
 	return true;
 }
 
@@ -410,7 +417,7 @@ function defaultTitleForShell(shellPath: string): string {
 }
 
 function maybeHandleAuthPrompt(session: Session, chunk: string): TerminalSessionAuthPrompt | null {
-	session.recentOutputTail = (session.recentOutputTail + chunk).slice(-512);
+	session.recentOutputTail = appendTerminalAuthPromptTail(session.recentOutputTail, chunk);
 	const detected = detectTerminalAuthPrompt(session.recentOutputTail);
 	if (!detected) {
 		session.pendingAuthPrompt = null;
@@ -420,7 +427,7 @@ function maybeHandleAuthPrompt(session: Session, chunk: string): TerminalSession
 	if (session.passwordAutofill && session.passwordAutofillCount < MAX_PASSWORD_AUTOFILL_ATTEMPTS) {
 		try {
 			session.passwordAutofillCount += 1;
-			session.pendingAuthPrompt = null;
+			resetSessionAuthPromptState(session);
 			session.pty.write(session.passwordAutofill + '\r');
 			return null;
 		} catch {
@@ -437,54 +444,7 @@ function maybeHandleAuthPrompt(session: Session, chunk: string): TerminalSession
 	return nextPrompt;
 }
 
-function detectTerminalAuthPrompt(
-	tail: string
-): { prompt: string; kind: TerminalSessionAuthPromptKind } | null {
-	const printableTail = sanitizeTerminalPromptTail(tail);
-	const match = /([^\r\n]*?(password|passphrase)[^\r\n]*:\s*)$/i.exec(printableTail);
-	if (!match) {
-		return null;
-	}
-	const prompt = match[1]?.trim() ?? '';
-	if (!prompt) {
-		return null;
-	}
-	return {
-		prompt,
-		kind: /passphrase/i.test(prompt) ? 'passphrase' : 'password',
-	};
-}
-
-function sanitizeTerminalPromptTail(input: string): string {
-	let text = input;
-	text = stripOscSequences(text);
-	text = stripAnsiSequences(text);
-	text = applyBackspaces(text);
-	text = text.replace(/\r/g, '\n');
-	text = text.replace(/[^\S\n]+/g, ' ');
-	text = text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
-	text = text.replace(/\n{2,}/g, '\n');
-	return text.slice(-256);
-}
-
-function stripOscSequences(input: string): string {
-	return input.replace(/\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g, '');
-}
-
-function stripAnsiSequences(input: string): string {
-	return input
-		.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '')
-		.replace(/\u001B[@-Z\\-_]/g, '');
-}
-
-function applyBackspaces(input: string): string {
-	const out: string[] = [];
-	for (const ch of input) {
-		if (ch === '\b' || ch === '\u007f') {
-			out.pop();
-			continue;
-		}
-		out.push(ch);
-	}
-	return out.join('');
+function resetSessionAuthPromptState(session: Session): void {
+	session.pendingAuthPrompt = null;
+	session.recentOutputTail = '';
 }

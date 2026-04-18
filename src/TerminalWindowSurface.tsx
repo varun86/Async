@@ -4,11 +4,24 @@ import type { TFunction } from './i18n';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { IconDotsHorizontal, IconPlus, IconSettings, IconTerminal } from './icons';
+import {
+	IconDotsHorizontal,
+	IconFolderOpen,
+	IconPin,
+	IconPlug,
+	IconPlus,
+	IconRefresh,
+	IconSettings,
+	IconTerminal,
+} from './icons';
 import { TerminalAuthPromptModal } from './terminalWindow/TerminalAuthPromptModal';
-import { TerminalSettingsPanel } from './terminalWindow/TerminalSettingsPanel';
+import {
+	TerminalSettingsPanel,
+	type TerminalSettingsPanelOpenProfileRequest,
+} from './terminalWindow/TerminalSettingsPanel';
 import { TerminalStartPage, type TerminalStartPageProfile } from './terminalWindow/TerminalStartPage';
 import {
+	buildSftpArgs,
 	buildTerminalProfileTarget,
 	buildTermSessionCreatePayload,
 	getBuiltinTerminalProfiles,
@@ -91,6 +104,8 @@ type TerminalRuntimeControls = {
 	copySelection(): Promise<boolean>;
 	pasteFromClipboard(): Promise<boolean>;
 	selectAll(): void;
+	clear(): void;
+	focus(): void;
 	hasSelection(): boolean;
 };
 
@@ -105,6 +120,7 @@ type RestorableTerminalTab = {
 };
 
 const TERMINAL_TAB_SNAPSHOT_KEY = 'void-shell:terminal:window-tabs';
+const TERMINAL_TOOLBAR_PIN_STORAGE_KEY = 'void-shell:terminal:toolbar-pinned';
 
 function TerminalTabView({
 	sessionId,
@@ -214,6 +230,8 @@ function TerminalTabView({
 			copySelection,
 			pasteFromClipboard,
 			selectAll: () => term.selectAll(),
+			clear: () => term.clear(),
+			focus: () => term.focus(),
 			hasSelection: () => term.hasSelection(),
 		});
 
@@ -442,9 +460,12 @@ function TerminalTabView({
 
 const MemoTerminalTabView = memo(TerminalTabView);
 
-type Props = { t: TFunction };
+type Props = {
+	t: TFunction;
+	forceStartPage?: boolean;
+};
 
-export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t }: Props) {
+export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, forceStartPage = false }: Props) {
 	const shell = window.asyncShell;
 	const [sessions, setSessions] = useState<SessionInfo[]>([]);
 	const [activeId, setActiveId] = useState<string | null>(null);
@@ -458,13 +479,62 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t }: 
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(null);
 	const [windowMaximized, setWindowMaximized] = useState(false);
 	const [authPromptModal, setAuthPromptModal] = useState<ActiveTerminalAuthPrompt | null>(null);
+	const [settingsOpenProfileRequest, setSettingsOpenProfileRequest] =
+		useState<TerminalSettingsPanelOpenProfileRequest | null>(null);
+	const [toolbarPinned, setToolbarPinned] = useState(() => loadTerminalToolbarPinned());
+	const [toolbarRevealed, setToolbarRevealed] = useState(() => loadTerminalToolbarPinned());
 	const creatingRef = useRef(false);
 	const initialListLoadedRef = useRef(false);
 	const createSessionRef = useRef<(profileId?: string) => Promise<void>>(async () => {});
 	const builtinProfilesRef = useRef<TerminalProfile[]>(builtinProfiles);
 	const menuWrapRef = useRef<HTMLDivElement>(null);
 	const runtimeControlsRef = useRef<Record<string, TerminalRuntimeControls>>({});
+	const toolbarHideTimerRef = useRef<number | null>(null);
 	builtinProfilesRef.current = builtinProfiles;
+
+	const clearToolbarHideTimer = useCallback(() => {
+		if (toolbarHideTimerRef.current != null) {
+			window.clearTimeout(toolbarHideTimerRef.current);
+			toolbarHideTimerRef.current = null;
+		}
+	}, []);
+
+	const revealTerminalToolbar = useCallback(() => {
+		clearToolbarHideTimer();
+		setToolbarRevealed(true);
+	}, [clearToolbarHideTimer]);
+
+	const hideTerminalToolbar = useCallback(() => {
+		if (toolbarPinned) {
+			setToolbarRevealed(true);
+			return;
+		}
+		clearToolbarHideTimer();
+		toolbarHideTimerRef.current = window.setTimeout(() => {
+			setToolbarRevealed(false);
+			toolbarHideTimerRef.current = null;
+		}, 900);
+	}, [clearToolbarHideTimer, toolbarPinned]);
+
+	const toggleTerminalToolbarPinned = useCallback(() => {
+		setToolbarPinned((current) => {
+			const next = !current;
+			saveTerminalToolbarPinned(next);
+			if (next) {
+				setToolbarRevealed(true);
+			}
+			return next;
+		});
+	}, []);
+
+	useEffect(() => {
+		if (toolbarPinned) {
+			clearToolbarHideTimer();
+			setToolbarRevealed(true);
+		}
+	}, [clearToolbarHideTimer, toolbarPinned]);
+
+	useEffect(() => () => clearToolbarHideTimer(), [clearToolbarHideTimer]);
 
 	const closeTerminalContextMenu = useCallback(() => {
 		setContextMenu(null);
@@ -549,15 +619,15 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t }: 
 			}
 			if (firstCycle && result.sessions.length === 0) {
 				await reloadBuiltinProfiles();
-				const restored = terminalSettings.restoreTabs ? await restoreSavedTabs() : false;
-				if (!restored && terminalSettings.autoOpen) {
+				const restored = !forceStartPage && terminalSettings.restoreTabs ? await restoreSavedTabs() : false;
+				if (!restored && !forceStartPage && terminalSettings.autoOpen) {
 					await createSessionRef.current();
 				}
 			}
 		} catch {
 			/* ignore */
 		}
-	}, [reloadBuiltinProfiles, restoreSavedTabs, shell, terminalSettings.autoOpen, terminalSettings.restoreTabs]);
+	}, [forceStartPage, reloadBuiltinProfiles, restoreSavedTabs, shell, terminalSettings.autoOpen, terminalSettings.restoreTabs]);
 
 	const createSession = useCallback(
 		async (profileId?: string) => {
@@ -907,6 +977,52 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t }: 
 		closeTerminalContextMenu();
 	}, [contextRuntime, closeTerminalContextMenu]);
 
+	const openProfileSettingsFromToolbar = useCallback((profile: TerminalProfile | null, tab: 'general' | 'ports') => {
+		if (!profile) {
+			return;
+		}
+		setSettingsOpenProfileRequest({
+			profileId: profile.id,
+			tab,
+			nonce: Date.now(),
+		});
+		setSettingsOpen(true);
+		setMenuOpen(false);
+		setContextMenu(null);
+	}, []);
+
+	const openSftpSession = useCallback(
+		async (profile: TerminalProfile | null) => {
+			if (!shell || !profile || profile.kind !== 'ssh') {
+				return;
+			}
+			const result = (await shell.invoke('term:sessionCreate', buildSftpSessionCreatePayload(profile, t))) as
+				| { ok: true; session: SessionInfo }
+				| { ok: false; error?: string };
+			if (!result.ok) {
+				return;
+			}
+			setSessionProfiles((prev) => ({ ...prev, [result.session.id]: profile.id }));
+			setSessions((prev) => (prev.some((session) => session.id === result.session.id) ? prev : [...prev, result.session]));
+			setActiveId(result.session.id);
+			setSettingsOpen(false);
+			setMenuOpen(false);
+			setContextMenu(null);
+			revealTerminalToolbar();
+		},
+		[shell, t, revealTerminalToolbar]
+	);
+
+	const reconnectSession = useCallback(
+		async (sessionId: string) => {
+			const profileId = resolvedSessionProfiles[sessionId]?.id;
+			await closeSession(sessionId);
+			await createSession(profileId);
+			revealTerminalToolbar();
+		},
+		[closeSession, createSession, resolvedSessionProfiles, revealTerminalToolbar]
+	);
+
 	const onToggleMaximize = useCallback(async () => {
 		if (!shell) {
 			return;
@@ -939,10 +1055,10 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t }: 
 			if (!value.length) {
 				return;
 			}
-			await shell.invoke('term:sessionWrite', promptState.sessionId, `${value}\r`).catch(() => {
-				/* ignore */
-			});
-			if (remember && promptState.kind === 'password' && promptState.profileId) {
+			const result = (await shell
+				.invoke('term:sessionRespondToPrompt', promptState.sessionId, `${value}\r`)
+				.catch(() => ({ ok: false }))) as { ok?: boolean };
+			if (result.ok && remember && promptState.kind === 'password' && promptState.profileId) {
 				await shell.invoke('term:profilePasswordSet', promptState.profileId, value).catch(() => {
 					/* ignore */
 				});
@@ -1130,6 +1246,7 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t }: 
 					builtinProfiles={builtinProfiles}
 					onChange={persistSettings}
 					onLaunchProfile={(profileId) => void createSession(profileId)}
+					openProfileRequest={settingsOpenProfileRequest}
 				/>
 			</div>
 
@@ -1138,24 +1255,6 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t }: 
 				style={terminalStageStyle}
 				aria-hidden={settingsOpen}
 			>
-					{activeSession ? (
-						<div className="ref-uterm-sessionbar">
-							<div className="ref-uterm-sessionbar-main">
-								<div className="ref-uterm-sessionbar-title">
-									{activeSession.title || t('app.universalTerminalWindowTitle')}
-								</div>
-								<div className="ref-uterm-sessionbar-subtitle">{activeSession.cwd || activeSession.shell}</div>
-							</div>
-							<div className="ref-uterm-sessionbar-metrics">
-								<span className="ref-uterm-sessionbar-pill">{activeSession.shell}</span>
-								<span className="ref-uterm-sessionbar-pill">
-									{activeSession.cols}×{activeSession.rows}
-								</span>
-								<span className="ref-uterm-sessionbar-pill">{formatBufferBytes(activeSession.bufferBytes)}</span>
-							</div>
-						</div>
-					) : null}
-
 					{sessions.length === 0 ? (
 						<TerminalStartPage
 							t={t}
@@ -1173,8 +1272,30 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t }: 
 									const isActive = session.id === activeSession?.id;
 									const exitCode = exitByTab[session.id];
 									const sessionProfile = resolvedSessionProfiles[session.id] ?? null;
+									const showSshToolbar = isActive && sessionProfile?.kind === 'ssh';
 									return (
-										<div key={session.id} className={`ref-uterm-pane ${isActive ? 'is-active' : ''}`} aria-hidden={!isActive}>
+										<div
+											key={session.id}
+											className={`ref-uterm-pane ${isActive ? 'is-active' : ''}`}
+											aria-hidden={!isActive}
+											onMouseEnter={showSshToolbar ? revealTerminalToolbar : undefined}
+											onMouseLeave={showSshToolbar ? hideTerminalToolbar : undefined}
+										>
+											{showSshToolbar ? (
+												<TerminalSessionToolbar
+													t={t}
+													session={session}
+													profile={sessionProfile}
+													visible={toolbarPinned || toolbarRevealed}
+													pinned={toolbarPinned}
+													onPinToggle={toggleTerminalToolbarPinned}
+													onReconnect={() => void reconnectSession(session.id)}
+													onOpenSftp={() => void openSftpSession(sessionProfile)}
+													onOpenPorts={() => openProfileSettingsFromToolbar(sessionProfile, 'ports')}
+													onMouseEnter={revealTerminalToolbar}
+													onMouseLeave={hideTerminalToolbar}
+												/>
+											) : null}
 											<MemoTerminalTabView
 												sessionId={session.id}
 												active={!settingsOpen && isActive}
@@ -1272,6 +1393,72 @@ function TerminalTabButton({
 	);
 }
 
+function TerminalSessionToolbar({
+	t,
+	session,
+	profile,
+	visible,
+	pinned,
+	onPinToggle,
+	onReconnect,
+	onOpenSftp,
+	onOpenPorts,
+	onMouseEnter,
+	onMouseLeave,
+}: {
+	t: TFunction;
+	session: SessionInfo;
+	profile: TerminalProfile | null;
+	visible: boolean;
+	pinned: boolean;
+	onPinToggle(): void;
+	onReconnect(): void;
+	onOpenSftp(): void;
+	onOpenPorts(): void;
+	onMouseEnter(): void;
+	onMouseLeave(): void;
+}) {
+	const target = formatTerminalToolbarTarget(profile);
+
+	return (
+		<div
+			className={`ref-uterm-toolbar-wrap ${visible ? 'is-visible' : ''}`}
+			onMouseEnter={onMouseEnter}
+			onMouseLeave={onMouseLeave}
+		>
+			<div className="ref-uterm-toolbar">
+				<div className="ref-uterm-toolbar-main">
+					<span className={`ref-uterm-toolbar-status ${session.alive ? 'is-live' : 'is-dead'}`} aria-hidden="true" />
+					<strong className="ref-uterm-toolbar-target">{target}</strong>
+				</div>
+
+				<div className="ref-uterm-toolbar-actions">
+					<button type="button" className="ref-uterm-toolbar-btn" onClick={onReconnect}>
+						<IconRefresh className="ref-uterm-toolbar-btn-icon" />
+						<span>{t('app.universalTerminalToolbarReconnect')}</span>
+					</button>
+					{session.alive ? (
+						<button type="button" className="ref-uterm-toolbar-btn" onClick={onOpenSftp}>
+							<IconFolderOpen className="ref-uterm-toolbar-btn-icon" />
+							<span>{t('app.universalTerminalToolbarSftp')}</span>
+						</button>
+					) : null}
+					{session.alive ? (
+						<button type="button" className="ref-uterm-toolbar-btn" onClick={onOpenPorts}>
+							<IconPlug className="ref-uterm-toolbar-btn-icon" />
+							<span>{t('app.universalTerminalToolbarPorts')}</span>
+						</button>
+					) : null}
+					<button type="button" className="ref-uterm-toolbar-btn" onClick={onPinToggle}>
+						<IconPin className="ref-uterm-toolbar-btn-icon" />
+						<span>{pinned ? t('app.universalTerminalToolbarUnpin') : t('app.universalTerminalToolbarPin')}</span>
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 function loadTerminalTabSnapshot(): RestorableTerminalTab[] {
 	if (typeof window === 'undefined') {
 		return [];
@@ -1304,6 +1491,28 @@ function saveTerminalTabSnapshot(tabs: RestorableTerminalTab[]): void {
 			return;
 		}
 		window.localStorage.setItem(TERMINAL_TAB_SNAPSHOT_KEY, JSON.stringify(tabs));
+	} catch {
+		/* ignore */
+	}
+}
+
+function loadTerminalToolbarPinned(): boolean {
+	if (typeof window === 'undefined') {
+		return true;
+	}
+	try {
+		return window.localStorage.getItem(TERMINAL_TOOLBAR_PIN_STORAGE_KEY) !== 'false';
+	} catch {
+		return true;
+	}
+}
+
+function saveTerminalToolbarPinned(pinned: boolean): void {
+	if (typeof window === 'undefined') {
+		return;
+	}
+	try {
+		window.localStorage.setItem(TERMINAL_TOOLBAR_PIN_STORAGE_KEY, pinned ? 'true' : 'false');
 	} catch {
 		/* ignore */
 	}
@@ -1405,14 +1614,35 @@ async function maybeRunLoginScripts(
 	}
 }
 
-function formatBufferBytes(bytes: number): string {
-	if (bytes < 1024) {
-		return `${bytes} B`;
+function formatTerminalToolbarTarget(profile: TerminalProfile | null): string {
+	if (!profile || profile.kind !== 'ssh') {
+		return '';
 	}
-	if (bytes < 1024 * 1024) {
-		return `${(bytes / 1024).toFixed(1)} KB`;
+	const user = profile.sshUser.trim();
+	const host = profile.sshHost.trim();
+	const port = profile.sshPort > 0 ? profile.sshPort : 22;
+	return `${user}@${host}:${port}`;
+}
+
+function buildSftpSessionCreatePayload(profile: TerminalProfile, t: TFunction): Record<string, unknown> {
+	const target = formatTerminalToolbarTarget(profile) || profile.name.trim() || t('app.universalTerminalToolbarSftp');
+	return {
+		title: `SFTP · ${target}`,
+		profileId: profile.id,
+		sshAuthMode: profile.sshAuthMode,
+		shell: isWindowsTerminalRenderer() ? 'sftp.exe' : 'sftp',
+		args: buildSftpArgs(profile),
+	};
+}
+
+function isWindowsTerminalRenderer(): boolean {
+	if (typeof document !== 'undefined') {
+		return document.documentElement.getAttribute('data-platform') === 'win32';
 	}
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	if (typeof navigator !== 'undefined') {
+		return `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase().includes('win');
+	}
+	return false;
 }
 
 function describeTerminalProfileTarget(

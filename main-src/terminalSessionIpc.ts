@@ -15,6 +15,7 @@ import {
 	killTerminalSession,
 	listTerminalSessions,
 	renameTerminalSession,
+	respondToTerminalSessionAuthPrompt,
 	resizeTerminalSession,
 	subscribeToSession,
 	unsubscribeFromSession,
@@ -32,6 +33,10 @@ import {
 const openPromisesByHost = new Map<number, Promise<number | null>>();
 const terminalWindowRendererByHost = new Map<number, number>();
 const terminalWindowHostByRenderer = new Map<number, number>();
+
+type OpenTerminalWindowOptions = {
+	startPage?: boolean;
+};
 
 function resolveHostId(sender: WebContents): number {
 	return terminalWindowHostByRenderer.get(sender.id) ?? sender.id;
@@ -71,7 +76,7 @@ function resolveCwdForSender(sender: WebContents, cwdRaw?: unknown): string | un
 	return root && existsSync(root) ? root : undefined;
 }
 
-async function ensureTerminalWindowForHostId(hostId: number): Promise<number | null> {
+async function ensureTerminalWindowForHostId(hostId: number, options: OpenTerminalWindowOptions = {}): Promise<number | null> {
 	const existing = terminalWindowRendererByHost.get(hostId);
 	if (existing != null) {
 		try {
@@ -102,7 +107,10 @@ async function ensureTerminalWindowForHostId(hostId: number): Promise<number | n
 				blank: true,
 				surface: 'agent',
 				initialWorkspace,
-				queryParams: { terminalWindow: '1' },
+				queryParams: {
+					terminalWindow: '1',
+					...(options.startPage ? { startPage: '1' } : {}),
+				},
 			});
 			const rendererId = win.webContents.id;
 			terminalWindowRendererByHost.set(hostId, rendererId);
@@ -120,8 +128,11 @@ async function ensureTerminalWindowForHostId(hostId: number): Promise<number | n
 	return await promise;
 }
 
-export async function openTerminalWindowForHostId(hostId: number): Promise<boolean> {
-	const rendererId = await ensureTerminalWindowForHostId(hostId);
+export async function openTerminalWindowForHostId(
+	hostId: number,
+	options: OpenTerminalWindowOptions = {}
+): Promise<boolean> {
+	const rendererId = await ensureTerminalWindowForHostId(hostId, options);
 	if (rendererId == null) {
 		return false;
 	}
@@ -147,9 +158,13 @@ export async function openTerminalWindowForHostId(hostId: number): Promise<boole
 }
 
 export function registerTerminalSessionIpc(): void {
-	ipcMain.handle('terminalWindow:open', async (event) => {
+	ipcMain.handle('terminalWindow:open', async (event, rawOptions: unknown) => {
 		const hostId = resolveHostId(event.sender);
-		const ok = await openTerminalWindowForHostId(hostId);
+		const options =
+			rawOptions && typeof rawOptions === 'object'
+				? { startPage: (rawOptions as Record<string, unknown>).startPage === true }
+				: {};
+		const ok = await openTerminalWindowForHostId(hostId, options);
 		return { ok };
 	});
 
@@ -198,6 +213,13 @@ export function registerTerminalSessionIpc(): void {
 			return { ok: false as const };
 		}
 		return { ok: writeTerminalSession(id, data) };
+	});
+
+	ipcMain.handle('term:sessionRespondToPrompt', (_event, id: unknown, data: unknown) => {
+		if (typeof id !== 'string' || typeof data !== 'string') {
+			return { ok: false as const };
+		}
+		return { ok: respondToTerminalSessionAuthPrompt(id, data) };
 	});
 
 	ipcMain.handle('term:sessionClearPrompt', (_event, id: unknown) => {

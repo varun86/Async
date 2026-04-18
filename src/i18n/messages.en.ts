@@ -125,6 +125,11 @@ export const messagesEn: Record<string, string> = {
 	'app.universalTerminalEmpty': 'No terminal sessions yet. Click + above to create one.',
 	'app.universalTerminalSessionExited': '(process exited {{code}})',
 	'app.universalTerminalUnavailable': 'Terminal service unavailable',
+	'app.universalTerminalToolbarReconnect': 'Reconnect',
+	'app.universalTerminalToolbarSftp': 'SFTP',
+	'app.universalTerminalToolbarPorts': 'Ports',
+	'app.universalTerminalToolbarPin': 'Pin',
+	'app.universalTerminalToolbarUnpin': 'Unpin',
 	'app.universalTerminalStartPageCopy':
 		'Launch a fresh shell, jump into an SSH target, or tweak your terminal setup before opening the next session.',
 	'app.universalTerminalStartPageDefaultHint': 'Starts {{name}} · {{target}}',

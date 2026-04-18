@@ -206,10 +206,12 @@ export default function App({
 	appSurface,
 	browserWindow = false,
 	terminalWindow = false,
+	terminalStartPage = false,
 }: {
 	appSurface?: LayoutMode;
 	browserWindow?: boolean;
 	terminalWindow?: boolean;
+	terminalStartPage?: boolean;
 } = {}) {
 	const shell = useAsyncShell();
 	const layoutPinnedBySurface = appSurface !== undefined;
@@ -514,12 +516,18 @@ export default function App({
 
 	return (
 		<AppShellProviders chrome={chromeSlice} workspace={workspaceSlice} settings={settingsSlice}>
-			{terminalWindow ? <AppTerminalWindow /> : browserWindow ? <AppBrowserWindow /> : <AppMainWorkspace />}
+			{terminalWindow ? (
+				<AppTerminalWindow terminalStartPage={terminalStartPage} />
+			) : browserWindow ? (
+				<AppBrowserWindow />
+			) : (
+				<AppMainWorkspace />
+			)}
 		</AppShellProviders>
 	);
 }
 
-function AppTerminalWindow() {
+function AppTerminalWindow({ terminalStartPage = false }: { terminalStartPage?: boolean }) {
 	const { shell, t, setLocale, setColorMode, setAppearanceSettings } = useAppShellChrome();
 
 	useEffect(() => {
@@ -559,7 +567,7 @@ function AppTerminalWindow() {
 		hideBootSplash();
 	}, []);
 
-	return <TerminalWindowSurface t={t} />;
+	return <TerminalWindowSurface t={t} forceStartPage={terminalStartPage} />;
 }
 
 function AppBrowserWindow() {
@@ -4100,7 +4108,7 @@ function AppMainWorkspaceInner() {
 		if (!shell) {
 			return;
 		}
-		void shell.invoke('terminalWindow:open').catch(() => {
+		void shell.invoke('terminalWindow:open', { startPage: true }).catch(() => {
 			/* ignore */
 		});
 	}, [shell]);

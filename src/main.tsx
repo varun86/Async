@@ -51,14 +51,28 @@ function readTerminalWindowFlagFromUrl(): boolean {
 	}
 }
 
+function readTerminalStartPageFlagFromUrl(): boolean {
+	try {
+		return new URLSearchParams(window.location.search).get('startPage') === '1';
+	} catch {
+		return false;
+	}
+}
+
 const appSurface = readAppSurfaceFromUrl();
 const browserWindow = readBrowserWindowFlagFromUrl();
 const terminalWindow = readTerminalWindowFlagFromUrl();
+const terminalStartPage = readTerminalStartPageFlagFromUrl();
 
 createRoot(document.getElementById('root')!).render(
 	<StrictMode>
 		<I18nProvider>
-			<App appSurface={appSurface} browserWindow={browserWindow} terminalWindow={terminalWindow} />
+			<App
+				appSurface={appSurface}
+				browserWindow={browserWindow}
+				terminalWindow={terminalWindow}
+				terminalStartPage={terminalStartPage}
+			/>
 		</I18nProvider>
 	</StrictMode>
 );

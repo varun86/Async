@@ -110,6 +110,67 @@ export function IconRefresh({ className }: { className?: string }) {
 	);
 }
 
+export function IconFolderOpen({ className }: { className?: string }) {
+	return (
+		<svg
+			className={className}
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="1.9"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden
+		>
+			<path d="M3 8.5A2.5 2.5 0 0 1 5.5 6H10l2 2h6.5A2.5 2.5 0 0 1 21 10.5V11" />
+			<path d="M4.5 12.5h15l-1.6 5.1A2 2 0 0 1 16 19H6.4a2 2 0 0 1-1.93-1.47z" />
+		</svg>
+	);
+}
+
+export function IconPlug({ className }: { className?: string }) {
+	return (
+		<svg
+			className={className}
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="1.9"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden
+		>
+			<path d="M9 8V3M15 8V3" />
+			<path d="M8 8h8v3a4 4 0 0 1-4 4 4 4 0 0 1-4-4z" />
+			<path d="M12 15v6" />
+		</svg>
+	);
+}
+
+export function IconPin({ className }: { className?: string }) {
+	return (
+		<svg
+			className={className}
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="1.9"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden
+		>
+			<path d="M9 4h6l-1 5 2.5 2.5v1H7.5v-1L10 9z" />
+			<path d="M12 12.5V20" />
+		</svg>
+	);
+}
+
 export function IconDoc({ className }: { className?: string }) {
 	return (
 		<svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

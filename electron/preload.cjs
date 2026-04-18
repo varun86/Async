@@ -97,6 +97,7 @@ const INVOKE_CHANNELS = new Set([
 	'terminalWindow:open',
 	'term:sessionCreate',
 	'term:sessionWrite',
+	'term:sessionRespondToPrompt',
 	'term:sessionClearPrompt',
 	'term:sessionResize',
 	'term:sessionKill',

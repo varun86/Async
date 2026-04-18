@@ -558,6 +558,15 @@ export function buildTermSessionCreatePayload(profile: TerminalProfile): Record<
 	return payload;
 }
 
+export function buildSftpArgs(profile: TerminalProfile): string[] {
+	return buildSshConnectionArgs(profile, {
+		allocateTty: false,
+		includeForwarding: false,
+		includeRemoteCommand: false,
+		portFlag: '-P',
+	});
+}
+
 /** 每行 KEY=VAL；返回 undefined 表示没有自定义项。 */
 export function parseEnvString(s: string): Record<string, string> | undefined {
 	const lines = s.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -879,7 +888,24 @@ function normalizeIdentityFiles(value: unknown, fallback = ''): string[] {
 }
 
 function buildSshArgs(profile: TerminalProfile): string[] {
-	const args: string[] = ['-tt'];
+	return buildSshConnectionArgs(profile, {
+		allocateTty: true,
+		includeForwarding: true,
+		includeRemoteCommand: true,
+		portFlag: '-p',
+	});
+}
+
+function buildSshConnectionArgs(
+	profile: TerminalProfile,
+	options: {
+		allocateTty: boolean;
+		includeForwarding: boolean;
+		includeRemoteCommand: boolean;
+		portFlag: '-p' | '-P';
+	}
+): string[] {
+	const args: string[] = options.allocateTty ? ['-tt'] : [];
 	args.push(...parseArgsString(profile.sshExtraArgs));
 
 	switch (profile.sshAuthMode) {
@@ -917,14 +943,16 @@ function buildSshArgs(profile: TerminalProfile): string[] {
 	}
 
 	appendSshAlgorithmArgs(args, profile.sshAlgorithms);
-	appendSshForwardingArgs(args, profile.sshForwardedPorts);
+	if (options.includeForwarding) {
+		appendSshForwardingArgs(args, profile.sshForwardedPorts);
+	}
 
 	for (const identity of getSshIdentityFiles(profile)) {
 		args.push('-i', identity);
 	}
 
 	if (profile.sshPort && profile.sshPort !== 22) {
-		args.push('-p', String(profile.sshPort));
+		args.push(options.portFlag, String(profile.sshPort));
 	}
 
 	const target = [profile.sshUser.trim(), profile.sshHost.trim()].filter(Boolean).join('@');
@@ -932,7 +960,9 @@ function buildSshArgs(profile: TerminalProfile): string[] {
 		args.push(target);
 	}
 
-	args.push(...parseArgsString(profile.sshRemoteCommand));
+	if (options.includeRemoteCommand) {
+		args.push(...parseArgsString(profile.sshRemoteCommand));
+	}
 	return args;
 }
 
