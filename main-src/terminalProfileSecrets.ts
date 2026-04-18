@@ -6,6 +6,8 @@ type SecretStoreShape = {
 	passwords?: Record<string, string>;
 };
 
+const runtimePasswords = new Map<string, string>();
+
 function getSecretsFilePath(): string {
 	return path.join(app.getPath('userData'), 'async', 'terminal-profile-secrets.json');
 }
@@ -66,14 +68,27 @@ export function getTerminalProfilePassword(profileId: string): string | null {
 	if (!profileId.trim()) {
 		return null;
 	}
+	const runtime = runtimePasswords.get(profileId);
+	if (runtime) {
+		return runtime;
+	}
 	const encoded = readSecretStore().passwords?.[profileId];
 	return encoded ? decodeSecret(encoded) : null;
+}
+
+export function setTerminalProfileRuntimePassword(profileId: string, password: string): boolean {
+	if (!profileId.trim() || !password) {
+		return false;
+	}
+	runtimePasswords.set(profileId, password);
+	return true;
 }
 
 export function setTerminalProfilePassword(profileId: string, password: string): boolean {
 	if (!profileId.trim() || !password) {
 		return false;
 	}
+	runtimePasswords.set(profileId, password);
 	const store = readSecretStore();
 	store.passwords = {
 		...(store.passwords || {}),
@@ -87,6 +102,7 @@ export function clearTerminalProfilePassword(profileId: string): boolean {
 	if (!profileId.trim()) {
 		return false;
 	}
+	runtimePasswords.delete(profileId);
 	const store = readSecretStore();
 	if (!store.passwords?.[profileId]) {
 		return false;

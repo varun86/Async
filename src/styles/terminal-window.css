@@ -4,6 +4,8 @@
  */
 
 .ref-uterm-root {
+	--ref-uterm-titlebar-height: 44px;
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	height: 100vh;
@@ -25,11 +27,13 @@
 
 .ref-uterm-titlebar {
 	-webkit-app-region: drag;
+	position: relative;
+	z-index: 12;
 	display: flex;
 	align-items: stretch;
 	gap: 10px;
-	flex: 0 0 44px;
-	min-height: 44px;
+	flex: 0 0 var(--ref-uterm-titlebar-height);
+	min-height: var(--ref-uterm-titlebar-height);
 	padding: 0 10px 0 8px;
 	border-bottom: 1px solid color-mix(in srgb, var(--void-border) 72%, transparent);
 	background: color-mix(in srgb, var(--void-bg-0) 92%, transparent);
@@ -64,6 +68,7 @@
 }
 
 .ref-uterm-tab {
+	-webkit-app-region: no-drag;
 	display: flex;
 	align-items: stretch;
 	min-width: 140px;
@@ -89,6 +94,7 @@
 }
 
 .ref-uterm-tab-select {
+	-webkit-app-region: no-drag;
 	flex: 1 1 auto;
 	min-width: 0;
 	display: flex;
@@ -118,6 +124,7 @@
 }
 
 .ref-uterm-tab-close {
+	-webkit-app-region: no-drag;
 	width: 28px;
 	height: 42px;
 	border: none;
@@ -182,6 +189,7 @@
 }
 
 .ref-uterm-icon-btn {
+	-webkit-app-region: no-drag;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -206,6 +214,7 @@
 }
 
 .ref-uterm-menu-wrap {
+	-webkit-app-region: no-drag;
 	position: relative;
 }
 
@@ -281,6 +290,7 @@
 	flex: 1 1 auto;
 	min-height: 0;
 	position: relative;
+	z-index: 0;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
@@ -288,7 +298,10 @@
 
 .ref-uterm-stage.is-hidden {
 	position: absolute;
-	inset: 0;
+	top: var(--ref-uterm-titlebar-height);
+	right: 0;
+	bottom: 0;
+	left: 0;
 	visibility: hidden;
 	pointer-events: none;
 	opacity: 0;
@@ -468,6 +481,517 @@
 	width: 13px;
 	height: 13px;
 	flex: 0 0 auto;
+}
+
+.ref-uterm-sftp-panel {
+	position: absolute;
+	left: -12px;
+	right: -12px;
+	bottom: -12px;
+	z-index: 6;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 80%;
+	min-height: 300px;
+	max-height: calc(100% - 44px);
+	overflow: hidden;
+	border-top: 1px solid color-mix(in srgb, var(--void-border) 74%, transparent);
+	background:
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--void-bg-1) 98%, transparent) 0%,
+			color-mix(in srgb, var(--void-bg-0) 99%, transparent) 100%
+		);
+	box-shadow: 0 -8px 18px rgba(0, 0, 0, 0.16);
+	animation: ref-uterm-sftp-panel-in 180ms ease-out both;
+}
+
+@keyframes ref-uterm-sftp-panel-in {
+	from {
+		opacity: 0;
+		transform: translateY(18px);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.ref-uterm-sftp-head {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	flex: 0 0 auto;
+	padding: 16px 20px 14px;
+	border-bottom: 1px solid color-mix(in srgb, var(--void-border) 62%, transparent);
+	background:
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--void-bg-1) 94%, transparent) 0%,
+			color-mix(in srgb, var(--void-bg-0) 88%, transparent) 100%
+		);
+}
+
+.ref-uterm-sftp-head-top {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+}
+
+.ref-uterm-sftp-head-copy {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+	padding-left: 14px;
+}
+
+.ref-uterm-sftp-head-kicker {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--void-fg-2);
+}
+
+.ref-uterm-sftp-head-title-row {
+	display: flex;
+	align-items: center;
+	gap: 10px 12px;
+	flex-wrap: wrap;
+}
+
+.ref-uterm-sftp-head-title {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+	color: var(--void-fg-0);
+}
+
+.ref-uterm-sftp-head-subtitle {
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--void-fg-1);
+}
+
+.ref-uterm-sftp-head-badges {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.ref-uterm-sftp-head-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 10px;
+	border-radius: 999px;
+	border: 1px solid color-mix(in srgb, var(--void-border) 72%, transparent);
+	background: color-mix(in srgb, var(--void-bg-0) 72%, transparent);
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1.2;
+	color: var(--void-fg-1);
+}
+
+.ref-uterm-sftp-head-badge.is-live {
+	border-color: color-mix(in srgb, #34d399 26%, transparent);
+	background: color-mix(in srgb, #34d399 14%, transparent);
+	color: color-mix(in srgb, #9df5cb 88%, white);
+}
+
+.ref-uterm-sftp-head-badge.is-busy {
+	border-color: color-mix(in srgb, var(--void-accent-cool) 34%, transparent);
+	background: color-mix(in srgb, var(--void-accent-cool) 14%, transparent);
+	color: var(--void-fg-0);
+}
+
+.ref-uterm-sftp-head-bottom {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 14px;
+	border: 1px solid color-mix(in srgb, var(--void-border) 68%, transparent);
+	border-radius: 14px;
+	background:
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--void-bg-1) 72%, transparent) 0%,
+			color-mix(in srgb, var(--void-bg-0) 76%, transparent) 100%
+		);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+}
+
+.ref-uterm-sftp-head-path {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+.ref-uterm-sftp-head-path-label {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--void-fg-2);
+}
+
+.ref-uterm-sftp-breadcrumb {
+	display: flex;
+	align-items: center;
+	flex: 1 1 auto;
+	width: 100%;
+	gap: 2px;
+	min-width: 0;
+	overflow: hidden;
+	flex-wrap: nowrap;
+}
+
+.ref-uterm-sftp-crumb {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 220px;
+	padding: 5px 8px;
+	border: none;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--void-fg-1);
+	font: inherit;
+	font-size: 12px;
+	line-height: 1.25;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+.ref-uterm-sftp-crumb:first-child {
+	font-weight: 700;
+	color: var(--void-fg-0);
+}
+
+.ref-uterm-sftp-crumb:hover {
+	background: color-mix(in srgb, white 7%, transparent);
+	color: var(--void-fg-0);
+}
+
+.ref-uterm-sftp-crumb + .ref-uterm-sftp-crumb::before {
+	content: '/';
+	margin-right: 6px;
+	color: var(--void-fg-2);
+}
+
+.ref-uterm-sftp-breadcrumb-spacer {
+	flex: 1 1 auto;
+	min-width: 16px;
+	min-height: 24px;
+}
+
+.ref-uterm-sftp-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	flex: 0 0 auto;
+	flex-wrap: wrap;
+}
+
+.ref-uterm-sftp-head-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+	padding: 8px 12px;
+	border: 1px solid color-mix(in srgb, var(--void-border) 74%, transparent);
+	background: color-mix(in srgb, var(--void-bg-0) 76%, transparent);
+	color: var(--void-fg-1);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.15;
+	white-space: nowrap;
+	border-radius: 10px;
+	cursor: pointer;
+	transition: border-color 120ms ease, background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.ref-uterm-sftp-head-btn:hover {
+	border-color: color-mix(in srgb, var(--void-accent-cool) 38%, transparent);
+	background: color-mix(in srgb, var(--void-accent-cool) 12%, transparent);
+	color: var(--void-fg-0);
+	transform: translateY(-1px);
+}
+
+.ref-uterm-sftp-head-btn.is-active {
+	border-color: color-mix(in srgb, var(--void-accent-cool) 48%, transparent);
+	background: color-mix(in srgb, var(--void-accent-cool) 16%, transparent);
+	color: var(--void-fg-0);
+}
+
+.ref-uterm-sftp-head-btn--primary {
+	border-color: color-mix(in srgb, var(--void-accent-cool) 52%, transparent);
+	background: color-mix(in srgb, var(--void-accent-cool) 20%, transparent);
+	color: var(--void-fg-0);
+}
+
+.ref-uterm-sftp-head-btn--secondary {
+	background: transparent;
+}
+
+.ref-uterm-sftp-head-btn-icon {
+	width: 14px;
+	height: 14px;
+	flex: 0 0 auto;
+}
+
+.ref-uterm-sftp-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 38px;
+	height: 38px;
+	padding: 0;
+	border: 1px solid color-mix(in srgb, var(--void-border) 74%, transparent);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--void-bg-0) 76%, transparent);
+	color: var(--void-fg-1);
+	cursor: pointer;
+	transition: border-color 120ms ease, background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.ref-uterm-sftp-close:hover {
+	border-color: color-mix(in srgb, var(--void-border) 88%, transparent);
+	background: color-mix(in srgb, white 8%, transparent);
+	color: var(--void-fg-0);
+	transform: translateY(-1px);
+}
+
+.ref-uterm-sftp-svg {
+	width: 12px;
+	height: 12px;
+}
+
+.ref-uterm-sftp-path-input--head {
+	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
+	min-height: 40px;
+}
+
+.ref-uterm-sftp-path-input,
+.ref-uterm-sftp-filter-input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 10px 12px;
+	border-radius: 10px;
+	border: 1px solid color-mix(in srgb, var(--void-border) 74%, transparent);
+	background: color-mix(in srgb, var(--void-bg-0) 84%, transparent);
+	color: var(--void-fg-0);
+	font: inherit;
+	font-size: 12px;
+	outline: none;
+}
+
+.ref-uterm-sftp-path-input:focus,
+.ref-uterm-sftp-filter-input:focus {
+	border-color: color-mix(in srgb, var(--void-accent-cool) 44%, transparent);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--void-accent-cool) 14%, transparent);
+}
+
+.ref-uterm-sftp-filterbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 0 auto;
+}
+
+.ref-uterm-sftp-filter-group {
+	display: flex;
+	align-items: stretch;
+	width: min(520px, 100%);
+}
+
+.ref-uterm-sftp-filter-clear {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 42px;
+	height: 42px;
+	padding: 0;
+	border: 1px solid color-mix(in srgb, var(--void-border) 72%, transparent);
+	border-left: none;
+	border-radius: 0 10px 10px 0;
+	background: color-mix(in srgb, var(--void-bg-0) 78%, transparent);
+	color: var(--void-fg-1);
+	font: inherit;
+	cursor: pointer;
+}
+
+.ref-uterm-sftp-filter-group .ref-uterm-sftp-filter-input {
+	border-radius: 10px 0 0 10px;
+}
+
+.ref-uterm-sftp-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	padding: 10px 20px;
+	overflow: auto;
+}
+
+.ref-uterm-sftp-alert,
+.ref-uterm-sftp-empty {
+	padding: 12px 14px;
+	border-radius: 8px;
+	border: 1px solid color-mix(in srgb, var(--void-border) 54%, transparent);
+	background: color-mix(in srgb, var(--void-bg-0) 76%, transparent);
+	font-size: 12px;
+	line-height: 1.6;
+	color: var(--void-fg-1);
+}
+
+.ref-uterm-sftp-alert {
+	margin-bottom: 10px;
+	border-color: color-mix(in srgb, var(--void-git-deleted, #ff6f77) 26%, transparent);
+	background: color-mix(in srgb, var(--void-git-deleted, #ff6f77) 8%, var(--void-bg-0) 92%);
+	color: var(--void-git-deleted, #ff6f77);
+}
+
+.ref-uterm-sftp-state {
+	padding: 4px 0 10px;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--void-fg-1);
+}
+
+.ref-uterm-sftp-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+.ref-uterm-sftp-row {
+	display: flex;
+	align-items: center;
+	gap: 0;
+	width: 100%;
+	padding: 10px 12px;
+	border: none;
+	border-radius: 0;
+	border-bottom: 1px solid color-mix(in srgb, var(--void-border) 42%, transparent);
+	background: transparent;
+	color: var(--void-fg-0);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.ref-uterm-sftp-row:hover {
+	background: color-mix(in srgb, white 5%, transparent);
+}
+
+.ref-uterm-sftp-row.is-nav {
+	color: var(--void-fg-1);
+}
+
+.ref-uterm-sftp-row:last-child {
+	border-bottom: none;
+}
+
+.ref-uterm-sftp-row-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: 18px;
+	height: 18px;
+	margin-right: 12px;
+	color: var(--void-fg-1);
+}
+
+.ref-uterm-sftp-row-name,
+.ref-uterm-sftp-row-size,
+.ref-uterm-sftp-row-date,
+.ref-uterm-sftp-row-mode {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ref-uterm-sftp-row-name {
+	min-width: 0;
+	font-size: 13px;
+}
+
+.ref-uterm-sftp-row-spacer {
+	flex: 1 1 auto;
+	min-width: 12px;
+}
+
+.ref-uterm-sftp-row-size,
+.ref-uterm-sftp-row-date,
+.ref-uterm-sftp-row-mode {
+	flex: 0 0 auto;
+	margin-left: 20px;
+	font-family: var(--void-code-font-family, ui-monospace, monospace);
+	font-size: 12px;
+	opacity: 0.5;
+	color: var(--void-fg-1);
+	text-align: right;
+}
+
+.ref-uterm-sftp-row-size {
+	width: 100px;
+}
+
+.ref-uterm-sftp-row-date {
+	width: 200px;
+}
+
+.ref-uterm-sftp-row-mode {
+	width: 110px;
+}
+
+.ref-uterm-sftp-fileicon {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+.ref-uterm-sftp-fileicon--link,
+.ref-uterm-sftp-fileicon--up {
+	color: var(--void-fg-1);
+}
+
+.ref-uterm-sftp-context {
+	position: fixed;
+	z-index: 90;
+	min-width: 220px;
+}
+
+.ref-uterm-sftp-modal {
+	min-width: 360px;
+}
+
+.ref-uterm-sftp-progress {
+	z-index: 95;
+}
+
+.ref-uterm-sftp-progress-copy {
+	font-size: 12px;
+	line-height: 1.6;
+	color: var(--void-fg-1);
+	word-break: break-word;
 }
 
 .ref-uterm-start-page {
@@ -1063,6 +1587,16 @@
 	display: flex;
 	flex: 1 1 auto;
 	min-height: 0;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.ref-uterm-settings-workspace input,
+.ref-uterm-settings-workspace textarea,
+.ref-uterm-settings-workspace select,
+.ref-uterm-settings-workspace [contenteditable='true'] {
+	-webkit-user-select: text;
+	user-select: text;
 }
 
 .ref-uterm-settings-sidebar {
@@ -2751,6 +3285,50 @@
 		width: 100%;
 		justify-content: flex-start;
 		flex-wrap: wrap;
+	}
+	.ref-uterm-sftp-panel {
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: calc(100% - 52px);
+		min-height: 0;
+		max-height: calc(100% - 52px);
+		width: 100%;
+	}
+	.ref-uterm-sftp-head {
+		padding: 14px;
+	}
+	.ref-uterm-sftp-head-top,
+	.ref-uterm-sftp-head-bottom {
+		flex-direction: column;
+		align-items: stretch;
+	}
+	.ref-uterm-sftp-breadcrumb,
+	.ref-uterm-sftp-path-input--head {
+		width: 100%;
+	}
+	.ref-uterm-sftp-actions {
+		width: 100%;
+		justify-content: flex-start;
+	}
+	.ref-uterm-sftp-head-btn,
+	.ref-uterm-sftp-close {
+		min-height: 38px;
+	}
+	.ref-uterm-sftp-head-btn {
+		flex: 1 1 calc(50% - 8px);
+		justify-content: center;
+	}
+	.ref-uterm-sftp-head-btn--secondary {
+		flex: 0 0 auto;
+	}
+	.ref-uterm-sftp-row {
+		gap: 0;
+	}
+	.ref-uterm-sftp-row-size,
+	.ref-uterm-sftp-row-date,
+	.ref-uterm-sftp-row-mode {
+		display: none;
 	}
 	.ref-uterm-settings-workspace {
 		flex-direction: column;

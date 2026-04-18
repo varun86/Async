@@ -19,9 +19,9 @@ import {
 	TerminalSettingsPanel,
 	type TerminalSettingsPanelOpenProfileRequest,
 } from './terminalWindow/TerminalSettingsPanel';
+import { TerminalSftpPanel } from './terminalWindow/TerminalSftpPanel';
 import { TerminalStartPage, type TerminalStartPageProfile } from './terminalWindow/TerminalStartPage';
 import {
-	buildSftpArgs,
 	buildTerminalProfileTarget,
 	buildTermSessionCreatePayload,
 	getBuiltinTerminalProfiles,
@@ -481,6 +481,8 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 	const [authPromptModal, setAuthPromptModal] = useState<ActiveTerminalAuthPrompt | null>(null);
 	const [settingsOpenProfileRequest, setSettingsOpenProfileRequest] =
 		useState<TerminalSettingsPanelOpenProfileRequest | null>(null);
+	const [sftpPanelOpenBySession, setSftpPanelOpenBySession] = useState<Record<string, boolean>>({});
+	const [sftpPanelPathBySession, setSftpPanelPathBySession] = useState<Record<string, string>>({});
 	const [toolbarPinned, setToolbarPinned] = useState(() => loadTerminalToolbarPinned());
 	const [toolbarRevealed, setToolbarRevealed] = useState(() => loadTerminalToolbarPinned());
 	const creatingRef = useRef(false);
@@ -889,6 +891,35 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 		}
 		return next;
 	}, [builtinProfiles, sessionProfiles, sessions, terminalSettings.defaultProfileId, terminalSettings.profiles]);
+
+	useEffect(() => {
+		const activeIds = new Set(sessions.map((session) => session.id));
+		setSftpPanelOpenBySession((prev) => {
+			let changed = false;
+			const next: Record<string, boolean> = {};
+			for (const [sessionId, open] of Object.entries(prev)) {
+				if (activeIds.has(sessionId)) {
+					next[sessionId] = open;
+				} else {
+					changed = true;
+				}
+			}
+			return changed ? next : prev;
+		});
+		setSftpPanelPathBySession((prev) => {
+			let changed = false;
+			const next: Record<string, string> = {};
+			for (const [sessionId, sftpPath] of Object.entries(prev)) {
+				if (activeIds.has(sessionId)) {
+					next[sessionId] = sftpPath;
+				} else {
+					changed = true;
+				}
+			}
+			return changed ? next : prev;
+		});
+	}, [sessions]);
+
 	const openAuthPrompt = useCallback(
 		(sessionId: string, prompt: TerminalSessionAuthPrompt) => {
 			const session = sessions.find((item) => item.id === sessionId) ?? null;
@@ -991,27 +1022,26 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 		setContextMenu(null);
 	}, []);
 
-	const openSftpSession = useCallback(
-		async (profile: TerminalProfile | null) => {
-			if (!shell || !profile || profile.kind !== 'ssh') {
-				return;
-			}
-			const result = (await shell.invoke('term:sessionCreate', buildSftpSessionCreatePayload(profile, t))) as
-				| { ok: true; session: SessionInfo }
-				| { ok: false; error?: string };
-			if (!result.ok) {
-				return;
-			}
-			setSessionProfiles((prev) => ({ ...prev, [result.session.id]: profile.id }));
-			setSessions((prev) => (prev.some((session) => session.id === result.session.id) ? prev : [...prev, result.session]));
-			setActiveId(result.session.id);
-			setSettingsOpen(false);
-			setMenuOpen(false);
-			setContextMenu(null);
+	const openSftpPanel = useCallback(
+		(sessionId: string) => {
+			setSftpPanelOpenBySession((prev) => ({ ...prev, [sessionId]: true }));
 			revealTerminalToolbar();
 		},
-		[shell, t, revealTerminalToolbar]
+		[revealTerminalToolbar]
 	);
+
+	const closeSftpPanel = useCallback((sessionId: string) => {
+		setSftpPanelOpenBySession((prev) => {
+			if (!prev[sessionId]) {
+				return prev;
+			}
+			return { ...prev, [sessionId]: false };
+		});
+	}, []);
+
+	const updateSftpPanelPath = useCallback((sessionId: string, nextPath: string) => {
+		setSftpPanelPathBySession((prev) => ({ ...prev, [sessionId]: nextPath }));
+	}, []);
 
 	const reconnectSession = useCallback(
 		async (sessionId: string) => {
@@ -1058,10 +1088,15 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 			const result = (await shell
 				.invoke('term:sessionRespondToPrompt', promptState.sessionId, `${value}\r`)
 				.catch(() => ({ ok: false }))) as { ok?: boolean };
-			if (result.ok && remember && promptState.kind === 'password' && promptState.profileId) {
-				await shell.invoke('term:profilePasswordSet', promptState.profileId, value).catch(() => {
+			if (result.ok && promptState.profileId) {
+				await shell.invoke('term:profilePasswordCacheSet', promptState.profileId, value).catch(() => {
 					/* ignore */
 				});
+				if (remember && promptState.kind === 'password') {
+					await shell.invoke('term:profilePasswordSet', promptState.profileId, value).catch(() => {
+						/* ignore */
+					});
+				}
 			}
 			setAuthPromptModal(null);
 		},
@@ -1272,12 +1307,15 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 									const isActive = session.id === activeSession?.id;
 									const exitCode = exitByTab[session.id];
 									const sessionProfile = resolvedSessionProfiles[session.id] ?? null;
-									const showSshToolbar = isActive && sessionProfile?.kind === 'ssh';
+									const paneActive = !settingsOpen && isActive;
+									const showSshToolbar = paneActive && sessionProfile?.kind === 'ssh';
+									const sftpPanelOpen = Boolean(sftpPanelOpenBySession[session.id]);
+									const renderSftpPanel = sessionProfile?.kind === 'ssh' && sftpPanelOpen;
 									return (
 										<div
 											key={session.id}
-											className={`ref-uterm-pane ${isActive ? 'is-active' : ''}`}
-											aria-hidden={!isActive}
+											className={`ref-uterm-pane ${paneActive ? 'is-active' : ''}`}
+											aria-hidden={!paneActive}
 											onMouseEnter={showSshToolbar ? revealTerminalToolbar : undefined}
 											onMouseLeave={showSshToolbar ? hideTerminalToolbar : undefined}
 										>
@@ -1290,7 +1328,7 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 													pinned={toolbarPinned}
 													onPinToggle={toggleTerminalToolbarPinned}
 													onReconnect={() => void reconnectSession(session.id)}
-													onOpenSftp={() => void openSftpSession(sessionProfile)}
+													onOpenSftp={() => openSftpPanel(session.id)}
 													onOpenPorts={() => openProfileSettingsFromToolbar(sessionProfile, 'ports')}
 													onMouseEnter={revealTerminalToolbar}
 													onMouseLeave={hideTerminalToolbar}
@@ -1309,6 +1347,17 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 												registerRuntime={registerRuntime}
 												onExit={(code) => handleExit(session.id, code)}
 											/>
+											{renderSftpPanel ? (
+												<TerminalSftpPanel
+													t={t}
+													shell={shell}
+													profile={sessionProfile}
+													visible={sftpPanelOpen}
+													path={sftpPanelPathBySession[session.id]}
+													onPathChange={(nextPath) => updateSftpPanelPath(session.id, nextPath)}
+													onClose={() => closeSftpPanel(session.id)}
+												/>
+											) : null}
 											{exitCode !== undefined ? (
 												<div className="ref-uterm-pane-exitbadge">
 													{t('app.universalTerminalSessionExited', {
@@ -1622,27 +1671,6 @@ function formatTerminalToolbarTarget(profile: TerminalProfile | null): string {
 	const host = profile.sshHost.trim();
 	const port = profile.sshPort > 0 ? profile.sshPort : 22;
 	return `${user}@${host}:${port}`;
-}
-
-function buildSftpSessionCreatePayload(profile: TerminalProfile, t: TFunction): Record<string, unknown> {
-	const target = formatTerminalToolbarTarget(profile) || profile.name.trim() || t('app.universalTerminalToolbarSftp');
-	return {
-		title: `SFTP · ${target}`,
-		profileId: profile.id,
-		sshAuthMode: profile.sshAuthMode,
-		shell: isWindowsTerminalRenderer() ? 'sftp.exe' : 'sftp',
-		args: buildSftpArgs(profile),
-	};
-}
-
-function isWindowsTerminalRenderer(): boolean {
-	if (typeof document !== 'undefined') {
-		return document.documentElement.getAttribute('data-platform') === 'win32';
-	}
-	if (typeof navigator !== 'undefined') {
-		return `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase().includes('win');
-	}
-	return false;
 }
 
 function describeTerminalProfileTarget(

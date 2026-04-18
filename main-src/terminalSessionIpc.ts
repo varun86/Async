@@ -22,11 +22,27 @@ import {
 	writeTerminalSession,
 	type TerminalSessionCreateOpts,
 } from './terminalSessionService.js';
+import {
+	closeTerminalSftpConnection,
+	createTerminalSftpDirectory,
+	deleteTerminalSftpPath,
+	downloadTerminalSftpDirectory,
+	downloadTerminalSftpFile,
+	listTerminalSftpDirectory,
+	openTerminalSftpConnection,
+	renameTerminalSftpPath,
+	resolveTerminalSftpRealPath,
+	startTerminalSftpEditSession,
+	statTerminalSftpPath,
+	uploadTerminalSftpDirectory,
+	uploadTerminalSftpFile,
+} from './terminalSftpService.js';
 import { listBuiltinTerminalProfiles } from './terminalBuiltinProfiles.js';
 import {
 	clearTerminalProfilePassword,
 	getTerminalProfilePassword,
 	hasTerminalProfilePassword,
+	setTerminalProfileRuntimePassword,
 	setTerminalProfilePassword,
 } from './terminalProfileSecrets.js';
 
@@ -281,6 +297,15 @@ export function registerTerminalSessionIpc(): void {
 		};
 	});
 
+	ipcMain.handle('term:profilePasswordCacheSet', (_event, profileId: unknown, password: unknown) => {
+		if (typeof profileId !== 'string' || typeof password !== 'string') {
+			return { ok: false as const };
+		}
+		return {
+			ok: setTerminalProfileRuntimePassword(profileId, password),
+		};
+	});
+
 	ipcMain.handle('term:profilePasswordClear', (_event, profileId: unknown) => {
 		if (typeof profileId !== 'string') {
 			return { ok: false as const };
@@ -333,6 +358,199 @@ export function registerTerminalSessionIpc(): void {
 			path: result.filePaths[0],
 			paths: result.filePaths,
 		};
+	});
+
+	ipcMain.handle('term:pickSavePath', async (event, rawOpts: unknown) => {
+		const opts = (rawOpts && typeof rawOpts === 'object' ? rawOpts : {}) as Record<string, unknown>;
+		const title = typeof opts.title === 'string' && opts.title.trim() ? opts.title.trim() : undefined;
+		const defaultPath =
+			typeof opts.defaultPath === 'string' && opts.defaultPath.trim() ? opts.defaultPath.trim() : undefined;
+		const filters = Array.isArray(opts.filters)
+			? (opts.filters
+					.map((item) => {
+						if (!item || typeof item !== 'object') {
+							return null;
+						}
+						const record = item as Record<string, unknown>;
+						const name = typeof record.name === 'string' && record.name.trim() ? record.name.trim() : '';
+						const extensions = Array.isArray(record.extensions)
+							? record.extensions.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+							: [];
+						if (!name || extensions.length === 0) {
+							return null;
+						}
+						return { name, extensions } satisfies FileFilter;
+					})
+					.filter((item): item is FileFilter => Boolean(item)))
+			: undefined;
+		const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+		const result = await dialog.showSaveDialog(win, {
+			title,
+			defaultPath,
+			filters: filters?.length ? filters : undefined,
+		});
+		if (result.canceled || !result.filePath) {
+			return { ok: false as const, canceled: true as const };
+		}
+		return {
+			ok: true as const,
+			path: result.filePath,
+		};
+	});
+
+	ipcMain.handle('term:sftpConnect', async (_event, rawProfile: unknown, rawOptions: unknown) => {
+		const profile =
+			rawProfile && typeof rawProfile === 'object' ? (rawProfile as Parameters<typeof openTerminalSftpConnection>[0]) : null;
+		if (!profile) {
+			return { ok: false as const, error: 'invalid-profile' };
+		}
+		const options =
+			rawOptions && typeof rawOptions === 'object'
+				? { passwordOverride: typeof (rawOptions as Record<string, unknown>).passwordOverride === 'string'
+						? String((rawOptions as Record<string, unknown>).passwordOverride)
+						: null }
+				: undefined;
+		return await openTerminalSftpConnection(profile, options);
+	});
+
+	ipcMain.handle('term:sftpDisconnect', async (_event, connectionId: unknown) => {
+		if (typeof connectionId !== 'string') {
+			return { ok: false as const };
+		}
+		return { ok: await closeTerminalSftpConnection(connectionId) };
+	});
+
+	ipcMain.handle('term:sftpList', async (_event, connectionId: unknown, remotePath: unknown) => {
+		if (typeof connectionId !== 'string' || typeof remotePath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			return { ok: true as const, entries: await listTerminalSftpDirectory(connectionId, remotePath) };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpStat', async (_event, connectionId: unknown, remotePath: unknown) => {
+		if (typeof connectionId !== 'string' || typeof remotePath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			return { ok: true as const, entry: await statTerminalSftpPath(connectionId, remotePath) };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpRealPath', async (_event, connectionId: unknown, remotePath: unknown) => {
+		if (typeof connectionId !== 'string' || typeof remotePath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			return { ok: true as const, path: await resolveTerminalSftpRealPath(connectionId, remotePath) };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpMkdir', async (_event, connectionId: unknown, remotePath: unknown) => {
+		if (typeof connectionId !== 'string' || typeof remotePath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			await createTerminalSftpDirectory(connectionId, remotePath);
+			return { ok: true as const };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpDelete', async (_event, connectionId: unknown, remotePath: unknown, recursive: unknown) => {
+		if (typeof connectionId !== 'string' || typeof remotePath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			await deleteTerminalSftpPath(connectionId, remotePath, recursive === true);
+			return { ok: true as const };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpRename', async (_event, connectionId: unknown, fromPath: unknown, toPath: unknown) => {
+		if (typeof connectionId !== 'string' || typeof fromPath !== 'string' || typeof toPath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			await renameTerminalSftpPath(connectionId, fromPath, toPath);
+			return { ok: true as const };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpUploadFile', async (_event, connectionId: unknown, localPath: unknown, remotePath: unknown) => {
+		if (typeof connectionId !== 'string' || typeof localPath !== 'string' || typeof remotePath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			await uploadTerminalSftpFile(connectionId, localPath, remotePath);
+			return { ok: true as const };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpUploadDirectory', async (_event, connectionId: unknown, localPath: unknown, remotePath: unknown) => {
+		if (typeof connectionId !== 'string' || typeof localPath !== 'string' || typeof remotePath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			await uploadTerminalSftpDirectory(connectionId, localPath, remotePath);
+			return { ok: true as const };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpDownloadFile', async (_event, connectionId: unknown, remotePath: unknown, localPath: unknown) => {
+		if (typeof connectionId !== 'string' || typeof remotePath !== 'string' || typeof localPath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			await downloadTerminalSftpFile(connectionId, remotePath, localPath);
+			return { ok: true as const };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpDownloadDirectory', async (_event, connectionId: unknown, remotePath: unknown, localPath: unknown) => {
+		if (typeof connectionId !== 'string' || typeof remotePath !== 'string' || typeof localPath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			await downloadTerminalSftpDirectory(connectionId, remotePath, localPath);
+			return { ok: true as const };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
+	});
+
+	ipcMain.handle('term:sftpEditLocal', async (_event, connectionId: unknown, remotePath: unknown, mode: unknown) => {
+		if (typeof connectionId !== 'string' || typeof remotePath !== 'string') {
+			return { ok: false as const, error: 'invalid-args' };
+		}
+		try {
+			const result = await startTerminalSftpEditSession(
+				connectionId,
+				remotePath,
+				typeof mode === 'number' ? mode : null
+			);
+			return { ok: true as const, ...result };
+		} catch (error) {
+			return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+		}
 	});
 
 	ipcMain.handle('term:sessionInfo', (_event, id: unknown) => {
