@@ -117,6 +117,8 @@
     "recharts": "^2.15.0",
     "remark-gfm": "^4.0.1",
     "shiki": "^4.0.2",
+    "ssh2": "^1.17.0",
+    "ssh2-sftp-client": "^11.0.0",
     "vscode-jsonrpc": "^8.2.1"
   }
 }
