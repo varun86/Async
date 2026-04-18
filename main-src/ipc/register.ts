@@ -4,7 +4,6 @@ import { applyThemeChromeToWindow, type NativeChromeOverride, type ThemeChromeSc
 import { applyPatch, formatPatch, parsePatch, reversePatch } from 'diff';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -1632,8 +1631,11 @@ export function registerIpc(): void {
 				typeof payload?.fileName === 'string' && payload.fileName.trim()
 					? path.basename(payload.fileName)
 					: 'attachment';
-			const safe =
-				rawName.replace(/[^\w.\u4e00-\u9fff-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || 'file';
+			const safeName =
+				rawName
+					.replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+					.replace(/[. ]+$/g, '')
+					.slice(0, 120) || 'attachment';
 			let buf: Buffer;
 			try {
 				buf = Buffer.from(String(payload?.base64 ?? ''), 'base64');
@@ -1650,14 +1652,56 @@ export function registerIpc(): void {
 			const dirAbs = path.join(root, dirRel);
 			try {
 				fs.mkdirSync(dirAbs, { recursive: true });
-				const id = randomUUID();
-				const relPath = `${dirRel}/${id}-${safe}`;
+				const parsed = path.parse(safeName);
+				const baseName = parsed.name || 'attachment';
+				const ext = parsed.ext || '';
+				let finalName = `${baseName}${ext}`;
+				let seq = 2;
+				while (fs.existsSync(path.join(dirAbs, finalName))) {
+					finalName = `${baseName} (${seq})${ext}`;
+					seq += 1;
+				}
+				const relPath = `${dirRel}/${finalName}`;
 				fs.writeFileSync(path.join(root, relPath), buf);
 				registerKnownWorkspaceRelPath(relPath, root);
 				return { ok: true as const, relPath };
 			} catch {
 				return { ok: false as const, error: 'write-failed' as const };
 			}
+		}
+	);
+
+	ipcMain.handle(
+		'workspace:resolveDroppedFilePath',
+		async (
+			event,
+			payload: { fullPath?: string }
+		): Promise<
+			| { ok: true; relPath: string }
+			| { ok: false; error: 'no-workspace' | 'outside-workspace' | 'not-file' }
+		> => {
+			const root = senderWorkspaceRoot(event);
+			if (!root) {
+				return { ok: false as const, error: 'no-workspace' as const };
+			}
+			const raw = typeof payload?.fullPath === 'string' ? payload.fullPath.trim() : '';
+			if (!raw) {
+				return { ok: false as const, error: 'not-file' as const };
+			}
+			const abs = path.resolve(raw);
+			if (!isPathInsideRoot(abs, root)) {
+				return { ok: false as const, error: 'outside-workspace' as const };
+			}
+			try {
+				if (!fs.statSync(abs).isFile()) {
+					return { ok: false as const, error: 'not-file' as const };
+				}
+			} catch {
+				return { ok: false as const, error: 'not-file' as const };
+			}
+			const relPath = path.relative(root, abs).replace(/\\/g, '/');
+			registerKnownWorkspaceRelPath(relPath, root);
+			return { ok: true as const, relPath };
 		}
 	);
 
