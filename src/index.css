@@ -3353,6 +3353,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	width: 100%;
 	min-width: 0;
 	flex-shrink: 0;
+	margin-top: -10px;
 }
 
 .ref-messages-tail-spacer {
@@ -4081,23 +4082,44 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	gap: 10px;
 }
 
-/* ??? Segment ?????activity / edit card / activity group ?? ??? */
+/**
+ * Segment 入场动画。
+ *
+ * 设计目标：
+ * - 用「显形」取代「滑入」——位移很小（3px），主导感受由 opacity + 微 blur 构造，
+ *   使一两行高的活动行不会有「啪一下被推上来」的弹跳感。
+ * - 缓动用 cubic-bezier(0.16, 1, 0.3, 1)（类似 iOS 标准曲线）：开头慢、收尾极慢，
+ *   终态附近近似无速度，比 ease-out 更耐看。
+ * - 时长 ~0.42s 顶层 / ~0.36s 嵌套行——比之前 0.22~0.28s 长一档，配合柔曲线刚好。
+ *
+ * 注：pending 状态会叠加 shimmer，shimmer 仍然用线性 ease-in-out 保持节律。
+ */
 @keyframes ref-seg-enter {
 	from {
 		opacity: 0;
-		transform: translateY(8px);
+		transform: translateY(3px);
+		filter: blur(2px);
 	}
 	to {
 		opacity: 1;
 		transform: translateY(0);
+		filter: blur(0);
 	}
 }
 
-.ref-md-root--agent-chat > .ref-agent-activity,
 .ref-md-root--agent-chat > .ref-edit-card,
 .ref-md-root--agent-chat > .ref-activity-group,
 .ref-md-root--agent-chat > .ref-agent-streaming-fence {
-	animation: ref-seg-enter 0.28s ease-out both;
+	animation: ref-seg-enter 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/**
+ * .ref-agent-activity 自带动画（不再依赖 .ref-md-root--agent-chat > 父选择器）：
+ * 这样无论是流式过程区里、preflight 壳内、AnimatedHeightReveal 容器里、
+ * 还是 --nested 嵌套行，新挂载的活动行都能享受统一的柔和入场。
+ */
+.ref-agent-activity {
+	animation: ref-seg-enter 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* 流式未闭合围栏：�?.ref-md-root pre 对齐，避免等闭合 ``` 才出现代码块 */
@@ -4366,9 +4388,9 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	color: var(--void-fg-2);
 	background: linear-gradient(90deg, transparent 0%, rgba(250, 204, 21, 0.03) 50%, transparent 100%);
 	background-size: 200% 100%;
-	/* ?????? shimmer???????? ref-seg-enter */
+	/* 入场用统一的柔和曲线；shimmer 用线性 ease-in-out 维持自身节律 */
 	animation:
-		ref-seg-enter 0.32s ease-out both,
+		ref-seg-enter 0.42s cubic-bezier(0.16, 1, 0.3, 1) both,
 		ref-activity-shimmer 2.4s ease-in-out infinite;
 }
 
@@ -4563,7 +4585,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
  * 浏览器会自动算出与 assistant 气泡内 .ref-md-root--agent-chat 完全相同的内容宽度，
  * 不需要任何 hardcode 或手动模拟。 */
 .ref-msg-preflight-row {
-	margin: -14px 0 0 0;
+	margin: -8px 0 0 0;
 	padding: 0;
 	box-sizing: border-box;
 }
@@ -4839,7 +4861,8 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	color: inherit;
 }
 
-/* ??? activity?????????????1lh ???? */
+/* group 内的 activity row：用统一的柔和缓动，时长比顶层短一档（0.36s），
+   既能感知到独立入场，又不会和 group 整体的 0.42s 入场叠加拖沓。 */
 .ref-activity-group-row {
 	display: flex;
 	flex-direction: column;
@@ -4848,7 +4871,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	font-size: 12px;
 	line-height: 1.6;
 	color: var(--void-fg-3);
-	animation: ref-seg-enter 0.22s ease-out both;
+	animation: ref-seg-enter 0.36s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .ref-activity-group-row-top {
@@ -4944,7 +4967,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, #facc15 12%, transparent) 50%, transparent 100%);
 	background-size: 200% 100%;
 	animation:
-		ref-seg-enter 0.32s ease-out both,
+		ref-seg-enter 0.36s cubic-bezier(0.16, 1, 0.3, 1) both,
 		ref-activity-shimmer 2.4s ease-in-out infinite;
 }
 
@@ -5763,6 +5786,272 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	margin: 0;
 	display: block;
 	flex-shrink: 0;
+}
+
+/* ===== 附着在 ChatComposer 上方的 TODO 浮动面板 (AgentBottomTodoPanel) ===== */
+/**
+ * 入场 / 退场动画与 .ref-agent-activity 保持同一套语言：
+ * - 短位移（4px） + 微 blur(2px)，主导知觉是「显形」而非「滑入」
+ * - cubic-bezier(0.16, 1, 0.3, 1) iOS 标准 soft easing；末段近似零速
+ * - 退场用更陡的 cubic-bezier(0.32, 0, 0.67, 0)：开头快、收尾慢，让消失感干净利落
+ *
+ * 退场关键：父组件先标记 data-leaving="true" 触发本动画，跑完 240ms 再真正 unmount，
+ * 避免 awaitingReply 由 true → false 时面板「啪一下消失」。
+ */
+.ref-bottom-todo-panel {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	margin-bottom: 6px;
+	animation: ref-bottom-todo-panel-enter 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+	transform-origin: bottom center;
+}
+
+.ref-bottom-todo-panel[data-leaving='true'] {
+	animation: ref-bottom-todo-panel-leave 220ms cubic-bezier(0.32, 0, 0.67, 0) both;
+	pointer-events: none;
+}
+
+@keyframes ref-bottom-todo-panel-enter {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.985);
+		filter: blur(2px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+		filter: blur(0);
+	}
+}
+
+@keyframes ref-bottom-todo-panel-leave {
+	from {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+		filter: blur(0);
+	}
+	to {
+		opacity: 0;
+		transform: translateY(-4px) scale(0.985);
+		filter: blur(2px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ref-bottom-todo-panel,
+	.ref-bottom-todo-panel[data-leaving='true'] {
+		animation: none !important;
+	}
+}
+
+.ref-bottom-todo-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 12px;
+	background: color-mix(in srgb, var(--void-bg-1) 88%, transparent);
+	border: 1px solid color-mix(in srgb, var(--void-border-soft) 78%, transparent);
+	border-radius: 10px;
+	color: var(--void-fg-1);
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	user-select: none;
+	backdrop-filter: blur(14px) saturate(1.1);
+	-webkit-backdrop-filter: blur(14px) saturate(1.1);
+	transition:
+		background-color 0.16s ease,
+		border-color 0.16s ease,
+		color 0.16s ease;
+}
+
+.ref-bottom-todo-head:hover {
+	background: color-mix(in srgb, var(--void-bg-2) 88%, transparent);
+	border-color: color-mix(in srgb, var(--void-border) 80%, transparent);
+	color: var(--void-fg-0);
+}
+
+.ref-bottom-todo-head-icon {
+	flex-shrink: 0;
+	color: var(--void-fg-3);
+}
+
+.ref-bottom-todo-head-label {
+	flex: 1 1 auto;
+	text-align: left;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ref-bottom-todo-head-chev {
+	flex-shrink: 0;
+	color: var(--void-fg-3);
+	transition: transform 0.18s var(--void-ease-out-expo);
+}
+
+.ref-bottom-todo-head-chev.is-open {
+	transform: rotate(180deg);
+	color: var(--void-fg-1);
+}
+
+/* 展开内容容器 */
+.ref-bottom-todo-list-frame {
+	width: 100%;
+	border: 1px solid color-mix(in srgb, var(--void-border-soft) 78%, transparent);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--void-bg-1) 92%, transparent);
+	box-shadow: 0 18px 36px -28px rgba(0, 0, 0, 0.55);
+	backdrop-filter: blur(18px) saturate(1.1);
+	-webkit-backdrop-filter: blur(18px) saturate(1.1);
+	overflow: hidden;
+	animation: ref-bottom-todo-fade-in 0.18s var(--void-ease-out-expo);
+}
+
+/* pushup：与 head 拼接成同一个卡片，list 占布局空间，迫使消息区缩小 */
+.ref-bottom-todo-list-frame[data-mode='pushup'] {
+	margin-bottom: 6px;
+}
+
+/* overlay：list 浮在 head 之上，不影响布局，覆盖在消息区上方 */
+.ref-bottom-todo-list-frame[data-mode='overlay'] {
+	margin-bottom: 8px;
+	z-index: 32;
+}
+
+.ref-bottom-todo-list-scroll {
+	display: flex;
+	flex-direction: column;
+	max-height: min(38vh, 320px);
+	overflow-y: auto;
+	scrollbar-width: thin;
+	scrollbar-color: var(--void-scrollbar-thumb) transparent;
+}
+
+.ref-bottom-todo-list-scroll::-webkit-scrollbar {
+	width: 8px;
+}
+
+.ref-bottom-todo-list-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.ref-bottom-todo-list-scroll::-webkit-scrollbar-thumb {
+	background: var(--void-scrollbar-thumb);
+	border: 2px solid transparent;
+	border-radius: 999px;
+	background-clip: padding-box;
+}
+
+.ref-bottom-todo-list-scroll::-webkit-scrollbar-thumb:hover {
+	background: var(--void-scrollbar-thumb-hover);
+	background-clip: padding-box;
+}
+
+.ref-bottom-todo-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 9px 14px;
+	font-size: 12.5px;
+	color: var(--void-fg-1);
+	border-top: 1px solid color-mix(in srgb, var(--void-border-soft) 55%, transparent);
+}
+
+.ref-bottom-todo-item:first-child {
+	border-top: none;
+}
+
+.ref-bottom-todo-item.is-done {
+	color: var(--void-fg-3);
+}
+
+.ref-bottom-todo-item.is-active {
+	color: var(--void-fg-0);
+	font-weight: 500;
+}
+
+.ref-bottom-todo-check {
+	flex-shrink: 0;
+	margin-top: 1px;
+	color: var(--void-fg-3);
+}
+
+.ref-bottom-todo-item.is-done .ref-bottom-todo-check {
+	color: var(--void-accent, #818cf8);
+}
+
+.ref-bottom-todo-item.is-active .ref-bottom-todo-check {
+	color: var(--void-accent, #6ea8fe);
+}
+
+.ref-bottom-todo-spinner {
+	flex-shrink: 0;
+	margin-top: 2px;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	border: 1.6px solid color-mix(in srgb, var(--void-accent, #6ea8fe) 35%, transparent);
+	border-top-color: var(--void-accent, #6ea8fe);
+	animation: ref-bottom-todo-spin 0.85s linear infinite;
+}
+
+.ref-bottom-todo-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	line-height: 1.45;
+	word-break: break-word;
+}
+
+@keyframes ref-bottom-todo-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes ref-bottom-todo-fade-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+:root[data-color-scheme='light'] .ref-bottom-todo-head {
+	background: rgba(255, 255, 255, 0.86);
+	border-color: rgba(148, 163, 184, 0.32);
+	color: #334155;
+}
+
+:root[data-color-scheme='light'] .ref-bottom-todo-head:hover {
+	background: rgba(241, 245, 249, 0.96);
+	color: #0f172a;
+}
+
+:root[data-color-scheme='light'] .ref-bottom-todo-list-frame {
+	background: rgba(255, 255, 255, 0.92);
+	border-color: rgba(148, 163, 184, 0.32);
+	box-shadow: 0 18px 36px -28px rgba(15, 23, 42, 0.18);
+}
+
+:root[data-color-scheme='light'] .ref-bottom-todo-item {
+	color: #334155;
+	border-top-color: rgba(148, 163, 184, 0.22);
+}
+
+:root[data-color-scheme='light'] .ref-bottom-todo-item.is-active {
+	color: #0f172a;
+}
+
+:root[data-color-scheme='light'] .ref-bottom-todo-item.is-done {
+	color: #94a3b8;
 }
 
 .ref-capsule {
@@ -17621,7 +17910,12 @@ select.ref-settings-native-select:focus {
 	.ws-modal-backdrop,
 	.ws-modal,
 	.ref-plan-q,
-	.ref-plan-review {
+	.ref-plan-review,
+	.ref-agent-activity,
+	.ref-activity-group-row,
+	.ref-md-root--agent-chat > .ref-edit-card,
+	.ref-md-root--agent-chat > .ref-activity-group,
+	.ref-md-root--agent-chat > .ref-agent-streaming-fence {
 		animation: none !important;
 	}
 

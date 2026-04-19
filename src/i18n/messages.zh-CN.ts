@@ -1434,6 +1434,7 @@ export const messagesZhCN: Record<string, string> = {
 	'plan.review.fullShow': '查看完整计划（含表格与风险说明）',
 	'plan.review.fullHide': '收起完整计划',
 	'plan.review.todo': '待办（{{done}}/{{total}}）',
+	'agent.todoBottomPanel.summary': '共 {{total}} 个任务，已经完成 {{done}} 个',
 	'plan.review.model': '模型',
 	'plan.review.pickModel': '请选择模型…',
 	'plan.review.goal': '\u76ee\u6807',

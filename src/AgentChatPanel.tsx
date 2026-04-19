@@ -16,6 +16,11 @@ import {
 import { ChatMarkdown } from './ChatMarkdown';
 import { AgentReviewPanel } from './AgentReviewPanel';
 import { AgentFileChangesPanel } from './AgentFileChanges';
+import {
+	AgentBottomTodoPanel,
+	type AgentTodoItem,
+	type BottomTodoLayoutMode,
+} from './AgentBottomTodoPanel';
 import { ChatComposer } from './ChatComposer';
 import { PlanQuestionDialog } from './PlanQuestionDialog';
 import { UserInputRequestDialog } from './UserInputRequestDialog';
@@ -208,106 +213,6 @@ function expandStartIndexByPixelBudget(
 	return newStart;
 }
 
-type AgentTodoItem = {
-	id: string;
-	content: string;
-	status: 'pending' | 'in_progress' | 'completed';
-	activeForm?: string;
-};
-
-function AgentTodoPanel({
-	t,
-	todos,
-	isCollapsed,
-	onToggle,
-}: {
-	t: TFunction;
-	todos: AgentTodoItem[];
-	isCollapsed: boolean;
-	onToggle: () => void;
-}) {
-	const doneCount = todos.filter((todo) => todo.status === 'completed').length;
-
-	return (
-		<div className="ref-plan-review-todos ref-agent-todo-panel">
-			<button
-				type="button"
-				className="ref-plan-review-todos-head"
-				aria-expanded={!isCollapsed}
-				onClick={onToggle}
-			>
-				<span>{t('plan.review.todo', { done: doneCount, total: todos.length })}</span>
-				<svg
-					className={`ref-plan-review-chev${isCollapsed ? '' : ' is-open'}`}
-					width="16"
-					height="16"
-					viewBox="0 0 16 16"
-					fill="none"
-					aria-hidden
-				>
-					<path
-						d="M4 6l4 4 4-4"
-						stroke="currentColor"
-						strokeWidth="1.5"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-					/>
-				</svg>
-			</button>
-			{!isCollapsed ? (
-				<div className="ref-plan-review-todos-list">
-					{todos.map((todo) => {
-						const done = todo.status === 'completed';
-						const active = todo.status === 'in_progress';
-						return (
-							<div
-								key={todo.id}
-								className={`ref-plan-todo ${done ? 'is-done' : ''} ${active ? 'is-active' : ''}`}
-							>
-								{active ? (
-									<span className="ref-plan-todo-spinner" aria-hidden />
-								) : (
-									<svg
-										className="ref-plan-todo-check"
-										width="16"
-										height="16"
-										viewBox="0 0 16 16"
-										fill="none"
-										aria-hidden
-									>
-										<rect
-											x="1"
-											y="1"
-											width="14"
-											height="14"
-											rx="3"
-											stroke="currentColor"
-											strokeWidth="1.5"
-											fill={done ? 'currentColor' : 'none'}
-										/>
-										{done ? (
-											<path
-												d="M4.5 8l2.5 2.5 4.5-5"
-												stroke="var(--void-bg-3, #1a1a1a)"
-												strokeWidth="1.8"
-												strokeLinecap="round"
-												strokeLinejoin="round"
-											/>
-										) : null}
-									</svg>
-								)}
-								<span className="ref-plan-todo-text">
-									{active && todo.activeForm ? todo.activeForm : todo.content}
-								</span>
-							</div>
-						);
-					})}
-				</div>
-			) : null}
-		</div>
-	);
-}
-
 export const AgentChatPanel = memo(function AgentChatPanel({
 	layout = 'agent-center',
 	t,
@@ -460,18 +365,141 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	);
 
 	const isEditorRail = layout === 'editor-rail';
+	const conversationRenderKey = messagesThreadId ?? 'no-thread';
 	const dropDepthRef = useRef(0);
 	const [chatPanelFileDragOver, setChatPanelFileDragOver] = useState(false);
-	const [collapsedTodos, setCollapsedTodos] = useState<Set<number>>(new Set());
-	const toggleTodoCollapse = useCallback((msgIndex: number) => {
-		setCollapsedTodos(prev => {
-			const next = new Set(prev);
-			if (next.has(msgIndex)) next.delete(msgIndex);
-			else next.add(msgIndex);
-			return next;
-		});
+	const [bottomTodoCollapsed, setBottomTodoCollapsed] = useState(true);
+	/**
+	 * 实时贴底状态用 ref 维护即可——不需要触发 AgentChatPanel 重渲染，仅在「即将展开」
+	 * 那一瞬间被读取一次，用来锁定本次展开使用的 layoutMode。
+	 */
+	const bottomTodoAtBottomRef = useRef(true);
+	/**
+	 * 展开态锁定的布局模式：
+	 * - 展开瞬间根据 `bottomTodoAtBottomRef` 决定值（'pushup' / 'overlay'），并固定到折叠为止；
+	 * - 折叠时清空，下次展开重新评估。
+	 *
+	 * 这样消除了「展开后用户上下滚动导致 list 在 pushup ↔ overlay 之间反复切换」的跳动问题。
+	 */
+	const [bottomTodoLockedMode, setBottomTodoLockedMode] =
+		useState<BottomTodoLayoutMode | null>(null);
+	const bottomTodoCollapsedRef = useRef(true);
+	bottomTodoCollapsedRef.current = bottomTodoCollapsed;
+
+	/**
+	 * 把面板「展开 + 锁定 layoutMode」的逻辑抽出来，自动展开和用户手动展开都走这一条路径。
+	 * pushup 模式下 commandStack 会变高、messages flex 区会缩小，需要等下一帧立即贴底，
+	 * 避免底部消息被新出现的 list 顶出可视范围。
+	 */
+	const expandBottomTodoLocked = useCallback(() => {
+		const nextMode: BottomTodoLayoutMode = bottomTodoAtBottomRef.current
+			? 'pushup'
+			: 'overlay';
+		setBottomTodoCollapsed(false);
+		setBottomTodoLockedMode(nextMode);
+		if (nextMode === 'pushup') {
+			window.requestAnimationFrame(() => {
+				scrollMessagesToBottom('auto');
+			});
+		}
+	}, [scrollMessagesToBottom]);
+
+	const toggleBottomTodoCollapsed = useCallback(() => {
+		if (bottomTodoCollapsedRef.current) {
+			expandBottomTodoLocked();
+		} else {
+			setBottomTodoCollapsed(true);
+			setBottomTodoLockedMode(null);
+		}
+	}, [expandBottomTodoLocked]);
+
+	/**
+	 * 「全局最新 TODO」：流式中以 live blocks 为准；否则反向遍历 displayMessages
+	 * 取最近一条 assistant 中的 TodoWrite 快照。
+	 */
+	const bottomTodos = useMemo<AgentTodoItem[]>(() => {
+		const live = extractTodosFromLiveBlocks(liveAssistantBlocks.blocks);
+		if (live && live.length > 0) {
+			return live;
+		}
+		for (let i = displayMessages.length - 1; i >= 0; i--) {
+			const m = displayMessages[i];
+			if (!m || m.role !== 'assistant') continue;
+			if (typeof m.content !== 'string' || m.content.length === 0) continue;
+			const todos = extractLastTodosFromContent(m.content);
+			if (todos && todos.length > 0) {
+				return todos;
+			}
+		}
+		return [];
+	}, [liveAssistantBlocks.blocks, displayMessages]);
+
+	/**
+	 * 显示门控：底部 TODO 面板**仅在 agent 工作中**（`awaitingReply === true`）显示。
+	 *
+	 * 这一约束直接解决两个体验问题：
+	 *  1. 用户暂停（点击 Stop）后 agent 的 partial assistant 仍会被持久化进 `persistedMessages`，
+	 *     里面 TodoWrite 的 tool_call 不会被清掉；以前 TODO 一直挂在底部不消失就是它造成的。
+	 *  2. agent 自然完成后没必要再让 TODO 占据底部空间，最终回答里通常会有总结。
+	 *
+	 * 切换到旧会话时只要 `awaitingReply=false`，TODO 也不会浮上来打扰用户翻历史。
+	 */
+	const shouldShowBottomTodos = awaitingReply && bottomTodos.length > 0;
+
+	/**
+	 * 渲染层做延迟卸载：`shouldShowBottomTodos` 由 true → false 时先标记 leaving，
+	 * 让退场动画跑完再真正 unmount，避免「啪一下消失」的硬切。
+	 */
+	const [renderedBottomTodos, setRenderedBottomTodos] = useState<AgentTodoItem[]>([]);
+	const [bottomTodoLeaving, setBottomTodoLeaving] = useState(false);
+	const bottomTodoLeaveTimerRef = useRef<number | null>(null);
+	useEffect(() => {
+		if (shouldShowBottomTodos) {
+			if (bottomTodoLeaveTimerRef.current !== null) {
+				window.clearTimeout(bottomTodoLeaveTimerRef.current);
+				bottomTodoLeaveTimerRef.current = null;
+			}
+			setRenderedBottomTodos(bottomTodos);
+			setBottomTodoLeaving(false);
+			return;
+		}
+		if (renderedBottomTodos.length > 0 && !bottomTodoLeaving) {
+			setBottomTodoLeaving(true);
+			bottomTodoLeaveTimerRef.current = window.setTimeout(() => {
+				setRenderedBottomTodos([]);
+				setBottomTodoLeaving(false);
+				bottomTodoLeaveTimerRef.current = null;
+			}, 240);
+		}
+	}, [shouldShowBottomTodos, bottomTodos, renderedBottomTodos.length, bottomTodoLeaving]);
+	useEffect(() => {
+		return () => {
+			if (bottomTodoLeaveTimerRef.current !== null) {
+				window.clearTimeout(bottomTodoLeaveTimerRef.current);
+			}
+		};
 	}, []);
-	const conversationRenderKey = messagesThreadId ?? 'no-thread';
+
+	/**
+	 * 自动展开策略——只在以下「首次出现」边沿触发，平时尊重用户折叠状态：
+	 *  1. 同一会话内 TODO 由「未显示」变「显示」（agent 新一轮第一次调用 TodoWrite）；
+	 *  2. 切换会话且新会话当下就处于「正在显示 TODO」状态（包含首次 mount）；
+	 *  3. TODO 不再显示 → 折叠 + 解锁 layoutMode，下次出现重新评估。
+	 */
+	const prevShownRef = useRef(false);
+	const prevConvRenderKeyRef = useRef<string | null>(null);
+	useEffect(() => {
+		const wasShown = prevShownRef.current;
+		const convChanged = prevConvRenderKeyRef.current !== conversationRenderKey;
+		prevShownRef.current = shouldShowBottomTodos;
+		prevConvRenderKeyRef.current = conversationRenderKey;
+		if (shouldShowBottomTodos && (!wasShown || convChanged)) {
+			expandBottomTodoLocked();
+		} else if (!shouldShowBottomTodos) {
+			setBottomTodoCollapsed(true);
+			setBottomTodoLockedMode(null);
+		}
+	}, [shouldShowBottomTodos, conversationRenderKey, expandBottomTodoLocked]);
 	const trackGapPx = isEditorRail ? 20 : 22;
 	const messageRowHeightsRef = useRef<Map<number, number>>(new Map());
 	/**
@@ -795,6 +823,43 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	]);
 
 	/**
+	 * 实时跟踪消息列表是否「贴底」——结果写入 `bottomTodoAtBottomRef`，仅供下次「展开 TODO」
+	 * 那一瞬间读取，用来锁定 layoutMode；故意不用 state，避免每次滚动触发 AgentChatPanel 重渲染。
+	 */
+	useEffect(() => {
+		if (!hasConversation) {
+			bottomTodoAtBottomRef.current = true;
+			return;
+		}
+		const viewport = messagesViewportRef.current;
+		const track = messagesTrackRef.current;
+		if (!viewport) {
+			return;
+		}
+		let rafId = 0;
+		const update = () => {
+			rafId = 0;
+			const dist = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+			bottomTodoAtBottomRef.current =
+				dist <= 16 || viewport.scrollHeight <= viewport.clientHeight + 16;
+		};
+		const schedule = () => {
+			if (rafId !== 0) return;
+			rafId = window.requestAnimationFrame(update);
+		};
+		schedule();
+		viewport.addEventListener('scroll', schedule, { passive: true });
+		const ro = new ResizeObserver(schedule);
+		ro.observe(viewport);
+		if (track) ro.observe(track);
+		return () => {
+			viewport.removeEventListener('scroll', schedule);
+			ro.disconnect();
+			if (rafId !== 0) window.cancelAnimationFrame(rafId);
+		};
+	}, [hasConversation, conversationRenderKey, messagesViewportRef, messagesTrackRef]);
+
+	/**
 	 * 构造 assistant row 与 user 气泡之间的「过程区」props（live thought + 是否 streaming）。
 	 * 提取为内部函数，供 messageNodeAtIndex 与 buildFlatMessageList 中的 preflight row 复用。
 	 */
@@ -856,18 +921,6 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 				isLast &&
 				streamingToolPreview == null &&
 				!(agentOrPlanStreaming && (liveAssistantBlocks.blocks.length > 0 || liveThoughtMeta != null));
-			const activeAssistantTodos: AgentTodoItem[] | null =
-				agentOrPlanStreaming && m.role === 'assistant'
-					? (extractTodosFromLiveBlocks(liveAssistantBlocks.blocks) ??
-						(typeof m.content === 'string' ? extractLastTodosFromContent(m.content) : null))
-					: null;
-			const hasActiveAssistantTodoPanel =
-				activeAssistantTodos != null && activeAssistantTodos.length > 0;
-			const activeAssistantTodoCollapsed =
-				hasActiveAssistantTodoPanel &&
-				collapsedTodos.has(i)
-					? !activeAssistantTodos.every((todo) => todo.status === 'completed')
-					: Boolean(hasActiveAssistantTodoPanel && activeAssistantTodos.every((todo) => todo.status === 'completed'));
 			const userMessageIndex = i < persistedMessageCount && m.role === 'user' ? i : -1;
 			const isEditingThisUser = userMessageIndex >= 0 && resendFromUserIndex === userMessageIndex;
 
@@ -965,14 +1018,6 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 								renderMode={chatRenderMode}
 							/>
 						)}
-						{hasActiveAssistantTodoPanel ? (
-							<AgentTodoPanel
-								t={t}
-								todos={activeAssistantTodos}
-								isCollapsed={activeAssistantTodoCollapsed}
-								onToggle={() => toggleTodoCollapse(i)}
-							/>
-						) : null}
 					</div>
 				</div>
 			);
@@ -1537,6 +1582,16 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 				</div>
 			) : null}
 			{!isEditorRail ? agentPlanSummaryCard : null}
+			{hasConversation && renderedBottomTodos.length > 0 ? (
+				<AgentBottomTodoPanel
+					t={t}
+					todos={renderedBottomTodos}
+					isCollapsed={bottomTodoCollapsed}
+					onToggle={toggleBottomTodoCollapsed}
+					layoutMode={bottomTodoLockedMode ?? 'overlay'}
+					isLeaving={bottomTodoLeaving}
+				/>
+			) : null}
 			{hasConversation || !isEditorRail ? (
 				<ChatComposer
 					{...sharedComposerProps}

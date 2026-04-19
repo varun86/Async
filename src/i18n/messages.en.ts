@@ -1450,6 +1450,7 @@ export const messagesEn: Record<string, string> = {
 	'plan.review.fullShow': 'Show full plan (tables & risks)',
 	'plan.review.fullHide': 'Hide full plan',
 	'plan.review.todo': 'TODO ({{done}}/{{total}})',
+	'agent.todoBottomPanel.summary': '{{total}} tasks, {{done}} completed',
 	'plan.review.model': 'Model',
 	'plan.review.pickModel': 'Choose a model…',
 	'plan.review.goal': 'Goal',
