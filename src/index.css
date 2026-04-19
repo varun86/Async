@@ -3701,6 +3701,7 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	position: relative;
 	margin: 0 0 12px;
 	max-height: 236px;
+	min-height: 0;
 	overflow: auto;
 	padding: 10px 12px 12px;
 	border-radius: 16px;
@@ -3711,6 +3712,17 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	-ms-overflow-style: none;
 	-webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
 	mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+
+/* 三态预览：preview 时给 head 下方留一段最小高度的滚动区（min-height + max-height），
+ * expanded 时不限高完全融入聊天流，collapsed 时只剩 head 单行 summary。 */
+.ref-thought-block[data-state='preview'] .ref-thought-reasoning-wrap {
+	min-height: 96px;
+	max-height: 140px;
+}
+
+.ref-thought-block[data-state='expanded'] .ref-thought-reasoning-wrap {
+	max-height: none;
 }
 
 .ref-thought-reasoning-wrap::-webkit-scrollbar {
@@ -4523,6 +4535,243 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 /* ????????????????? */
 .ref-activity-group-body--live {
 	max-height: 260px;
+}
+
+/* 三态预览：preview 时 head 下方留 min-height + max-height 的滚动区，expanded 不限高 */
+.ref-activity-group[data-state='preview'] .ref-activity-group-collapse.is-open > .ref-activity-group-body {
+	min-height: 96px;
+	max-height: 160px;
+	overflow-y: auto;
+	-webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+	mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+
+.ref-activity-group[data-state='expanded'] .ref-activity-group-collapse.is-open > .ref-activity-group-body {
+	max-height: none;
+	-webkit-mask-image: none;
+	mask-image: none;
+}
+
+/* ===== 用户气泡正下方的「过程区」统一壳 (AgentPreflightShell) ===== */
+/* 负 margin-top 抵消 .ref-messages-track 的 flex gap，使其视觉上贴近用户气泡。
+ * .ref-center--chat 下 gap=22，这里抵消 14 → 视觉间距 ~8px。
+ * row 本身 width:100%；内部 .ref-md-root--agent-chat 与 .ref-msg-assistant-body 的内容
+ * 完全同宽（720px - 2*2px padding），实现左右边对齐。 */
+.ref-msg-preflight-row {
+	margin: -14px 0 0 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+.ref-msg-preflight-row > .ref-md-root,
+.ref-msg-preflight-row > .ref-md-root--agent-chat {
+	width: min(100%, 720px);
+	max-width: min(100%, 720px);
+	margin: 0 auto;
+	padding: 0 2px;
+	box-sizing: border-box;
+	gap: 0;
+}
+
+/* 当 ChatMarkdown(renderMode='preflight') 没有内容返回 null 时，外层 row 不占布局 */
+.ref-msg-preflight-row:empty {
+	display: none;
+	margin: 0;
+	padding: 0;
+}
+
+/* assistant 气泡中 ChatMarkdown(renderMode='outcome') 在 outcome 段尚为空时返回空容器；
+ * 这里让其不占间距，避免气泡"空着"留白。 */
+.ref-msg-assistant-body > .ref-md-root--agent-chat:empty {
+	display: none;
+}
+
+.ref-preflight-shell {
+	display: flex;
+	flex-direction: column;
+	background: transparent;
+	border: none;
+	border-radius: 0;
+}
+
+.ref-preflight-shell-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 4px;
+	border: none;
+	background: none;
+	color: var(--void-fg-3);
+	font: inherit;
+	cursor: pointer;
+	text-align: left;
+	border-radius: 4px;
+	transition: color 0.18s ease, background 0.18s ease;
+}
+
+.ref-preflight-shell-header:hover {
+	color: var(--void-fg-2);
+	background: color-mix(in srgb, var(--void-bg-3) 36%, transparent);
+}
+
+.ref-preflight-shell-icon {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	color: var(--void-fg-3);
+	opacity: 0.7;
+}
+
+.ref-preflight-shell.is-pending .ref-preflight-shell-icon {
+	color: color-mix(in srgb, rgba(168, 85, 247, 0.85) 70%, var(--void-fg-3));
+	opacity: 1;
+}
+
+.ref-preflight-shell-spinner {
+	animation: ref-preflight-shell-spin 0.9s linear infinite;
+	transform-origin: center;
+}
+
+@keyframes ref-preflight-shell-spin {
+	from { transform: rotate(0deg); }
+	to   { transform: rotate(360deg); }
+}
+
+.ref-preflight-shell-summary {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12.5px;
+}
+
+.ref-preflight-shell-chevron {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	color: var(--void-fg-3);
+	opacity: 0.55;
+	transition: transform 0.22s ease;
+}
+
+.ref-preflight-shell-header[aria-expanded='true'] .ref-preflight-shell-chevron {
+	transform: rotate(180deg);
+}
+
+.ref-preflight-shell-collapse {
+	display: grid;
+	grid-template-rows: 0fr;
+	transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ref-preflight-shell-collapse.is-open {
+	grid-template-rows: 1fr;
+}
+
+.ref-preflight-shell-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	overflow: hidden;
+	scrollbar-width: none;
+	min-height: 0;
+}
+
+.ref-preflight-shell-collapse.is-open > .ref-preflight-shell-body {
+	border-top: none;
+	padding: 4px 4px 6px;
+	overflow-y: auto;
+}
+
+.ref-preflight-shell-body::-webkit-scrollbar {
+	display: none;
+}
+
+.ref-preflight-shell[data-state='preview'] .ref-preflight-shell-collapse.is-open > .ref-preflight-shell-body {
+	min-height: 96px;
+	max-height: 220px;
+	overflow-y: auto;
+	-webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+	mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+
+.ref-preflight-shell[data-state='expanded'] .ref-preflight-shell-collapse.is-open > .ref-preflight-shell-body {
+	max-height: none;
+	-webkit-mask-image: none;
+	mask-image: none;
+}
+
+.ref-preflight-shell-usage {
+	margin-top: 6px;
+	font-size: 11px;
+	color: var(--void-fg-3);
+	opacity: 0.75;
+}
+
+/* ===== 壳内紧凑思考条目 (PreflightThinkingItem) ===== */
+.ref-preflight-thinking {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.ref-preflight-thinking-head {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 12px;
+	color: var(--void-fg-2);
+}
+
+.ref-preflight-thinking-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: rgba(168, 85, 247, 0.85);
+	flex-shrink: 0;
+}
+
+.ref-preflight-thinking-dot--thinking {
+	background: rgba(168, 85, 247, 0.85);
+	animation: ref-preflight-thinking-pulse 1.4s ease-in-out infinite;
+}
+
+.ref-preflight-thinking-dot--streaming {
+	background: rgba(168, 85, 247, 0.95);
+	animation: ref-preflight-thinking-pulse 1.4s ease-in-out infinite;
+}
+
+.ref-preflight-thinking-dot--done {
+	background: color-mix(in srgb, rgba(168, 85, 247, 0.7) 50%, var(--void-fg-3));
+}
+
+@keyframes ref-preflight-thinking-pulse {
+	0%, 100% { opacity: 0.55; }
+	50%      { opacity: 1; }
+}
+
+.ref-preflight-thinking-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ref-preflight-thinking-body {
+	margin-left: 13px;
+	padding-left: 9px;
+	border-left: 1px dashed color-mix(in srgb, var(--void-border-soft) 80%, transparent);
+	color: color-mix(in srgb, var(--void-fg-3) 78%, var(--void-fg-2));
+	font-size: 12.5px;
+	line-height: 1.55;
+}
+
+.ref-preflight-thinking-body .ref-md-root {
+	font-size: inherit;
+	color: inherit;
 }
 
 /* ??? activity?????????????1lh ???? */

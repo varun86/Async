@@ -28,7 +28,6 @@ import { PlanReviewPanel } from './PlanReviewPanel';
 import { TeamPlanReviewPanel } from './TeamPlanReviewPanel';
 import { TeamPlanRevisionCard } from './TeamPlanRevisionCard';
 import { TeamRoleAvatar } from './TeamRoleAvatar';
-import { ComposerThoughtBlock } from './ComposerThoughtBlock';
 import { UserMessageRich } from './UserMessageRich';
 import {
 	assistantMessageUsesAgentToolProtocol,
@@ -474,6 +473,11 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 	const conversationRenderKey = messagesThreadId ?? 'no-thread';
 	const trackGapPx = isEditorRail ? 20 : 22;
 	const messageRowHeightsRef = useRef<Map<number, number>>(new Map());
+	/**
+	 * 「过程区」独立行（preflight row）高度缓存：key 为它附属的 assistant 消息 index。
+	 * 不参与 stickyUserIndex / data-msg-index 体系，仅用于 latestTurnFocusSpacerPx 修正。
+	 */
+	const preflightRowHeightsRef = useRef<Map<number, number>>(new Map());
 	const [messageStartIndex, setMessageStartIndex] = useState(0);
 	const [latestTurnFocusSpacerPx, setLatestTurnFocusSpacerPx] = useState(0);
 	const [stickyUserIndex, setStickyUserIndex] = useState<number | null>(null);
@@ -518,6 +522,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			prevDisplayMessagesLenRef.current = n;
 			pendingPrependScrollRef.current = null;
 			messageRowHeightsRef.current.clear();
+			preflightRowHeightsRef.current.clear();
 			setMessageStartIndex(
 				startIndexForHeightBudget(n, vpGuess, () => ESTIMATED_MESSAGE_ROW_PX, trackGapPx)
 			);
@@ -600,6 +605,19 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 				messageRowHeightsRef.current.set(idx, h);
 			}
 		}
+		const preflightRows = track.querySelectorAll<HTMLElement>(
+			'.ref-msg-preflight-row[data-preflight-for]'
+		);
+		for (const el of preflightRows) {
+			const raw = el.dataset.preflightFor;
+			if (!raw) continue;
+			const idx = Number(raw);
+			if (!Number.isFinite(idx)) continue;
+			const h = Math.ceil(el.getBoundingClientRect().height);
+			if (h > 0) {
+				preflightRowHeightsRef.current.set(idx, h);
+			}
+		}
 		const target = viewport.clientHeight * HEIGHT_BUDGET_VIEWPORT_MULT + HEIGHT_BUDGET_OVERSCAN_PX;
 		if (messageStartIndex <= 0 || track.scrollHeight >= target) {
 			return;
@@ -662,6 +680,11 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		for (let i = latestTurnFocusUserIndex + 1; i < len; i++) {
 			belowContentHeight += Math.max(0, getRowHeightForBudget(i));
 			belowContentHeight += trackGapPx;
+			const preflightH = preflightRowHeightsRef.current.get(i);
+			if (preflightH && preflightH > 0) {
+				belowContentHeight += preflightH;
+				belowContentHeight += trackGapPx;
+			}
 		}
 		const baseSpacer = computeLatestTurnFocusSpacerPx({
 			viewportHeight: viewport.clientHeight,
@@ -754,65 +777,60 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		messagesTrackRef,
 	]);
 
+	/**
+	 * 构造 assistant row 与 user 气泡之间的「过程区」props（live thought + 是否 streaming）。
+	 * 提取为内部函数，供 messageNodeAtIndex 与 buildFlatMessageList 中的 preflight row 复用。
+	 */
+	const computeAssistantRuntime = (i: number) => {
+		const m = displayMessages[i]!;
+		const isLast = i === displayMessages.length - 1;
+		const stAt = streamStartedAtRef.current;
+		const ftAt = firstTokenAtRef.current;
+		const showLiveThought =
+			isLast && m.role === 'assistant' && awaitingReply && composerMode !== 'team';
+		const agentOrPlanStreaming =
+			(composerMode === 'agent' || composerMode === 'plan') && awaitingReply && isLast;
+		const frozenSec =
+			!awaitingReply && isLast && m.role === 'assistant' && currentId
+				? thoughtSecondsByThread[currentId]
+				: undefined;
+
+		let liveThoughtMeta: ComponentProps<typeof ChatMarkdown>['liveThoughtMeta'] = null;
+		if (showLiveThought && stAt) {
+			const assistantTurnHasOutput =
+				streaming.trim().length > 0 ||
+				streamingToolPreview != null ||
+				(agentOrPlanStreaming && liveAssistantBlocks.blocks.length > 0);
+			const phase = assistantTurnHasOutput ? 'streaming' : 'thinking';
+			const elapsed =
+				phase === 'thinking'
+					? Math.max(0, (Date.now() - stAt) / 1000)
+					: ftAt
+						? Math.max(0, (ftAt - stAt) / 1000)
+						: Math.max(0, (Date.now() - stAt) / 1000);
+			liveThoughtMeta = {
+				phase,
+				elapsedSeconds: elapsed,
+				streamingThinking,
+			};
+		} else if (frozenSec != null) {
+			liveThoughtMeta = {
+				phase: 'done',
+				elapsedSeconds: frozenSec,
+				tokenUsage: isLast ? lastTurnUsage : null,
+			};
+		}
+
+		return { isLast, agentOrPlanStreaming, liveThoughtMeta };
+	};
+
 	const messageNodeAtIndex = (i: number): ReactNode => {
 			const m = displayMessages[i];
 			if (!m) {
 				return null;
 			}
 			const convoKey = conversationRenderKey;
-			const isLast = i === displayMessages.length - 1;
-			const stAt = streamStartedAtRef.current;
-			const ftAt = firstTokenAtRef.current;
-			const showLiveThought = isLast && m.role === 'assistant' && awaitingReply && composerMode !== 'team';
-			const agentOrPlanStreaming =
-				(composerMode === 'agent' || composerMode === 'plan') && awaitingReply && isLast;
-			const frozenSec =
-				!awaitingReply && isLast && m.role === 'assistant' && currentId
-					? thoughtSecondsByThread[currentId]
-					: undefined;
-
-			let thoughtBlock: ReactNode = null;
-			let liveThoughtMeta: ComponentProps<typeof ChatMarkdown>['liveThoughtMeta'] = null;
-			let thoughtAfterBody = false;
-			if (showLiveThought && stAt) {
-				const assistantTurnHasOutput =
-					streaming.trim().length > 0 ||
-					streamingToolPreview != null ||
-					(agentOrPlanStreaming && liveAssistantBlocks.blocks.length > 0);
-				const phase = assistantTurnHasOutput ? 'streaming' : 'thinking';
-				thoughtAfterBody =
-					assistantTurnHasOutput && composerMode !== 'ask' && composerMode !== 'debug';
-				const elapsed =
-					phase === 'thinking'
-						? Math.max(0, (Date.now() - stAt) / 1000)
-						: ftAt
-							? Math.max(0, (ftAt - stAt) / 1000)
-							: Math.max(0, (Date.now() - stAt) / 1000);
-				if (agentOrPlanStreaming) {
-					liveThoughtMeta = {
-						phase,
-						elapsedSeconds: elapsed,
-						streamingThinking,
-					};
-				} else {
-					thoughtBlock = (
-						<ComposerThoughtBlock
-							phase={phase}
-							elapsedSeconds={elapsed}
-							streamingThinking={streamingThinking}
-						/>
-					);
-				}
-			} else if (frozenSec != null) {
-				thoughtAfterBody = true;
-				thoughtBlock = (
-					<ComposerThoughtBlock
-						phase="done"
-						elapsedSeconds={frozenSec}
-						tokenUsage={isLast ? lastTurnUsage : undefined}
-					/>
-				);
-			}
+			const { isLast, agentOrPlanStreaming, liveThoughtMeta } = computeAssistantRuntime(i);
 
 			const pendingEmptyAssistant =
 				m.role === 'assistant' &&
@@ -875,9 +893,23 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 				);
 			}
 
+			/**
+			 * Agent / Plan 模式下「过程内容」已经被搬到 user 气泡正下方的 preflight row（见
+			 * buildFlatMessageList），assistant 气泡只渲染 outcome（file_edit / 收尾总结等）。
+			 * 其他场景（普通聊天、错误气泡、ask/debug 等）保持 'all' 整段渲染。
+			 */
+			const useAgentSplit =
+				m.role === 'assistant' &&
+				(composerMode === 'plan' ||
+					composerMode === 'agent' ||
+					assistantMessageUsesAgentToolProtocol(m.content)) &&
+				!isChatAssistantErrorLine(m.content, t);
+			const chatRenderMode: ComponentProps<typeof ChatMarkdown>['renderMode'] = useAgentSplit
+				? 'outcome'
+				: 'all';
+
 			return (
 				<div key={`a-${convoKey}-${i}`} className="ref-msg-slot ref-msg-slot--assistant">
-					{thoughtBlock && !thoughtAfterBody ? thoughtBlock : null}
 					<div className="ref-msg-assistant-body">
 						{pendingEmptyAssistant ? (
 							<span className="ref-bubble-pending" aria-hidden>
@@ -913,6 +945,7 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 									composerMode === 'agent' && !awaitingReply && i === lastAssistantMessageIndex
 								}
 								skipPlanTodo
+								renderMode={chatRenderMode}
 							/>
 						)}
 						{hasActiveAssistantTodoPanel ? (
@@ -924,9 +957,54 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 							/>
 						) : null}
 					</div>
-					{thoughtBlock && thoughtAfterBody ? thoughtBlock : null}
 				</div>
 			);
+	};
+
+	/**
+	 * 渲染挂在 user 气泡正下方的「过程区」独立行。
+	 * 数据源是「下一条 assistant 消息」的 content + liveBlocks（如果该 assistant 是流式末条）。
+	 * 不带 `data-msg-index`，不入 stickyUserIndex 体系；高度通过 `data-preflight-for` 由测量
+	 * effect 写入 `preflightRowHeightsRef`，参与 latestTurnFocusSpacerPx。
+	 */
+	const renderPreflightRowForAssistant = (assistantIdx: number): ReactNode => {
+		const m = displayMessages[assistantIdx];
+		if (!m || m.role !== 'assistant') return null;
+		if (composerMode === 'team' || composerMode === 'ask' || composerMode === 'debug') return null;
+		if (isChatAssistantErrorLine(m.content, t)) return null;
+		const useAgentSplit =
+			composerMode === 'plan' ||
+			composerMode === 'agent' ||
+			assistantMessageUsesAgentToolProtocol(m.content);
+		if (!useAgentSplit) return null;
+
+		const { agentOrPlanStreaming, liveThoughtMeta } = computeAssistantRuntime(assistantIdx);
+
+		return (
+			<div
+				key={`row-${conversationRenderKey}-preflight-${assistantIdx}`}
+				className="ref-msg-row-measure ref-msg-preflight-row"
+				data-preflight-for={String(assistantIdx)}
+			>
+				<ChatMarkdown
+					content={m.content}
+					agentUi
+					planUi={composerMode === 'plan'}
+					workspaceRoot={workspace}
+					onOpenAgentFile={onOpenAgentConversationFile}
+					onRunCommand={onRunCommand}
+					streamingToolPreview={agentOrPlanStreaming ? streamingToolPreview : null}
+					showAgentWorking={agentOrPlanStreaming}
+					hidePendingActivityTextCluster
+					liveAgentBlocksState={agentOrPlanStreaming ? liveAssistantBlocks : null}
+					liveThoughtMeta={agentOrPlanStreaming ? liveThoughtMeta : null}
+					revertedPaths={revertedFiles}
+					revertedChangeKeys={revertedChangeKeys}
+					skipPlanTodo
+					renderMode="preflight"
+				/>
+			</div>
+		);
 	};
 
 	const buildFlatMessageList = (): ReactNode[] => {
@@ -935,6 +1013,12 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		const convoKey = conversationRenderKey;
 		for (let i = messageStartIndex; i < displayMessages.length; i++) {
 			const isStickyUserRow = i === stickyUserIndex;
+			const m = displayMessages[i]!;
+			// assistant 之前如有 preflight 内容，先插入一条独立 preflight row（贴在前一条 user 下方）
+			if (m.role === 'assistant') {
+				const preflightNode = renderPreflightRowForAssistant(i);
+				if (preflightNode) nodes.push(preflightNode);
+			}
 			nodes.push(
 				<div
 					key={`row-${convoKey}-${i}`}
