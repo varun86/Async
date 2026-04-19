@@ -28,6 +28,7 @@ const fileEdit = (): RenderUnit => ({
 	id: 'fe-1',
 } as unknown as RenderUnit);
 const command = (): RenderUnit => ({ type: 'command', lang: 'bash', body: 'ls' });
+const marker = (): RenderUnit => ({ type: 'outcome_marker' });
 
 describe('splitPreflightAndOutcome', () => {
 	it('空 units 返回空 preflight 和空 outcome', () => {
@@ -179,5 +180,111 @@ describe('splitPreflightAndOutcome', () => {
 		const done = splitPreflightAndOutcome(units, { liveTurn: false });
 		expect(done.preflight).toEqual([units[0], units[1]]);
 		expect(done.outcome).toEqual([units[2]]);
+	});
+
+	describe('outcome_marker (begin_outcome 工具显式切分)', () => {
+		it('marker 之前归 preflight，marker 自身及之后归 outcome', () => {
+			const t = think();
+			const a = activity();
+			const mk = marker();
+			const tail = md('总结开始');
+			const r = splitPreflightAndOutcome([t, a, mk, tail], { liveTurn: true });
+			expect(r.preflight).toEqual([t, a]);
+			expect(r.outcome).toEqual([mk, tail]);
+		});
+
+		it('marker 优先级高于强结果：即便后面有 file_edit，也按 marker 位置切', () => {
+			const t = think();
+			const mk = marker();
+			const fe = fileEdit();
+			const r = splitPreflightAndOutcome([t, mk, fe], { liveTurn: true });
+			expect(r.preflight).toEqual([t]);
+			expect(r.outcome).toEqual([mk, fe]);
+		});
+
+		it('marker 优先级高于强结果：即便强结果在 marker 之前出现，也按 marker 位置切', () => {
+			// 罕见场景：LLM 顺序混乱，marker 在 file_edit 之后才调用。仍以 marker 为准。
+			const t = think();
+			const fe = fileEdit();
+			const mk = marker();
+			const tail = md('总结');
+			const r = splitPreflightAndOutcome([t, fe, mk, tail], { liveTurn: true });
+			expect(r.preflight).toEqual([t, fe]);
+			expect(r.outcome).toEqual([mk, tail]);
+		});
+
+		it('LLM 重复调用 begin_outcome：以首次出现为准，避免切分点回退', () => {
+			const t = think();
+			const mk1 = marker();
+			const m1 = md('开始');
+			const mk2 = marker();
+			const m2 = md('继续');
+			const r = splitPreflightAndOutcome([t, mk1, m1, mk2, m2], { liveTurn: true });
+			expect(r.preflight).toEqual([t]);
+			expect(r.outcome).toEqual([mk1, m1, mk2, m2]);
+		});
+
+		it('liveTurn 切换不影响 marker 切分（行为完全一致）', () => {
+			const units = [think(), activity(), marker(), md('总结')];
+			const live = splitPreflightAndOutcome(units, { liveTurn: true });
+			const done = splitPreflightAndOutcome(units, { liveTurn: false });
+			expect(live).toEqual(done);
+			expect(live.preflight).toEqual([units[0], units[1]]);
+			expect(live.outcome).toEqual([units[2], units[3]]);
+		});
+
+		it('marker 在 units 头部：preflight 空，outcome 全部', () => {
+			const mk = marker();
+			const tail = md('一上来就答复');
+			const r = splitPreflightAndOutcome([mk, tail], { liveTurn: true });
+			expect(r.preflight).toEqual([]);
+			expect(r.outcome).toEqual([mk, tail]);
+		});
+
+		it('marker 后面没有任何内容：preflight 完整，outcome 仅 marker', () => {
+			const t = think();
+			const mk = marker();
+			const r = splitPreflightAndOutcome([t, mk], { liveTurn: true });
+			expect(r.preflight).toEqual([t]);
+			expect(r.outcome).toEqual([mk]);
+		});
+
+		it('单向不变量：marker 之前的 unit 在多帧之间永远在 preflight，marker 之后永远在 outcome', () => {
+			const t = think();
+			const a = activity();
+			const mk = marker();
+
+			// 阶段 1：思考、工具
+			const phase1 = splitPreflightAndOutcome([t, a], { liveTurn: true });
+			expect(phase1.preflight).toEqual([t, a]);
+			expect(phase1.outcome).toEqual([]);
+
+			// 阶段 2：marker 出现
+			const phase2 = splitPreflightAndOutcome([t, a, mk], { liveTurn: true });
+			expect(phase2.preflight).toEqual([t, a]);
+			expect(phase2.outcome).toEqual([mk]);
+
+			// 阶段 3：marker 之后追加 markdown
+			const m1 = md('总结');
+			const phase3 = splitPreflightAndOutcome([t, a, mk, m1], { liveTurn: true });
+			expect(phase3.preflight).toEqual([t, a]);
+			expect(phase3.outcome).toEqual([mk, m1]);
+
+			// 阶段 4：再追加 file_edit；marker 仍是切分点，t/a 不会被吸到 outcome
+			const fe = fileEdit();
+			const phase4 = splitPreflightAndOutcome([t, a, mk, m1, fe], { liveTurn: true });
+			expect(phase4.preflight).toEqual([t, a]);
+			expect(phase4.outcome).toEqual([mk, m1, fe]);
+		});
+
+		it('历史消息无 marker：完全退化到原逻辑（强结果切分 + 兜底）', () => {
+			const t = think();
+			const a = activity();
+			const fe = fileEdit();
+			const tail = md('完成');
+			const r = splitPreflightAndOutcome([t, a, fe, tail], { liveTurn: false });
+			expect(r.preflight).toEqual([t, a]);
+			expect(r.outcome).toEqual([fe, tail]);
+		});
 	});
 });

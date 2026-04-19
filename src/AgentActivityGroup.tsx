@@ -38,6 +38,12 @@ type Props = {
 	 * 为 true 时自动切到 collapsed 单行 summary。
 	 */
 	followingToolLikeWork?: boolean;
+	/**
+	 * 本分组渲染在 AgentPreflightShell 内部。preflight 整体已经会在回合结束自动收起，
+	 * 内部不需要再独立做「回合结束自动 collapse」/「followingToolLikeWork 自动 collapse」，
+	 * 否则会产生「过程中展开 → 结束瞬间卷成单行」的视觉跳变。
+	 */
+	insideShell?: boolean;
 };
 
 export const AgentActivityGroup = memo(function AgentActivityGroup({
@@ -46,9 +52,10 @@ export const AgentActivityGroup = memo(function AgentActivityGroup({
 	liveTurn = false,
 	animateLineReveal = false,
 	followingToolLikeWork = false,
+	insideShell = false,
 }: Props) {
 	const [displayState, setDisplayState] = useState<DisplayState>(() => {
-		if (followingToolLikeWork) {
+		if (!insideShell && followingToolLikeWork) {
 			return 'collapsed';
 		}
 		return 'preview';
@@ -56,8 +63,11 @@ export const AgentActivityGroup = memo(function AgentActivityGroup({
 	const userToggledRef = useRef(false);
 	const prevLiveTurnRef = useRef(liveTurn);
 
-	// 后续已出现工具块时：自动切到 collapsed（除非用户手动操作过）
+	// 后续已出现工具块时：自动切到 collapsed（除非用户手动操作过）。preflight 内禁用此规则。
 	useEffect(() => {
+		if (insideShell) {
+			return;
+		}
 		if (!followingToolLikeWork) {
 			return;
 		}
@@ -65,18 +75,22 @@ export const AgentActivityGroup = memo(function AgentActivityGroup({
 			return;
 		}
 		setDisplayState('collapsed');
-	}, [followingToolLikeWork]);
+	}, [followingToolLikeWork, insideShell]);
 
-	// 整个 Agent 回合结束时若仍非 collapsed → 延迟收成 collapsed
+	// 整个 Agent 回合结束时若仍非 collapsed → 延迟收成 collapsed。preflight 内禁用此规则
+	// （preflight 自身会自动收起，内部 group 不需要再单独折叠，避免视觉跳变）。
 	useEffect(() => {
 		const wasLive = prevLiveTurnRef.current;
 		prevLiveTurnRef.current = liveTurn;
 
+		if (insideShell) {
+			return;
+		}
 		if (wasLive && !liveTurn && !userToggledRef.current) {
 			const id = setTimeout(() => setDisplayState('collapsed'), 600);
 			return () => clearTimeout(id);
 		}
-	}, [liveTurn]);
+	}, [liveTurn, insideShell]);
 
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const pinnedToBottomRef = useRef(true);

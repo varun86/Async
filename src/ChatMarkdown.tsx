@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AgentActivityGroup } from './AgentActivityGroup';
@@ -82,6 +82,7 @@ function unitFollowedByToolLikeWork(
 				continue;
 			case 'thinking_group':
 			case 'activity_group':
+			case 'outcome_marker':
 				continue;
 		}
 	}
@@ -520,6 +521,24 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 				);
 			}
 			case 'activity_group':
+				// preflight 内不渲染 .ref-activity-group 壳：直接把组内 items 摊平成独立活动行，
+				// 视觉上跟其它独立 activity（如 Bash/已运行）一致，过程中无任何额外折叠层。
+				if (insideShell) {
+					return (
+						<Fragment key={`u-${i}`}>
+							{seg.items.map((item, j) => (
+								<ActivityLine
+									key={`u-${i}-${j}`}
+									seg={item}
+									t={t}
+									onOpenAgentFile={onOpenAgentFile}
+									showAgentWorking={showAgentWorking}
+									hidePendingTextCluster={hidePendingActivityTextCluster}
+								/>
+							))}
+						</Fragment>
+					);
+				}
 				return (
 					<AgentActivityGroup
 						key={`u-${i}`}
@@ -527,11 +546,8 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 						onOpenFile={onOpenAgentFile}
 						liveTurn={showAgentWorking}
 						animateLineReveal={showAgentWorking}
-						followingToolLikeWork={
-							insideShell
-								? false
-								: unitFollowedByToolLikeWork(renderUnits, i, 'activity_group')
-						}
+						insideShell={insideShell}
+						followingToolLikeWork={unitFollowedByToolLikeWork(renderUnits, i, 'activity_group')}
 					/>
 				);
 			case 'file_changes':
@@ -633,9 +649,12 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 	};
 
 	const hasPreflight = preflightHasContent(preflight);
-	const hasOutcome = outcome.some(
-		(u) => u.type !== 'markdown' || u.text.trim().length > 0
-	);
+	const hasOutcome = outcome.some((u) => {
+		// outcome_marker 自身不可见，单独存在不算「有 outcome」
+		if (u.type === 'outcome_marker') return false;
+		if (u.type === 'markdown') return u.text.trim().length > 0;
+		return true;
+	});
 
 	if (renderMode === 'preflight') {
 		if (!hasPreflight) return null;

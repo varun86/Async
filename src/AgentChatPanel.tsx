@@ -46,6 +46,7 @@ import {
 	computeLatestTurnFocusSpacerPx,
 	findLatestTurnFocusUserIndex,
 	findStickyUserIndexForViewport,
+	resolveStickyUserIndex,
 } from './agentTurnFocus';
 import { useAppShellGitFiles, useAppShellGitMeta } from './app/appShellContexts';
 import { userMessageToSegments, type ComposerSegment } from './composerSegments';
@@ -706,6 +707,41 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		messagesViewportRef,
 	]);
 
+	/**
+	 * sticky 同步逻辑：用 ref 持有最新闭包，让监听器订阅 effect 只在「会话级」变量变化时
+	 * 重订阅，避免流式 token 推送期间反复 add/removeEventListener 与 ResizeObserver 拆装。
+	 */
+	const syncStickyUserIndexRef = useRef<() => void>(() => {});
+	syncStickyUserIndexRef.current = () => {
+		const viewport = messagesViewportRef.current;
+		const track = messagesTrackRef.current;
+		if (!viewport || !track) {
+			return;
+		}
+		const viewportRect = viewport.getBoundingClientRect();
+		const viewportStyle = window.getComputedStyle(viewport);
+		const stickyTopPx = viewportRect.top + (Number.parseFloat(viewportStyle.paddingTop || '0') || 0);
+		const renderedRowTops = Array.from(
+			track.querySelectorAll<HTMLElement>('.ref-msg-row-measure[data-msg-index]')
+		)
+			.map((row) => {
+				const raw = row.dataset.msgIndex;
+				const index = raw ? Number(raw) : Number.NaN;
+				return {
+					index,
+					top: row.getBoundingClientRect().top - stickyTopPx,
+				};
+			})
+			.filter((row) => Number.isFinite(row.index));
+		const nextStickyIndex = findStickyUserIndexForViewport({
+			displayMessages,
+			renderedRowTops,
+			stickyTopPx: 0,
+		});
+		const resolvedStickyIndex = resolveStickyUserIndex(nextStickyIndex, latestTurnFocusUserIndex);
+		setStickyUserIndex((prev) => (prev === resolvedStickyIndex ? prev : resolvedStickyIndex));
+	};
+
 	useLayoutEffect(() => {
 		if (!hasConversation || composerMode === 'team') {
 			setStickyUserIndex((prev) => (prev == null ? prev : null));
@@ -716,65 +752,46 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		if (!viewport || !track) {
 			return;
 		}
-		const syncStickyUserIndex = () => {
-			const viewportRect = viewport.getBoundingClientRect();
-			const viewportStyle = window.getComputedStyle(viewport);
-			const stickyTopPx = viewportRect.top + (Number.parseFloat(viewportStyle.paddingTop || '0') || 0);
-			const renderedRowTops = Array.from(
-				track.querySelectorAll<HTMLElement>('.ref-msg-row-measure[data-msg-index]')
-			)
-				.map((row) => {
-					const raw = row.dataset.msgIndex;
-					const index = raw ? Number(raw) : Number.NaN;
-					return {
-						index,
-						top: row.getBoundingClientRect().top - stickyTopPx,
-					};
-				})
-				.filter((row) => Number.isFinite(row.index));
-			const nextStickyIndex = findStickyUserIndexForViewport({
-				displayMessages,
-				renderedRowTops,
-				stickyTopPx: 0,
-			});
-			const resolvedStickyIndex =
-				nextStickyIndex === latestTurnFocusUserIndex ? null : nextStickyIndex;
-			setStickyUserIndex((prev) => (prev === resolvedStickyIndex ? prev : resolvedStickyIndex));
-		};
 		let rafId = 0;
-		const scheduleSyncStickyUserIndex = () => {
+		const schedule = () => {
 			if (rafId !== 0) {
 				return;
 			}
 			rafId = window.requestAnimationFrame(() => {
 				rafId = 0;
-				syncStickyUserIndex();
+				syncStickyUserIndexRef.current();
 			});
 		};
-		scheduleSyncStickyUserIndex();
-		viewport.addEventListener('scroll', scheduleSyncStickyUserIndex, { passive: true });
-		const resizeObserver = new ResizeObserver(() => {
-			scheduleSyncStickyUserIndex();
-		});
+		schedule();
+		viewport.addEventListener('scroll', schedule, { passive: true });
+		const resizeObserver = new ResizeObserver(schedule);
 		resizeObserver.observe(track);
 		return () => {
-			viewport.removeEventListener('scroll', scheduleSyncStickyUserIndex);
+			viewport.removeEventListener('scroll', schedule);
 			resizeObserver.disconnect();
 			if (rafId !== 0) {
 				window.cancelAnimationFrame(rafId);
 			}
 		};
+	}, [hasConversation, composerMode, conversationRenderKey, messagesViewportRef, messagesTrackRef]);
+
+	/**
+	 * 数据/布局变化时主动触发一次同步——监听器订阅 effect 不再覆盖这些维度。
+	 * 注意：latestTurnFocusSpacerPx 必须在这里，因为 spacer 高度变化会改变所有行的 top，
+	 * 必须重新评估 sticky 候选；否则上一帧选定的 user 可能已经不再贴顶。
+	 */
+	useLayoutEffect(() => {
+		if (!hasConversation || composerMode === 'team') {
+			return;
+		}
+		syncStickyUserIndexRef.current();
 	}, [
 		hasConversation,
 		composerMode,
-		conversationRenderKey,
 		lastMessageLayoutSig,
 		latestTurnFocusSpacerPx,
 		latestTurnFocusUserIndex,
-		displayMessages,
 		messageStartIndex,
-		messagesViewportRef,
-		messagesTrackRef,
 	]);
 
 	/**
