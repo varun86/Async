@@ -4,6 +4,7 @@
 
 import type { AgentSubagent } from '../agentSettingsTypes.js';
 import type { ShellSettings } from '../settingsStore.js';
+import { loadClaudeWorkspaceSubagents } from '../llm/agentMessagePrep.js';
 
 export type SubagentRunProfile = 'explore' | 'full';
 
@@ -19,28 +20,44 @@ export function resolveSubagentProfile(rawType: string | undefined): SubagentRun
 	return 'full';
 }
 
+function matchesSubagent(s: AgentSubagent, raw: string, lower: string): boolean {
+	return (
+		s.enabled !== false &&
+		(s.id === raw ||
+			s.name.trim().toLowerCase() === raw.toLowerCase() ||
+			s.name.trim().toLowerCase().replace(/\s+/g, '_') === lower)
+	);
+}
+
 export function findConfiguredSubagent(
 	settings: ShellSettings,
-	rawType: string | undefined
+	rawType: string | undefined,
+	workspaceRoot?: string | null
 ): AgentSubagent | undefined {
 	const t = (rawType ?? '').trim();
 	const lower = t.toLowerCase().replace(/\s+/g, '_');
 	if (!t) return undefined;
 
-	const subs = settings.agent?.subagents ?? [];
-	return subs.find(
-		(s) =>
-			s.enabled !== false &&
-			(s.id === t ||
-				s.name.trim().toLowerCase() === t.toLowerCase() ||
-				s.name.trim().toLowerCase().replace(/\s+/g, '_') === lower)
-	);
+	const settingsHit = (settings.agent?.subagents ?? []).find((s) => matchesSubagent(s, t, lower));
+	if (settingsHit) return settingsHit;
+
+	if (workspaceRoot) {
+		const diskSubs = loadClaudeWorkspaceSubagents(workspaceRoot);
+		const diskHit = diskSubs.find((s) => matchesSubagent(s, t, lower));
+		if (diskHit) return diskHit;
+	}
+
+	return undefined;
 }
 
 /**
  * 追加到子 Agent 系统提示的片段（在父级 agentSystemAppend 之后）。
  */
-export function buildSubagentSystemAppend(settings: ShellSettings, rawType: string | undefined): string | undefined {
+export function buildSubagentSystemAppend(
+	settings: ShellSettings,
+	rawType: string | undefined,
+	workspaceRoot?: string | null
+): string | undefined {
 	const t = (rawType ?? '').trim();
 	const lower = t.toLowerCase().replace(/\s+/g, '_');
 	if (!t) return undefined;
@@ -53,7 +70,7 @@ export function buildSubagentSystemAppend(settings: ShellSettings, rawType: stri
 		].join('\n');
 	}
 
-	const match = findConfiguredSubagent(settings, rawType);
+	const match = findConfiguredSubagent(settings, rawType, workspaceRoot);
 	if (match) {
 		return [
 			`## Subagent: ${match.name}`,

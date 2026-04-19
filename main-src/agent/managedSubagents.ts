@@ -323,8 +323,9 @@ async function runManagedAgent(runtime: ManagedAgentRuntime): Promise<void> {
 	const abortController = new AbortController();
 	runtime.runAbortController = abortController;
 	runtime.lastError = null;
-	const matchedSubagent = findConfiguredSubagent(runtime.settings, runtime.subagentType);
-	const subAppend = buildSubagentSystemAppend(runtime.settings, runtime.subagentType);
+	const wsRootForSubagent = runtime.options.workspaceRoot ?? null;
+	const matchedSubagent = findConfiguredSubagent(runtime.settings, runtime.subagentType, wsRootForSubagent);
+	const subAppend = buildSubagentSystemAppend(runtime.settings, runtime.subagentType, wsRootForSubagent);
 	const inheritedExploreToolDefs =
 		runtime.runProfile === 'explore'
 			? assembleAgentToolPool('plan', {

@@ -1,6 +1,6 @@
 import { useCallback, useReducer } from 'react';
 
-export type MenubarMenuId = 'file' | 'edit' | 'view' | 'window' | 'terminal';
+export type MenubarMenuId = 'file' | 'edit' | 'view' | 'window' | 'terminal' | 'help';
 
 export type MenubarMenuState = Record<MenubarMenuId, boolean>;
 
@@ -10,6 +10,7 @@ const ALL_CLOSED: MenubarMenuState = {
 	view: false,
 	window: false,
 	terminal: false,
+	help: false,
 };
 
 type Action =
@@ -57,6 +58,7 @@ export function useMenubarMenuReducer() {
 		viewMenuOpen: menus.view,
 		windowMenuOpen: menus.window,
 		terminalMenuOpen: menus.terminal,
+		helpMenuOpen: menus.help,
 		toggleMenubarMenu,
 		setMenubarMenu,
 		setTerminalMenuOpen,

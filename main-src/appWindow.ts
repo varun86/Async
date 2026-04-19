@@ -1,8 +1,12 @@
-import { BrowserWindow, app, screen } from 'electron';
+import { BrowserWindow, app, screen, type WebContents } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { THEME_CHROME } from './themeChrome.js';
-import { bindWorkspaceRootToWebContents, onWebContentsDestroyed } from './workspace.js';
+import {
+	bindWorkspaceRootToWebContents,
+	getWorkspaceRootForWebContents,
+	onWebContentsDestroyed,
+} from './workspace.js';
 import { acquireWorkspaceFileIndexRef, releaseWorkspaceFileIndexRef } from './workspaceFileIndex.js';
 
 const isDev = !app.isPackaged;
@@ -19,6 +23,58 @@ export function configureAppWindowIcon(icon: string | undefined): void {
 }
 
 export type AppWindowSurface = 'agent' | 'editor';
+
+const surfaceByWebContentsId = new Map<number, AppWindowSurface>();
+
+function normalizeWorkspaceRoot(root: string | null | undefined): string | null {
+	const trimmed = typeof root === 'string' ? root.trim() : '';
+	return trimmed ? path.resolve(trimmed) : null;
+}
+
+export function getAppWindowSurfaceForWebContents(
+	webContents: WebContents | null | undefined
+): AppWindowSurface | null {
+	if (!webContents || webContents.isDestroyed()) {
+		return null;
+	}
+	return surfaceByWebContentsId.get(webContents.id) ?? null;
+}
+
+export function findAppWindowBySurface(
+	surface: AppWindowSurface,
+	opts?: { workspaceRoot?: string | null; excludeWebContentsId?: number }
+): BrowserWindow | null {
+	const targetRoot = normalizeWorkspaceRoot(opts?.workspaceRoot);
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (win.isDestroyed() || win.webContents.isDestroyed()) {
+			continue;
+		}
+		if (opts?.excludeWebContentsId === win.webContents.id) {
+			continue;
+		}
+		if (getAppWindowSurfaceForWebContents(win.webContents) !== surface) {
+			continue;
+		}
+		const candidateRoot = normalizeWorkspaceRoot(getWorkspaceRootForWebContents(win.webContents));
+		if (candidateRoot === targetRoot) {
+			return win;
+		}
+	}
+	return null;
+}
+
+export function focusAppWindow(win: BrowserWindow): void {
+	if (win.isDestroyed()) {
+		return;
+	}
+	if (win.isMinimized()) {
+		win.restore();
+	}
+	if (!win.isVisible()) {
+		win.show();
+	}
+	win.focus();
+}
 
 export function createAppWindow(opts?: {
 	blank?: boolean;
@@ -68,6 +124,8 @@ export function createAppWindow(opts?: {
 	});
 
 	const surface: AppWindowSurface = opts?.surface ?? 'agent';
+	const webContentsId = win.webContents.id;
+	surfaceByWebContentsId.set(webContentsId, surface);
 	const initial = opts?.initialWorkspace?.trim();
 	if (initial) {
 		const resolvedInitial = path.resolve(initial);
@@ -76,6 +134,7 @@ export function createAppWindow(opts?: {
 	}
 
 	onWebContentsDestroyed(win.webContents, (releasedRoot) => {
+		surfaceByWebContentsId.delete(webContentsId);
 		if (releasedRoot) {
 			releaseWorkspaceFileIndexRef(releasedRoot);
 		}

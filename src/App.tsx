@@ -1120,6 +1120,10 @@ function AppMainWorkspaceInner() {
 	const [layoutMode, setLayoutMode] = useState<LayoutMode>(() =>
 		layoutPinnedBySurface && appSurface ? appSurface : readStoredShellLayoutModeFromKey(shellLayoutStorageKey)
 	);
+	const [layoutWindowAvailability, setLayoutWindowAvailability] = useState<Record<LayoutMode, boolean>>({
+		agent: false,
+		editor: false,
+	});
 	const [editorLeftSidebarView, setEditorLeftSidebarView] = useState<EditorLeftSidebarView>('explorer');
 	const [editorExplorerCollapsed, setEditorExplorerCollapsed] = useState(false);
 	const [editorSidebarSearchQuery, setEditorSidebarSearchQuery] = useState('');
@@ -1188,12 +1192,14 @@ function AppMainWorkspaceInner() {
 	const editMenuRef = useRef<HTMLDivElement>(null);
 	const viewMenuRef = useRef<HTMLDivElement>(null);
 	const windowMenuRef = useRef<HTMLDivElement>(null);
+	const helpMenuRef = useRef<HTMLDivElement>(null);
 	const {
 		fileMenuOpen,
 		editMenuOpen,
 		viewMenuOpen,
 		windowMenuOpen,
 		terminalMenuOpen,
+		helpMenuOpen,
 		menus: menubarMenus,
 		toggleMenubarMenu,
 		setMenubarMenu,
@@ -2433,6 +2439,7 @@ function AppMainWorkspaceInner() {
 	const handleCloseEditorChatMore = useCallback(() => setEditorChatMoreOpen(false), []);
 	const handleOpenSettingsGeneral = useCallback(() => openSettingsPage('general'), [openSettingsPage]);
 	const handleOpenSettingsModels = useCallback(() => openSettingsPage('models'), [openSettingsPage]);
+	const handleOpenAutoUpdate = useCallback(() => openSettingsPage('autoUpdate'), [openSettingsPage]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -3211,6 +3218,53 @@ function AppMainWorkspaceInner() {
 		}
 	}, [layoutSwitchPending]);
 
+	const refreshLayoutWindowAvailability = useCallback(async () => {
+		if (!shell) {
+			setLayoutWindowAvailability({ agent: false, editor: false });
+			return;
+		}
+		try {
+			const [agentResult, editorResult] = await Promise.all([
+				shell.invoke('app:windowSurfaceStatus', 'agent'),
+				shell.invoke('app:windowSurfaceStatus', 'editor'),
+			]);
+			const parseExists = (value: unknown) => {
+				if (!value || typeof value !== 'object') {
+					return false;
+				}
+				const result = value as { ok?: boolean; exists?: boolean };
+				return !!(result.ok && result.exists);
+			};
+			setLayoutWindowAvailability({
+				agent: parseExists(agentResult),
+				editor: parseExists(editorResult),
+			});
+		} catch {
+			setLayoutWindowAvailability({ agent: false, editor: false });
+		}
+	}, [shell]);
+
+	useEffect(() => {
+		void refreshLayoutWindowAvailability();
+	}, [refreshLayoutWindowAvailability, workspace]);
+
+	useEffect(() => {
+		const handleFocus = () => {
+			void refreshLayoutWindowAvailability();
+		};
+		const handleVisibilityChange = () => {
+			if (!document.hidden) {
+				void refreshLayoutWindowAvailability();
+			}
+		};
+		window.addEventListener('focus', handleFocus);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		return () => {
+			window.removeEventListener('focus', handleFocus);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+		};
+	}, [refreshLayoutWindowAvailability]);
+
 	const persistSettings = useCallback(async () => {
 		if (!shell) {
 			return;
@@ -3797,6 +3851,38 @@ function AppMainWorkspaceInner() {
 			}
 		});
 	}, [shell, shellLayoutStorageKey]);
+
+	const handleEnterEditorLayout = useCallback(() => {
+		setLayoutMode('editor');
+		writeStoredShellLayoutMode('editor', shellLayoutStorageKey);
+		syncDesktopShellLayoutMode(shell, 'editor');
+	}, [shell, shellLayoutStorageKey]);
+
+	const handleOpenAgentLayoutWindow = useCallback(async () => {
+		if (!shell) {
+			handleReturnToAgentLayout();
+			return;
+		}
+		try {
+			await shell.invoke('app:openOrFocusWindowSurface', 'agent');
+			await refreshLayoutWindowAvailability();
+		} catch {
+			/* ignore */
+		}
+	}, [handleReturnToAgentLayout, refreshLayoutWindowAvailability, shell]);
+
+	const handleOpenEditorLayoutWindow = useCallback(async () => {
+		if (!shell) {
+			handleEnterEditorLayout();
+			return;
+		}
+		try {
+			await shell.invoke('app:openOrFocusWindowSurface', 'editor');
+			await refreshLayoutWindowAvailability();
+		} catch {
+			/* ignore */
+		}
+	}, [handleEnterEditorLayout, refreshLayoutWindowAvailability, shell]);
 
 	const handleDeleteWorkspaceSkillDisk = useCallback(async (skillMdRel: string): Promise<boolean> => {
 		if (!shell) return false;
@@ -4533,7 +4619,7 @@ function AppMainWorkspaceInner() {
 
 	useEffect(() => {
 		const entries: {
-			id: 'file' | 'edit' | 'view' | 'window' | 'terminal';
+			id: 'file' | 'edit' | 'view' | 'window' | 'terminal' | 'help';
 			ref: RefObject<HTMLDivElement | null>;
 		}[] = [
 			{ id: 'file', ref: fileMenuRef },
@@ -4541,6 +4627,7 @@ function AppMainWorkspaceInner() {
 			{ id: 'view', ref: viewMenuRef },
 			{ id: 'window', ref: windowMenuRef },
 			{ id: 'terminal', ref: terminalMenuRef },
+			{ id: 'help', ref: helpMenuRef },
 		];
 		const open = entries.find((e) => menubarMenus[e.id]);
 		if (!open) {
@@ -6536,6 +6623,8 @@ function AppMainWorkspaceInner() {
 			/>
 			<AppShellMenubar
 				layoutMode={layoutMode}
+				hasAgentLayout={layoutWindowAvailability.agent}
+				hasEditorLayout={layoutWindowAvailability.editor}
 				t={t}
 				shell={shell}
 				workspace={workspace}
@@ -6547,11 +6636,13 @@ function AppMainWorkspaceInner() {
 				viewMenuRef={viewMenuRef}
 				windowMenuRef={windowMenuRef}
 				terminalMenuRef={terminalMenuRef}
+				helpMenuRef={helpMenuRef}
 				fileMenuOpen={fileMenuOpen}
 				editMenuOpen={editMenuOpen}
 				viewMenuOpen={viewMenuOpen}
 				windowMenuOpen={windowMenuOpen}
 				terminalMenuOpen={terminalMenuOpen}
+				helpMenuOpen={helpMenuOpen}
 				handleToggleFileMenu={handleToggleFileMenu}
 				handleToggleEditMenu={handleToggleEditMenu}
 				setMenubarMenu={setMenubarMenu}
@@ -6596,8 +6687,10 @@ function AppMainWorkspaceInner() {
 				windowMenuToggleMaximize={windowMenuToggleMaximize}
 				windowMenuCloseWindow={windowMenuCloseWindow}
 				spawnEditorTerminal={spawnEditorTerminal}
-				onReturnToAgentLayout={handleReturnToAgentLayout}
+				onReturnToAgentLayout={() => void handleOpenAgentLayoutWindow()}
+				onEnterEditorLayout={() => void handleOpenEditorLayoutWindow()}
 				handleOpenSettingsGeneral={handleOpenSettingsGeneral}
+				handleOpenAutoUpdate={handleOpenAutoUpdate}
 			/>
 
 			{isEditorHomeMode ? (

@@ -1,5 +1,6 @@
-import { memo, type RefObject } from 'react';
+import { memo, useState, type RefObject } from 'react';
 import { BrandLogo } from '../BrandLogo';
+import { AboutDialog } from '../AboutDialog';
 import { MenubarFileMenu } from '../MenubarFileMenu';
 import { MenubarWindowMenu } from '../MenubarWindowMenu';
 import { quickOpenPrimaryShortcutLabel, saveShortcutLabel } from '../quickOpenPalette';
@@ -10,6 +11,8 @@ import type { ShellLayoutMode } from './shellLayoutStorage';
 
 export type AppShellMenubarProps = {
 	layoutMode: ShellLayoutMode;
+	hasAgentLayout: boolean;
+	hasEditorLayout: boolean;
 	t: TFunction;
 	shell: Window['asyncShell'] | undefined;
 	workspace: string | null;
@@ -21,11 +24,13 @@ export type AppShellMenubarProps = {
 	viewMenuRef: RefObject<HTMLDivElement | null>;
 	windowMenuRef: RefObject<HTMLDivElement | null>;
 	terminalMenuRef: RefObject<HTMLDivElement | null>;
+	helpMenuRef: RefObject<HTMLDivElement | null>;
 	fileMenuOpen: boolean;
 	editMenuOpen: boolean;
 	viewMenuOpen: boolean;
 	windowMenuOpen: boolean;
 	terminalMenuOpen: boolean;
+	helpMenuOpen: boolean;
 	handleToggleFileMenu: () => void;
 	handleToggleEditMenu: () => void;
 	setMenubarMenu: (menu: MenubarMenuId, open: boolean) => void;
@@ -71,7 +76,9 @@ export type AppShellMenubarProps = {
 	windowMenuCloseWindow: () => void | Promise<void>;
 	spawnEditorTerminal: () => void;
 	onReturnToAgentLayout: () => void;
+	onEnterEditorLayout: () => void;
 	handleOpenSettingsGeneral: () => void;
+	handleOpenAutoUpdate: () => void;
 };
 
 /**
@@ -79,6 +86,8 @@ export type AppShellMenubarProps = {
  */
 export const AppShellMenubar = memo(function AppShellMenubar({
 	layoutMode,
+	hasAgentLayout,
+	hasEditorLayout,
 	t,
 	shell,
 	workspace,
@@ -90,11 +99,13 @@ export const AppShellMenubar = memo(function AppShellMenubar({
 	viewMenuRef,
 	windowMenuRef,
 	terminalMenuRef,
+	helpMenuRef,
 	fileMenuOpen,
 	editMenuOpen,
 	viewMenuOpen,
 	windowMenuOpen,
 	terminalMenuOpen,
+	helpMenuOpen,
 	handleToggleFileMenu,
 	handleToggleEditMenu,
 	setMenubarMenu,
@@ -140,8 +151,17 @@ export const AppShellMenubar = memo(function AppShellMenubar({
 	windowMenuCloseWindow,
 	spawnEditorTerminal,
 	onReturnToAgentLayout,
+	onEnterEditorLayout,
 	handleOpenSettingsGeneral,
+	handleOpenAutoUpdate,
 }: AppShellMenubarProps) {
+	const [aboutOpen, setAboutOpen] = useState(false);
+	const agentLayoutLabel = hasAgentLayout ? t('app.openAgentLayout') : t('app.createAgentLayout');
+	const agentLayoutAriaLabel = hasAgentLayout ? t('app.openAgentLayoutAria') : t('app.createAgentLayoutAria');
+	const editorLayoutLabel = hasEditorLayout ? t('app.openEditorLayout') : t('app.createEditorLayout');
+	const editorLayoutAriaLabel = hasEditorLayout
+		? t('app.openEditorLayoutAria')
+		: t('app.createEditorLayoutAria');
 	return (
 		<header className={`ref-menubar ${layoutMode === 'agent' ? 'ref-menubar--agent' : ''}`}>
 			<div className="ref-menubar-left">
@@ -479,9 +499,34 @@ export const AppShellMenubar = memo(function AppShellMenubar({
 							/>
 						) : null}
 					</div>
-					<button type="button" className="ref-menu-item">
-						{t('app.menuHelp')}
-					</button>
+					<div className="ref-menu-dropdown-wrap" ref={helpMenuRef}>
+						<button
+							type="button"
+							className={`ref-menu-item${helpMenuOpen ? ' is-active' : ''}`}
+							aria-expanded={helpMenuOpen}
+							aria-haspopup="menu"
+							onClick={() => {
+								toggleMenubarMenu('help');
+							}}
+						>
+							{t('app.menuHelp')}
+						</button>
+						{helpMenuOpen ? (
+							<HelpMenuDropdown
+								t={t}
+								shell={shell}
+								onClose={() => setMenubarMenu('help', false)}
+								onOpenAutoUpdate={() => {
+									setMenubarMenu('help', false);
+									handleOpenAutoUpdate();
+								}}
+								onOpenAbout={() => {
+									setMenubarMenu('help', false);
+									setAboutOpen(true);
+								}}
+							/>
+						) : null}
+					</div>
 					{layoutMode === 'editor' && workspace ? (
 						<div className="ref-menu-dropdown-wrap" ref={terminalMenuRef}>
 							<button
@@ -533,12 +578,22 @@ export const AppShellMenubar = memo(function AppShellMenubar({
 						type="button"
 						className="ref-menubar-layout-switch-btn"
 						onClick={onReturnToAgentLayout}
-						title={t('app.backToAgentLayout')}
-						aria-label={t('app.backToAgentLayoutAria')}
+						title={agentLayoutLabel}
+						aria-label={agentLayoutAriaLabel}
 					>
-						{t('app.backToAgentLayout')}
+						{agentLayoutLabel}
 					</button>
-				) : null}
+				) : (
+					<button
+						type="button"
+						className="ref-menubar-layout-switch-btn"
+						onClick={onEnterEditorLayout}
+						title={editorLayoutLabel}
+						aria-label={editorLayoutAriaLabel}
+					>
+						{editorLayoutLabel}
+					</button>
+				)}
 				<button
 					type="button"
 					className="ref-icon-tile ref-settings-btn"
@@ -549,6 +604,76 @@ export const AppShellMenubar = memo(function AppShellMenubar({
 					<IconSettings />
 				</button>
 			</div>
+			<AboutDialog open={aboutOpen} t={t} shell={shell} onClose={() => setAboutOpen(false)} />
 		</header>
 	);
 });
+
+const HELP_DOC_URL = 'https://github.com/ZYKJShadow/Async#readme';
+const HELP_ISSUES_URL = 'https://github.com/ZYKJShadow/Async/issues/new';
+const HELP_RELEASES_URL = 'https://github.com/ZYKJShadow/Async/releases';
+
+type HelpMenuDropdownProps = {
+	t: TFunction;
+	shell: Window['asyncShell'] | undefined;
+	onClose: () => void;
+	onOpenAutoUpdate: () => void;
+	onOpenAbout: () => void;
+};
+
+function HelpMenuDropdown({ t, shell, onClose, onOpenAutoUpdate, onOpenAbout }: HelpMenuDropdownProps) {
+	const openExternal = (url: string) => {
+		if (shell) {
+			void shell.invoke('shell:openExternalUrl', url).catch(() => {});
+		} else {
+			window.open(url, '_blank', 'noopener,noreferrer');
+		}
+	};
+
+	return (
+		<div className="ref-menu-dropdown" role="menu" aria-label={t('app.menuHelp')}>
+			<button
+				type="button"
+				role="menuitem"
+				className="ref-menu-dropdown-item"
+				onClick={() => { openExternal(HELP_DOC_URL); onClose(); }}
+			>
+				{t('app.help.documentation')}
+			</button>
+			<button
+				type="button"
+				role="menuitem"
+				className="ref-menu-dropdown-item"
+				onClick={() => { openExternal(HELP_RELEASES_URL); onClose(); }}
+			>
+				{t('app.help.releases')}
+			</button>
+			<button
+				type="button"
+				role="menuitem"
+				className="ref-menu-dropdown-item"
+				onClick={() => { openExternal(HELP_ISSUES_URL); onClose(); }}
+			>
+				{t('app.help.reportIssue')}
+			</button>
+			<div className="ref-menu-dropdown-sep" role="separator" />
+			<button
+				type="button"
+				role="menuitem"
+				className="ref-menu-dropdown-item"
+				onClick={onOpenAutoUpdate}
+			>
+				{t('app.help.checkForUpdates')}
+			</button>
+			<div className="ref-menu-dropdown-sep" role="separator" />
+			<button
+				type="button"
+				role="menuitem"
+				className="ref-menu-dropdown-item"
+				onClick={onOpenAbout}
+			>
+				{t('app.help.about')}
+			</button>
+		</div>
+	);
+}

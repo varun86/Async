@@ -30,7 +30,7 @@
   "build": {
     "appId": "com.asyncshell.app",
     "productName": "Async IDE",
-    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "artifactName": "Async-IDE-${version}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },

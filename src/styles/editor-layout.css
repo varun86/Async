@@ -876,6 +876,31 @@
 	min-height: 0;
 	min-width: 0;
 	width: 100%;
+	--ref-editor-terminal-divider-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--void-accent-cool, var(--void-ring)) 5%, var(--void-bg-1)) 0%,
+		color-mix(in srgb, var(--void-accent-cool, var(--void-ring)) 3%, var(--void-bg-0)) 100%
+	);
+	--ref-editor-terminal-divider-hover-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--void-accent-cool, var(--void-ring)) 11%, var(--void-bg-1)) 0%,
+		color-mix(in srgb, var(--void-accent-cool, var(--void-ring)) 7%, var(--void-bg-0)) 100%
+	);
+	--ref-editor-terminal-divider: color-mix(
+		in srgb,
+		var(--void-accent-cool, var(--void-ring)) 18%,
+		var(--void-border-soft)
+	);
+	--ref-editor-terminal-divider-active: color-mix(
+		in srgb,
+		var(--void-accent-cool, var(--void-ring)) 56%,
+		var(--void-border-soft)
+	);
+	--ref-editor-terminal-divider-hover-bg: color-mix(
+		in srgb,
+		var(--void-accent-cool, var(--void-ring)) 14%,
+		transparent
+	);
 }
 
 .ref-editor-split-top {
@@ -894,13 +919,14 @@
 	flex-shrink: 0;
 	height: 5px;
 	cursor: row-resize;
-	background: transparent;
+	background: var(--ref-editor-terminal-divider-fill);
 	touch-action: none;
+	transition: background 120ms ease;
 }
 
 .ref-editor-terminal-resize-handle:hover,
 .ref-editor-terminal-resize-handle:active {
-	background: rgba(129, 140, 248, 0.14);
+	background: var(--ref-editor-terminal-divider-hover-fill);
 }
 
 .ref-editor-terminal-resize-handle::after {
@@ -911,8 +937,14 @@
 	top: 50%;
 	height: 1px;
 	transform: translateY(-50%);
-	background: var(--void-border-soft);
+	background: var(--ref-editor-terminal-divider);
 	pointer-events: none;
+	transition: background 120ms ease;
+}
+
+.ref-editor-terminal-resize-handle:hover::after,
+.ref-editor-terminal-resize-handle:active::after {
+	background: var(--ref-editor-terminal-divider-active);
 }
 
 .ref-editor-split-bottom {
@@ -1987,4 +2019,55 @@
 	}
 }
 
+/* Light-mode adaptations for editor toolbar / terminal chrome ---------------- */
+:root[data-color-scheme='light'] .ref-editor-bc-toolbar-row {
+	background: linear-gradient(180deg, var(--void-bg-1) 0%, var(--void-bg-2) 100%);
+	border-bottom-color: var(--void-border-soft);
+}
+
+:root[data-color-scheme='light'] .ref-editor-panel-terminal-tabs {
+	background: var(--void-bg-1);
+	border-bottom-color: var(--void-border-soft);
+}
+
+:root[data-color-scheme='light'] .ref-editor-terminal-resize-handle:hover,
+:root[data-color-scheme='light'] .ref-editor-terminal-resize-handle:active {
+	background: var(--ref-editor-terminal-divider-hover-fill);
+}
+
+:root[data-color-scheme='light'] .ref-editor-center-split {
+	--ref-editor-terminal-divider-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--void-accent-cool) 6%, var(--void-bg-1)) 0%,
+		color-mix(in srgb, var(--void-accent-cool) 4%, var(--void-bg-2)) 100%
+	);
+	--ref-editor-terminal-divider-hover-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--void-accent-cool) 12%, var(--void-bg-1)) 0%,
+		color-mix(in srgb, var(--void-accent-cool) 8%, var(--void-bg-2)) 100%
+	);
+	--ref-editor-terminal-divider: color-mix(in srgb, var(--void-accent-cool) 22%, var(--void-border));
+	--ref-editor-terminal-divider-active: color-mix(in srgb, var(--void-accent-cool) 52%, var(--void-border));
+	--ref-editor-terminal-divider-hover-bg: color-mix(in srgb, var(--void-accent-cool) 16%, transparent);
+}
+
+:root[data-color-scheme='light'] .ref-editor-terminal-resize-handle:hover::after,
+:root[data-color-scheme='light'] .ref-editor-terminal-resize-handle:active::after {
+	background: var(--ref-editor-terminal-divider-active);
+}
+
+:root[data-color-scheme='light'] .ref-editor-terminal-icon-btn:hover {
+	background: rgba(0, 0, 0, 0.06);
+	color: var(--void-fg-1);
+}
+
+:root[data-color-scheme='light'] .ref-editor-terminal-tab.is-active {
+	background: rgba(0, 0, 0, 0.04);
+	border-bottom-color: var(--void-accent-cool);
+}
+
+:root[data-color-scheme='light'] .ref-editor-terminal-tab-close:hover {
+	background: rgba(0, 0, 0, 0.06);
+	color: var(--void-fg-0);
+}
 

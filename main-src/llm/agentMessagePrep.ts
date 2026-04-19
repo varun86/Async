@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { minimatch } from 'minimatch';
-import type { AgentCustomization, AgentCommand, AgentSkill, AgentRule } from '../agentSettingsTypes.js';
+import type { AgentCustomization, AgentCommand, AgentSkill, AgentRule, AgentSubagent } from '../agentSettingsTypes.js';
 import { buildAutoReplyLanguageRuleBlock } from '../../src/autoReplyLanguageRule.js';
 import { collectAtWorkspacePathsInText } from './workspaceContextExpand.js';
 
@@ -111,6 +111,87 @@ export function loadClaudeWorkspaceSkills(workspaceRoot: string | null): AgentSk
 	const cursor = scanSkillsDirectory(workspaceRoot, ['.cursor', 'skills'], 'cursor');
 	const asyncShell = scanSkillsDirectory(workspaceRoot, ['.async', 'skills'], 'async');
 	return [...claude, ...cursor, ...asyncShell];
+}
+
+/**
+ * 扫描磁盘子 Agent 配置（兼容 Claude Code `.claude/agents/<name>.md` 约定）：
+ * - `.claude/agents/<name>.md`
+ * - `.cursor/agents/<name>.md`（兼容写法）
+ * - `.async/agents/<name>.md`
+ * 文件名（去扩展名）作为 subagent 名称；frontmatter 可提供 `name`、`description`，正文为 instructions。
+ */
+function scanSubagentsDirectory(
+	workspaceRoot: string,
+	segments: readonly string[],
+	sourceLabel: string
+): AgentSubagent[] {
+	const dir = path.join(workspaceRoot, ...segments);
+	if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+		return [];
+	}
+	const out: AgentSubagent[] = [];
+	try {
+		for (const fileName of fs.readdirSync(dir)) {
+			if (!/\.md$/i.test(fileName)) {
+				continue;
+			}
+			const full = path.join(dir, fileName);
+			if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
+				continue;
+			}
+			const raw = readTextFileSafe(full, MAX_SKILL_FILE_CHARS);
+			if (!raw.trim()) {
+				continue;
+			}
+			const { body, title, description } = stripSimpleFrontmatter(raw);
+			const baseName = fileName.replace(/\.md$/i, '').trim();
+			if (!baseName) {
+				continue;
+			}
+			out.push({
+				id: `ws-subagent-${sourceLabel}:${baseName.toLowerCase()}`,
+				name: title?.trim() || baseName,
+				description:
+					description?.trim() ||
+					`Project subagent from ${[...segments, fileName].join('/')}`,
+				instructions: body.trim(),
+				enabled: true,
+				origin: 'project',
+			});
+		}
+	} catch {
+		return out;
+	}
+	return out;
+}
+
+export function loadClaudeWorkspaceSubagents(workspaceRoot: string | null): AgentSubagent[] {
+	if (!workspaceRoot) {
+		return [];
+	}
+	const claude = scanSubagentsDirectory(workspaceRoot, ['.claude', 'agents'], 'claude');
+	const cursor = scanSubagentsDirectory(workspaceRoot, ['.cursor', 'agents'], 'cursor');
+	const asyncShell = scanSubagentsDirectory(workspaceRoot, ['.async', 'agents'], 'async');
+	return [...claude, ...cursor, ...asyncShell];
+}
+
+function mergeSubagentsByName(
+	settingsSubagents: AgentSubagent[] | undefined,
+	workspaceSubagents: AgentSubagent[]
+): AgentSubagent[] {
+	const map = new Map<string, AgentSubagent>();
+	for (const s of settingsSubagents ?? []) {
+		const key = (s.name ?? '').trim().toLowerCase();
+		if (key) {
+			map.set(key, s);
+		}
+	}
+	for (const w of workspaceSubagents) {
+		const key = (w.name ?? '').trim().toLowerCase();
+		if (!key) continue;
+		map.set(key, w);
+	}
+	return [...map.values()];
 }
 
 function mergeSkillsBySlug(settingsSkills: AgentSkill[] | undefined, workspaceSkills: AgentSkill[]): AgentSkill[] {
@@ -432,13 +513,18 @@ export function prepareUserTurnForChat(
 	const { userText: afterManual, manualBlocks } = applyManualRuleInvocations(afterCmd, agent?.rules);
 	const wsSkills = workspaceRoot ? loadClaudeWorkspaceSkills(workspaceRoot) : [];
 	const mergedSkills = mergeSkillsBySlug(agent?.skills, wsSkills);
+	const wsSubagents = workspaceRoot ? loadClaudeWorkspaceSubagents(workspaceRoot) : [];
+	const mergedSubagents = mergeSubagentsByName(agent?.subagents, wsSubagents);
+	const agentWithDisk: AgentCustomization | undefined = agent
+		? { ...agent, skills: mergedSkills, subagents: mergedSubagents }
+		: agent;
 	const { userText, skillSystemBlock } = applySkillInvocation(afterManual, mergedSkills);
 	const atPaths = workspaceRoot ? collectAtWorkspacePathsInText(userText, workspaceFiles) : [];
 	const cursorRules = workspaceRoot ? loadThirdPartyAgentRules(workspaceRoot) : '';
 	const claudeRules = workspaceRoot ? loadClaudeProjectRulesMarkdown(workspaceRoot) : '';
 	const thirdPartyMerged = [cursorRules, claudeRules].filter((s) => s.trim().length > 0).join('\n\n---\n\n');
 	const agentSystemAppend = buildAgentSystemAppend({
-		agent,
+		agent: agentWithDisk,
 		userText,
 		atPaths,
 		skillSystemBlock,

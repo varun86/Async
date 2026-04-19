@@ -2957,6 +2957,22 @@
 	background: transparent;
 }
 
+:root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-center-split {
+	--ref-editor-terminal-divider-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--surface-panel-bg-soft) 72%, var(--surface-tint-soft)) 0%,
+		color-mix(in srgb, var(--surface-panel-bg) 82%, transparent) 100%
+	);
+	--ref-editor-terminal-divider-hover-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--surface-panel-bg-soft) 62%, var(--surface-tint-strong)) 0%,
+		color-mix(in srgb, var(--surface-panel-bg) 74%, var(--surface-tint-soft)) 100%
+	);
+	--ref-editor-terminal-divider: color-mix(in srgb, var(--color-accent) 24%, var(--surface-glass-stroke));
+	--ref-editor-terminal-divider-active: color-mix(in srgb, var(--color-accent) 62%, transparent);
+	--ref-editor-terminal-divider-hover-bg: color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
 :root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-split-top > .ref-tab-bar,
 :root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-bc-toolbar-row,
 :root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-panel-terminal-tabs,
@@ -2967,7 +2983,7 @@
 }
 
 :root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-split-bottom {
-	border-top: 1px solid color-mix(in srgb, var(--surface-glass-stroke) 86%, transparent);
+	border-top: none;
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-bg-soft) 26%, transparent) 0%, color-mix(in srgb, var(--surface-panel-bg) 20%, transparent) 100%);
 }
@@ -3048,9 +3064,25 @@
 }
 
 :root[data-ui-style='mac-codex'][data-color-scheme='dark'] .ref-center--editor-shell .ref-editor-split-bottom {
-	border-top-color: color-mix(in srgb, var(--void-fg-0) 7%, transparent);
+	border-top-color: transparent;
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--void-bg-0) 22%, transparent) 0%, color-mix(in srgb, var(--void-bg-0) 42%, transparent) 100%);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='dark'] .ref-center--editor-shell .ref-editor-center-split {
+	--ref-editor-terminal-divider-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--void-bg-1) 72%, var(--void-accent-cool) 8%) 0%,
+		color-mix(in srgb, var(--void-bg-0) 88%, var(--void-accent-cool) 4%) 100%
+	);
+	--ref-editor-terminal-divider-hover-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--void-bg-1) 62%, var(--void-accent-cool) 16%) 0%,
+		color-mix(in srgb, var(--void-bg-0) 82%, var(--void-accent-cool) 10%) 100%
+	);
+	--ref-editor-terminal-divider: color-mix(in srgb, var(--color-accent) 28%, var(--surface-glass-stroke));
+	--ref-editor-terminal-divider-active: color-mix(in srgb, var(--color-accent) 68%, transparent);
+	--ref-editor-terminal-divider-hover-bg: color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 
 :root[data-ui-style='mac-codex'][data-color-scheme='dark'] .ref-center--editor-shell .ref-editor-split-top > .ref-tab-bar,
@@ -3066,6 +3098,105 @@
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--void-bg-3) 84%, transparent) 0%, color-mix(in srgb, var(--void-bg-2) 76%, transparent) 100%);
 	border-color: color-mix(in srgb, var(--void-accent-cool) 12%, transparent);
+}
+
+/* Light-mode chrome for editor shell — beats the generic transparent rule above */
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-tab-bar,
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-editor-split-top > .ref-tab-bar,
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-editor-bc-toolbar-row,
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-editor-panel-terminal-tabs {
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--void-bg-1) 96%, transparent) 0%, color-mix(in srgb, var(--void-bg-2) 92%, transparent) 100%);
+	border-bottom-color: color-mix(in srgb, var(--void-fg-2) 18%, transparent);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-editor-bc-toolbar-row {
+	box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--void-fg-2) 9%, transparent);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-tab-item {
+	color: var(--void-fg-2);
+	border-right-color: color-mix(in srgb, var(--void-fg-2) 12%, transparent);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-tab-item:hover {
+	background: color-mix(in srgb, var(--void-fg-0) 5%, transparent);
+	color: var(--void-fg-1);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-tab-item.is-active {
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--void-bg-0) 98%, transparent) 0%, color-mix(in srgb, var(--void-bg-1) 96%, transparent) 100%);
+	color: var(--void-fg-0);
+	box-shadow:
+		inset 0 2px 0 var(--void-accent-cool),
+		inset 0 0 0 1px color-mix(in srgb, var(--void-fg-2) 14%, transparent);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-editor-terminal-tab.is-active {
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--void-bg-0) 96%, transparent) 0%, color-mix(in srgb, var(--void-bg-1) 92%, transparent) 100%);
+	box-shadow:
+		inset 0 2px 0 var(--void-accent-cool),
+		inset 0 0 0 1px color-mix(in srgb, var(--void-fg-2) 14%, transparent);
+}
+
+:root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-terminal-resize-handle {
+	background: var(--ref-editor-terminal-divider-fill);
+}
+
+:root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-terminal-resize-handle::after {
+	background:
+		linear-gradient(90deg, transparent 0%, var(--ref-editor-terminal-divider) 10%, var(--ref-editor-terminal-divider) 90%, transparent 100%);
+	opacity: 0.94;
+}
+
+:root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-terminal-resize-handle:hover,
+:root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-terminal-resize-handle:active {
+	background: var(--ref-editor-terminal-divider-hover-fill);
+}
+
+:root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-terminal-resize-handle:hover::after,
+:root[data-ui-style='mac-codex'] .ref-center--editor-shell .ref-editor-terminal-resize-handle:active::after {
+	background:
+		linear-gradient(90deg, transparent 0%, var(--ref-editor-terminal-divider-active) 12%, var(--ref-editor-terminal-divider-active) 88%, transparent 100%);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-editor-split-bottom {
+	border-top: none;
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--void-bg-1) 96%, transparent) 0%, color-mix(in srgb, var(--void-bg-2) 92%, transparent) 100%);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-accent) 10%, #ffffff 90%);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-editor-center-split {
+	--ref-editor-terminal-divider-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--void-bg-1) 88%, var(--color-accent) 6%) 0%,
+		color-mix(in srgb, var(--void-bg-2) 92%, var(--color-accent) 4%) 100%
+	);
+	--ref-editor-terminal-divider-hover-fill: linear-gradient(
+		180deg,
+		color-mix(in srgb, var(--void-bg-1) 82%, var(--color-accent) 12%) 0%,
+		color-mix(in srgb, var(--void-bg-2) 88%, var(--color-accent) 8%) 100%
+	);
+	--ref-editor-terminal-divider: color-mix(in srgb, var(--color-accent) 22%, var(--surface-glass-stroke));
+	--ref-editor-terminal-divider-active: color-mix(in srgb, var(--color-accent) 58%, transparent);
+	--ref-editor-terminal-divider-hover-bg: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-center--editor-shell .ref-editor-terminal-stack {
+	background: transparent;
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-editor-terminal-icon-btn:hover {
+	background: color-mix(in srgb, var(--void-fg-0) 6%, transparent);
+	color: var(--void-fg-1);
+}
+
+:root[data-ui-style='mac-codex'][data-color-scheme='light'] .ref-editor-terminal-tab-close:hover {
+	background: color-mix(in srgb, var(--void-fg-0) 8%, transparent);
+	color: var(--void-fg-0);
 }
 
 /* Phase 11: refit Agent mode to a Codex-like desktop structure without copying color */

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, webContents, type WebContents } from 'electron';
-import { createAppWindow } from '../appWindow.js';
+import { createAppWindow, findAppWindowBySurface, focusAppWindow, type AppWindowSurface } from '../appWindow.js';
 import { applyThemeChromeToWindow, type NativeChromeOverride, type ThemeChromeScheme } from '../themeChrome.js';
 import { applyPatch, formatPatch, parsePatch, reversePatch } from 'diff';
 import * as fs from 'node:fs';
@@ -221,6 +221,10 @@ const execFileAsync = promisify(execFile);
 
 function senderWorkspaceRoot(event: { sender: WebContents }): string | null {
 	return getWorkspaceRootForWebContents(event.sender);
+}
+
+function parseAppWindowSurface(raw: unknown): AppWindowSurface | null {
+	return raw === 'agent' || raw === 'editor' ? raw : null;
 }
 
 function broadcastPluginsChanged(): void {
@@ -1177,6 +1181,13 @@ export function registerIpc(): void {
 		home: app.getPath('home'),
 	}));
 
+	ipcMain.handle('app:getVersion', () => ({
+		version: app.getVersion(),
+		electron: process.versions.electron ?? '',
+		chrome: process.versions.chrome ?? '',
+		node: process.versions.node ?? '',
+	}));
+
 	ipcMain.handle('workspace:pickFolder', async (event) => {
 		const win = BrowserWindow.fromWebContents(event.sender);
 		const r = await dialog.showOpenDialog(win!, {
@@ -1394,6 +1405,39 @@ export function registerIpc(): void {
 	ipcMain.handle('app:newEditorWindow', () => {
 		createAppWindow({ blank: true, surface: 'editor' });
 		return { ok: true as const };
+	});
+
+	ipcMain.handle('app:windowSurfaceStatus', (event, rawSurface: unknown) => {
+		const surface = parseAppWindowSurface(rawSurface);
+		if (!surface) {
+			return { ok: false as const, error: 'invalid-surface' as const };
+		}
+		const existing = findAppWindowBySurface(surface, {
+			workspaceRoot: senderWorkspaceRoot(event),
+			excludeWebContentsId: event.sender.id,
+		});
+		return { ok: true as const, exists: !!existing };
+	});
+
+	ipcMain.handle('app:openOrFocusWindowSurface', (event, rawSurface: unknown) => {
+		const surface = parseAppWindowSurface(rawSurface);
+		if (!surface) {
+			return { ok: false as const, error: 'invalid-surface' as const };
+		}
+		const initialWorkspace = senderWorkspaceRoot(event);
+		const existing = findAppWindowBySurface(surface, {
+			workspaceRoot: initialWorkspace,
+			excludeWebContentsId: event.sender.id,
+		});
+		if (existing) {
+			focusAppWindow(existing);
+			return { ok: true as const, action: 'focused' as const };
+		}
+		createAppWindow({
+			surface,
+			initialWorkspace,
+		});
+		return { ok: true as const, action: 'created' as const };
 	});
 
 	ipcMain.handle('app:windowGetState', (event) => {
@@ -3393,6 +3437,28 @@ ipcMain.handle(
 				return { ok: false as const, error: 'unsupported type' };
 			}
 			await shell.openExternal(pathToFileURL(full).href);
+			return { ok: true as const };
+		} catch (e) {
+			return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+		}
+	});
+
+	ipcMain.handle('shell:openExternalUrl', async (_event, url: string) => {
+		try {
+			const trimmed = String(url ?? '').trim();
+			if (!trimmed) {
+				return { ok: false as const, error: 'empty url' };
+			}
+			let parsed: URL;
+			try {
+				parsed = new URL(trimmed);
+			} catch {
+				return { ok: false as const, error: 'invalid url' };
+			}
+			if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'mailto:') {
+				return { ok: false as const, error: 'unsupported protocol' };
+			}
+			await shell.openExternal(parsed.toString());
 			return { ok: true as const };
 		} catch (e) {
 			return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
