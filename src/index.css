@@ -5862,6 +5862,11 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	cursor: default;
 }
 
+.ref-inline-skill-chip.ref-inline-skill-chip--readonly {
+	padding-right: 8px;
+	cursor: default;
+}
+
 /* 技能调用 chip：沿用 slash chip 骨架，改用紫色以便与 slash 命令区分 */
 .ref-inline-skill-chip {
 	display: inline-flex;

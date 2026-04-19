@@ -2588,6 +2588,15 @@ export function registerIpc(): void {
 					height: typeof r.height === 'number' ? r.height : 0,
 					sha256: typeof r.sha256 === 'string' ? r.sha256 : '',
 				});
+			} else if (kind === 'skill_invoke') {
+				const rawSlug = typeof r.slug === 'string' ? r.slug.trim().replace(/^\.\//, '') : '';
+				const name = typeof r.name === 'string' ? r.name.trim() : '';
+				if (rawSlug.length === 0) continue;
+				out.push({
+					kind: 'skill_invoke',
+					slug: rawSlug,
+					name: name.length > 0 ? name : rawSlug,
+				});
 			}
 		}
 		return out.length > 0 ? out : undefined;
