@@ -209,6 +209,8 @@ function isEditableDomTarget(target: EventTarget | null): boolean {
 	return tag === 'input' || tag === 'textarea' || target.isContentEditable;
 }
 
+const LEADING_SKILL_INVOKE_RE = /^\s*\.\/[\w.-]+(?:\s+|$)/;
+
 type OnSendOptions = {
 	threadId?: string;
 	modeOverride?: ComposerMode;
@@ -1975,6 +1977,93 @@ function AppMainWorkspaceInner() {
 		[persistComposerAttachments, appendComposerFileReferences]
 	);
 
+	const pickComposerImagesFromDialog = useCallback(async () => {
+		if (!shell) {
+			return;
+		}
+		const r = (await shell.invoke('workspace:pickComposerImages')) as
+			| { ok?: true; attachments?: PersistedComposerAttachment[] }
+			| { ok?: false; canceled?: boolean; error?: string; attachments?: PersistedComposerAttachment[] };
+		if (r?.ok && Array.isArray(r.attachments) && r.attachments.length > 0) {
+			appendComposerFileReferences(r.attachments);
+			return;
+		}
+		if (r && 'error' in r && r.error === 'no-workspace') {
+			flashComposerAttachErr(t('composer.attach.noWorkspace'));
+		}
+	}, [appendComposerFileReferences, flashComposerAttachErr, shell, t]);
+
+	const insertComposerSkillInvocation = useCallback(
+		(slug: string) => {
+			const normalizedSlug = String(slug ?? '').trim().replace(/^\.\//, '');
+			if (!normalizedSlug) {
+				return;
+			}
+			const nextPrefix = `./${normalizedSlug} `;
+			setComposerSegments((prev) => {
+				const next = [...prev];
+				const first = next[0];
+				if (first?.kind === 'text') {
+					if (LEADING_SKILL_INVOKE_RE.test(first.text)) {
+						next[0] = {
+							...first,
+							text: first.text.replace(LEADING_SKILL_INVOKE_RE, nextPrefix),
+						};
+					} else {
+						next.unshift({ id: newSegmentId(), kind: 'text', text: nextPrefix });
+					}
+					return next;
+				}
+				return [{ id: newSegmentId(), kind: 'text', text: nextPrefix }, ...next];
+			});
+			focusPreferredComposerInput();
+		},
+		[focusPreferredComposerInput]
+	);
+
+	const refreshComposerMcpMenuState = useCallback(async () => {
+		if (!shell) {
+			return;
+		}
+		const [serversRes, statusesRes] = (await Promise.all([
+			shell.invoke('mcp:getServers'),
+			shell.invoke('mcp:getStatuses'),
+		])) as [
+			{ servers?: typeof mcpServers } | undefined,
+			{ statuses?: typeof mcpStatuses } | undefined,
+		];
+		setMcpServers(serversRes?.servers ?? []);
+		setMcpStatuses(statusesRes?.statuses ?? []);
+	}, [setMcpServers, setMcpStatuses, shell]);
+
+	const toggleComposerMcpServerEnabled = useCallback(
+		async (id: string, nextEnabled: boolean) => {
+			if (!shell) {
+				return;
+			}
+			const current = mcpServers.find((server) => server.id === id);
+			if (!current) {
+				return;
+			}
+			setMcpServers((prev) =>
+				prev.map((server) => (server.id === id ? { ...server, enabled: nextEnabled } : server))
+			);
+			try {
+				await shell.invoke('mcp:saveServer', { ...current, enabled: nextEnabled });
+			} finally {
+				void refreshComposerMcpMenuState();
+			}
+		},
+		[mcpServers, refreshComposerMcpMenuState, setMcpServers, shell]
+	);
+
+	useEffect(() => {
+		if (!plusMenuOpen) {
+			return;
+		}
+		void refreshComposerMcpMenuState();
+	}, [plusMenuOpen, refreshComposerMcpMenuState]);
+
 	const onApplyAgentPatchOne = useCallback(
 		async (id: string) => {
 			const cid = currentIdRef.current;
@@ -2454,6 +2543,8 @@ function AppMainWorkspaceInner() {
 	const handleCloseEditorChatMore = useCallback(() => setEditorChatMoreOpen(false), []);
 	const handleOpenSettingsGeneral = useCallback(() => openSettingsPage('general'), [openSettingsPage]);
 	const handleOpenSettingsModels = useCallback(() => openSettingsPage('models'), [openSettingsPage]);
+	const handleOpenSettingsRules = useCallback(() => openSettingsPage('rules'), [openSettingsPage]);
+	const handleOpenSettingsTools = useCallback(() => openSettingsPage('tools'), [openSettingsPage]);
 	const handleOpenAutoUpdate = useCallback(() => openSettingsPage('autoUpdate'), [openSettingsPage]);
 
 	useEffect(() => {
@@ -4895,7 +4986,7 @@ function AppMainWorkspaceInner() {
 			if (inlineResendRootRef.current?.contains(t)) {
 				return;
 			}
-			if (t instanceof Element && t.closest('.ref-at-menu, .ref-slash-menu, .ref-model-dd, .ref-plus-menu')) {
+			if (t instanceof Element && t.closest('.ref-at-menu, .ref-slash-menu, .ref-model-dd, .ref-plus-menu-wrap')) {
 				return;
 			}
 			closeAtMenuLatestRef.current();
@@ -6626,6 +6717,36 @@ function AppMainWorkspaceInner() {
 		]
 	);
 
+	const composerPlusSkills = useMemo(
+		() =>
+			(mergedAgentCustomization.skills ?? [])
+				.filter((skill) => skill.enabled !== false && skill.slug.trim().length > 0)
+				.map((skill) => ({
+					id: skill.id,
+					name: skill.name,
+					slug: skill.slug.trim(),
+					description: skill.description.trim() || skill.content.trim().slice(0, 140),
+				}))
+				.sort((a, b) => a.name.localeCompare(b.name)),
+		[mergedAgentCustomization.skills]
+	);
+
+	const composerPlusMcpServers = useMemo(() => {
+		const statusById = new Map(mcpStatuses.map((status) => [status.id, status]));
+		return mcpServers.map((server) => {
+			const status = statusById.get(server.id);
+			return {
+				id: server.id,
+				name: server.name,
+				enabled: server.enabled,
+				transport: server.transport,
+				status: status?.status ?? (server.enabled ? 'not_started' : 'disabled'),
+				error: status?.error,
+				toolsCount: status?.tools.length ?? 0,
+			};
+		});
+	}, [mcpServers, mcpStatuses]);
+
 	return (
 		<AppProvider shell={shell} workspace={workspace} t={t}>
 		<ComposerActionsProvider value={composerActions}>
@@ -6767,6 +6888,13 @@ function AppMainWorkspaceInner() {
 				plusMenuAnchorRefForDropdown={plusMenuAnchorRefForDropdown}
 				composerMode={composerMode}
 				setComposerModePersist={setComposerModePersist}
+				onComposerPickImages={pickComposerImagesFromDialog}
+				composerPlusSkills={composerPlusSkills}
+				onComposerInsertSkill={insertComposerSkillInvocation}
+				handleOpenSettingsRules={handleOpenSettingsRules}
+				composerPlusMcpServers={composerPlusMcpServers}
+				onComposerToggleMcpServer={toggleComposerMcpServerEnabled}
+				handleOpenSettingsTools={handleOpenSettingsTools}
 				composerGitBranchAnchorRef={composerGitBranchAnchorRef}
 				showTransientToast={showTransientToast}
 				modelPickerOpen={modelPickerOpen}

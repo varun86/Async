@@ -1703,80 +1703,161 @@ export function registerIpc(): void {
 		sha256: string;
 	};
 
+	type ComposerAttachmentResult =
+		| { ok: true; relPath: string; imageMeta?: ComposerImageMetaDto }
+		| { ok: false; error: 'no-workspace' | 'empty' | 'too-large' | 'write-failed' };
+
+	function sanitizeComposerAttachmentName(rawName: string | undefined): string {
+		const baseName =
+			typeof rawName === 'string' && rawName.trim() ? path.basename(rawName) : 'attachment';
+		return (
+			baseName
+				.replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+				.replace(/[. ]+$/g, '')
+				.slice(0, 120) || 'attachment'
+		);
+	}
+
+	async function persistComposerAttachmentBuffer(
+		root: string | null,
+		buf: Buffer,
+		rawName: string | undefined
+	): Promise<ComposerAttachmentResult> {
+		if (!root) {
+			return { ok: false as const, error: 'no-workspace' as const };
+		}
+		if (buf.length === 0) {
+			return { ok: false as const, error: 'empty' as const };
+		}
+		if (buf.length > COMPOSER_ATTACH_MAX_BYTES) {
+			return { ok: false as const, error: 'too-large' as const };
+		}
+		const safeName = sanitizeComposerAttachmentName(rawName);
+		const dirRel = '.async/composer-drops';
+		const dirAbs = path.join(root, dirRel);
+		try {
+			fs.mkdirSync(dirAbs, { recursive: true });
+			const parsed = path.parse(safeName);
+			const baseName = parsed.name || 'attachment';
+			const ext = parsed.ext || '';
+			let finalName = `${baseName}${ext}`;
+			let seq = 2;
+			while (true) {
+				const candidateAbs = path.join(dirAbs, finalName);
+				if (!fs.existsSync(candidateAbs)) {
+					break;
+				}
+				try {
+					const existingBuf = fs.readFileSync(candidateAbs);
+					if (Buffer.compare(existingBuf, buf) === 0) {
+						const relPath = `${dirRel}/${finalName}`;
+						registerKnownWorkspaceRelPath(relPath, root);
+						const imageMeta = await probeImageMeta(buf, relPath);
+						return imageMeta
+							? { ok: true as const, relPath, imageMeta }
+							: { ok: true as const, relPath };
+					}
+				} catch {
+					/* 读取失败时继续找下一个可用名称 */
+				}
+				finalName = `${baseName} (${seq})${ext}`;
+				seq += 1;
+			}
+			const relPath = `${dirRel}/${finalName}`;
+			fs.writeFileSync(path.join(root, relPath), buf);
+			registerKnownWorkspaceRelPath(relPath, root);
+			const imageMeta = await probeImageMeta(buf, relPath);
+			return imageMeta
+				? { ok: true as const, relPath, imageMeta }
+				: { ok: true as const, relPath };
+		} catch {
+			return { ok: false as const, error: 'write-failed' as const };
+		}
+	}
+
 	ipcMain.handle(
 		'workspace:saveComposerAttachment',
 		async (
 			event,
 			payload: { base64?: string; fileName?: string }
-		): Promise<
-			| { ok: true; relPath: string; imageMeta?: ComposerImageMetaDto }
-			| { ok: false; error: 'no-workspace' | 'empty' | 'too-large' | 'write-failed' }
-		> => {
+		): Promise<ComposerAttachmentResult> => {
 			const root = senderWorkspaceRoot(event);
-			if (!root) {
-				return { ok: false as const, error: 'no-workspace' as const };
-			}
-			const rawName =
-				typeof payload?.fileName === 'string' && payload.fileName.trim()
-					? path.basename(payload.fileName)
-					: 'attachment';
-			const safeName =
-				rawName
-					.replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
-					.replace(/[. ]+$/g, '')
-					.slice(0, 120) || 'attachment';
 			let buf: Buffer;
 			try {
 				buf = Buffer.from(String(payload?.base64 ?? ''), 'base64');
 			} catch {
 				return { ok: false as const, error: 'empty' as const };
 			}
-			if (buf.length === 0) {
-				return { ok: false as const, error: 'empty' as const };
+			return persistComposerAttachmentBuffer(root, buf, payload?.fileName);
+		}
+	);
+
+	ipcMain.handle(
+		'workspace:pickComposerImages',
+		async (
+			event
+		): Promise<
+			| { ok: true; attachments: Array<{ relPath: string; imageMeta?: ComposerImageMetaDto }> }
+			| { ok: false; error: 'no-workspace'; attachments: [] }
+			| { ok: false; canceled: true; attachments: [] }
+		> => {
+			const root = senderWorkspaceRoot(event);
+			if (!root) {
+				return { ok: false as const, error: 'no-workspace' as const, attachments: [] };
 			}
-			if (buf.length > COMPOSER_ATTACH_MAX_BYTES) {
-				return { ok: false as const, error: 'too-large' as const };
+			const win = BrowserWindow.fromWebContents(event.sender);
+			const r = await dialog.showOpenDialog(win ?? undefined, {
+				properties: ['openFile', 'multiSelections'],
+				defaultPath: root,
+				filters: [
+					{
+						name: 'Images',
+						extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg'],
+					},
+				],
+			});
+			if (r.canceled || r.filePaths.length === 0) {
+				return { ok: false as const, canceled: true as const, attachments: [] };
 			}
-			const dirRel = '.async/composer-drops';
-			const dirAbs = path.join(root, dirRel);
-			try {
-				fs.mkdirSync(dirAbs, { recursive: true });
-				const parsed = path.parse(safeName);
-				const baseName = parsed.name || 'attachment';
-				const ext = parsed.ext || '';
-				let finalName = `${baseName}${ext}`;
-				let seq = 2;
-				while (true) {
-					const candidateAbs = path.join(dirAbs, finalName);
-					if (!fs.existsSync(candidateAbs)) {
-						break;
+			const attachments: Array<{ relPath: string; imageMeta?: ComposerImageMetaDto }> = [];
+			for (const rawPath of r.filePaths) {
+				const abs = path.resolve(rawPath);
+				try {
+					if (!fs.statSync(abs).isFile()) {
+						continue;
 					}
-					try {
-						const existingBuf = fs.readFileSync(candidateAbs);
-						if (Buffer.compare(existingBuf, buf) === 0) {
-							const relPath = `${dirRel}/${finalName}`;
-							registerKnownWorkspaceRelPath(relPath, root);
-							const imageMeta = await probeImageMeta(buf, relPath);
-							return imageMeta
-								? { ok: true as const, relPath, imageMeta }
-								: { ok: true as const, relPath };
-						}
-					} catch {
-						/* 读取失败时继续找下一个可用名称 */
-					}
-					finalName = `${baseName} (${seq})${ext}`;
-					seq += 1;
+				} catch {
+					continue;
 				}
-				const relPath = `${dirRel}/${finalName}`;
-				fs.writeFileSync(path.join(root, relPath), buf);
-				registerKnownWorkspaceRelPath(relPath, root);
-				const imageMeta = await probeImageMeta(buf, relPath);
-				return imageMeta
-					? { ok: true as const, relPath, imageMeta }
-					: { ok: true as const, relPath };
-			} catch {
-				return { ok: false as const, error: 'write-failed' as const };
+				if (isPathInsideRoot(abs, root)) {
+					const relPath = path.relative(root, abs).replace(/\\/g, '/');
+					registerKnownWorkspaceRelPath(relPath, root);
+					try {
+						const imageMeta = await probeImageMeta(fs.readFileSync(abs), relPath);
+						attachments.push(imageMeta ? { relPath, imageMeta } : { relPath });
+					} catch {
+						attachments.push({ relPath });
+					}
+					continue;
+				}
+				try {
+					const saveResult = await persistComposerAttachmentBuffer(
+						root,
+						fs.readFileSync(abs),
+						path.basename(abs)
+					);
+					if (saveResult.ok) {
+						attachments.push(
+							saveResult.imageMeta
+								? { relPath: saveResult.relPath, imageMeta: saveResult.imageMeta }
+								: { relPath: saveResult.relPath }
+						);
+					}
+				} catch {
+					/* skip unreadable selections */
+				}
 			}
+			return { ok: true as const, attachments };
 		}
 	);
 

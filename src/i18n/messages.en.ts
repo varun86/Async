@@ -722,6 +722,13 @@ export const messagesEn: Record<string, string> = {
 	'composer.plusImage': 'Image',
 	'composer.plusSkills': 'Skills',
 	'composer.plusMcp': 'MCP Servers',
+	'composer.plusSkillsHint': 'Pick a skill to insert its `./slug` invocation prefix.',
+	'composer.plusSkillsEmpty': 'No callable skills are available right now. Enable one in skill settings or create a new skill first.',
+	'composer.plusUseSkill': 'Click to insert this skill at the start of the composer.',
+	'composer.plusOpenSkillSettings': 'Open Skill Settings',
+	'composer.plusMcpHint': 'Inspect MCP server status here and toggle servers on or off directly.',
+	'composer.plusMcpEmpty': 'No MCP servers are configured yet.',
+	'composer.plusOpenMcpSettings': 'Open MCP Settings',
 
 	'modelPicker.auto': 'Auto',
 	'modelPicker.autoDesc': 'Uses the first enabled model with a request name, in list order.',

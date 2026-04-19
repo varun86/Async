@@ -708,6 +708,13 @@ export const messagesZhCN: Record<string, string> = {
 	'composer.plusImage': '图片',
 	'composer.plusSkills': '技能（Skills）',
 	'composer.plusMcp': 'MCP 服务',
+	'composer.plusSkillsHint': '选择一个技能并自动插入 `./slug` 调用前缀。',
+	'composer.plusSkillsEmpty': '当前没有可直接调用的技能。你可以先去规则与技能设置里启用，或新建一个技能。',
+	'composer.plusUseSkill': '点击后会把这个技能插入到输入框开头。',
+	'composer.plusOpenSkillSettings': '打开技能设置',
+	'composer.plusMcpHint': '查看当前 MCP 服务状态，并可直接启用或停用。',
+	'composer.plusMcpEmpty': '当前没有配置 MCP 服务。',
+	'composer.plusOpenMcpSettings': '打开 MCP 设置',
 
 	// model picker
 	'modelPicker.auto': '自动',
