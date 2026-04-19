@@ -16,6 +16,9 @@ const ctx = await esbuild.context({
 	external: [
 		'electron',
 		'node-pty',
+		// Keep native image processing external so electron-builder can package
+		// the matching platform binaries instead of bundling sharp's JS loader.
+		'sharp',
 		'ssh2',
 		'ssh2-sftp-client',
 		'cpu-features',
