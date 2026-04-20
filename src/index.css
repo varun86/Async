@@ -3376,7 +3376,6 @@ html[data-theme-switching='true'] .ref-editor-welcome-panel {
 	width: 100%;
 	min-width: 0;
 	flex-shrink: 0;
-	margin-top: -10px;
 }
 
 .ref-messages-tail-spacer {

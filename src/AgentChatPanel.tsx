@@ -1630,9 +1630,9 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 							</>
 						)}
 					</div>
+					{sharedOverlays}
 					{commandStack}
 				</div>
-				{sharedOverlays}
 			</>
 		);
 	}
@@ -1649,9 +1649,9 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			>
 				{messagesEl}
 				{!hasConversation ? <div className="ref-hero-spacer" /> : null}
+				{sharedOverlays}
 				{commandStack}
 			</div>
-			{sharedOverlays}
 		</>
 	);
 });
