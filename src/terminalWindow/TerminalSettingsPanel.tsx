@@ -27,6 +27,7 @@ import {
 	type TerminalSshAuthMode,
 } from './terminalSettings';
 import { TerminalHotkeysSettingsStage } from './TerminalHotkeysSettingsStage';
+import { IconProfilesConnections } from '../icons';
 
 type SettingsNav = 'profilesConnections' | 'appearance' | 'terminal' | 'hotkeys';
 type ProfilesSubtab = 'profiles' | 'advanced';
@@ -48,15 +49,6 @@ type Props = {
 	onLaunchProfile(profileId: string): void;
 	openProfileRequest?: TerminalSettingsPanelOpenProfileRequest | null;
 };
-
-function IconProfilesNav() {
-	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-			<rect x="4" y="5" width="16" height="14" rx="2" />
-			<path d="M8 9h8M8 13h4" strokeLinecap="round" />
-		</svg>
-	);
-}
 
 function IconAppearanceNav() {
 	return (
@@ -236,7 +228,7 @@ export const TerminalSettingsPanel = memo(function TerminalSettingsPanel({
 	];
 
 	const navIcons: Record<SettingsNav, ReactNode> = {
-		profilesConnections: <IconProfilesNav />,
+		profilesConnections: <IconProfilesConnections />,
 		appearance: <IconAppearanceNav />,
 		terminal: <IconTerminalNav />,
 		hotkeys: <IconHotkeysNav />,

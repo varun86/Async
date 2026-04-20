@@ -119,7 +119,6 @@ describe('agentTurnFocus', () => {
 					{ index: 4, top: 240 },
 				],
 				stickyTopPx: 0,
-				viewportHeight: 560,
 				latestTurnFocusUserIndex: 4,
 				latestTurnFocusSpacerPx: 0,
 			})
@@ -142,7 +141,6 @@ describe('agentTurnFocus', () => {
 					{ index: 2, top: 256 },
 				],
 				stickyTopPx: 0,
-				viewportHeight: 560,
 				latestTurnFocusUserIndex: 2,
 				latestTurnFocusSpacerPx: 0,
 			})
@@ -167,7 +165,6 @@ describe('agentTurnFocus', () => {
 					{ index: 3, top: 168, height: 72 },
 				],
 				stickyTopPx: 0,
-				viewportHeight: 560,
 				latestTurnFocusUserIndex: 2,
 				latestTurnFocusSpacerPx: 420,
 			})
@@ -192,14 +189,13 @@ describe('agentTurnFocus', () => {
 					{ index: 3, top: 112, height: 72 },
 				],
 				stickyTopPx: 0,
-				viewportHeight: 560,
 				latestTurnFocusUserIndex: 2,
 				latestTurnFocusSpacerPx: 320,
 			})
 		).toBeNull();
 	});
 
-	it('allows an older user bubble to sticky once the latest focused user has scrolled out below the viewport', () => {
+	it('lets an older user bubble take over once the latest focused user is no longer naturally at the top', () => {
 		const displayMessages: ChatMessage[] = [
 			{ role: 'user', content: '带文件的旧消息' },
 			{ role: 'assistant', content: 'a1' },
@@ -213,11 +209,10 @@ describe('agentTurnFocus', () => {
 				renderedRowTops: [
 					{ index: 0, top: -36, height: 72 },
 					{ index: 1, top: 40, height: 360 },
-					{ index: 2, top: 640, height: 48 },
-					{ index: 3, top: 712, height: 80 },
+					{ index: 2, top: 84, height: 48 },
+					{ index: 3, top: 156, height: 80 },
 				],
 				stickyTopPx: 0,
-				viewportHeight: 560,
 				latestTurnFocusUserIndex: 2,
 				latestTurnFocusSpacerPx: 320,
 			})

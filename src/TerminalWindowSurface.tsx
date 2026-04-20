@@ -11,11 +11,14 @@ import {
 	IconPin,
 	IconPlug,
 	IconPlus,
+	IconProfilesConnections,
 	IconRefresh,
 	IconSettings,
 	IconTerminal,
 } from './icons';
 import { TerminalAuthPromptModal } from './terminalWindow/TerminalAuthPromptModal';
+import { TerminalProfileSelectorModal } from './terminalWindow/TerminalProfileSelectorModal';
+import { rememberTerminalProfileLaunch } from './terminalWindow/terminalProfileSelectorRecents';
 import {
 	TerminalSettingsPanel,
 	type TerminalSettingsPanelOpenProfileRequest,
@@ -662,6 +665,7 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 	const [themeColors, setThemeColors] = useState<XTermThemeColors>(() => readXtermThemeColors());
 	const [terminalSettings, setTerminalSettings] = useState<TerminalAppSettings>(() => loadTerminalSettings());
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [profileSelectorOpen, setProfileSelectorOpen] = useState(false);
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(null);
 	const [windowMaximized, setWindowMaximized] = useState(false);
@@ -838,10 +842,12 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 				if (result.ok) {
 					if (profile) {
 						setSessionProfiles((prev) => ({ ...prev, [result.session.id]: profile.id }));
+						rememberTerminalProfileLaunch(profile.id);
 					}
 					setSessions((prev) => (prev.some((session) => session.id === result.session.id) ? prev : [...prev, result.session]));
 					setActiveId(result.session.id);
 					setSettingsOpen(false);
+					setProfileSelectorOpen(false);
 					setMenuOpen(false);
 					setContextMenu(null);
 				}
@@ -985,6 +991,7 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 
 	useEffect(() => {
 		setContextMenu(null);
+		setProfileSelectorOpen(false);
 	}, [activeId, menuOpen, settingsOpen]);
 
 	useEffect(() => {
@@ -1322,15 +1329,31 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 							onClose={() => void closeSession(session.id)}
 						/>
 					))}
-					<button
-						type="button"
-						className="ref-uterm-tab-add"
-						onClick={() => void createSession()}
-						title={t('app.universalTerminalNewTab')}
-						aria-label={t('app.universalTerminalNewTab')}
-					>
-						<IconPlus className="ref-uterm-tab-add-icon" />
-					</button>
+					<div className="ref-uterm-tabstrip-tail">
+						<button
+							type="button"
+							className="ref-uterm-tab-add"
+							onClick={() => void createSession()}
+							title={t('app.universalTerminalNewTab')}
+							aria-label={t('app.universalTerminalNewTab')}
+						>
+							<IconPlus className="ref-uterm-tab-add-icon" />
+						</button>
+						<button
+							type="button"
+							className={`ref-uterm-tab-profile ${profileSelectorOpen ? 'is-active' : ''}`}
+							aria-expanded={profileSelectorOpen}
+							aria-haspopup="dialog"
+							onClick={() => {
+								setMenuOpen(false);
+								setProfileSelectorOpen(true);
+							}}
+							title={t('app.universalTerminalSettings.nav.profilesConnections')}
+							aria-label={t('app.universalTerminalSettings.nav.profilesConnections')}
+						>
+							<IconProfilesConnections className="ref-uterm-tab-profile-icon" />
+						</button>
+					</div>
 				</div>
 
 				<div className="ref-uterm-drag-spacer" aria-hidden="true" />
@@ -1587,6 +1610,18 @@ export const TerminalWindowSurface = memo(function TerminalWindowSurface({ t, fo
 						</>
 					)}
 			</div>
+			{profileSelectorOpen ? (
+				<TerminalProfileSelectorModal
+					onClose={() => setProfileSelectorOpen(false)}
+					onPickProfile={(profileId) => void createSession(profileId)}
+					onManageProfiles={() => setSettingsOpen(true)}
+					t={t}
+					customProfiles={terminalSettings.profiles.map((p) => withTerminalWindowProfileLabel(p, t))}
+					displayBuiltinProfiles={displayBuiltinProfiles}
+					defaultProfileId={terminalSettings.defaultProfileId}
+					describeTarget={(p) => describeTerminalProfileTarget(p, t)}
+				/>
+			) : null}
 			{authPromptModal ? (
 				<TerminalAuthPromptModal
 					t={t}

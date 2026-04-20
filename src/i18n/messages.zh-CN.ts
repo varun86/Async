@@ -196,6 +196,15 @@ export const messagesZhCN: Record<string, string> = {
 	'app.universalTerminalMenu.newWithProfile': '按配置打开',
 	'app.universalTerminalMenu.defaultSuffix': '默认',
 
+	'app.universalTerminalProfileSelector.title': '选择配置',
+	'app.universalTerminalProfileSelector.placeholder': '选择配置或输入地址',
+	'app.universalTerminalProfileSelector.groupRecent': '最近使用',
+	'app.universalTerminalProfileSelector.clearRecent': '清除最近使用的配置',
+	'app.universalTerminalProfileSelector.manageProfiles': '管理配置',
+	'app.universalTerminalProfileSelector.groupUngrouped': '未分组',
+	'app.universalTerminalProfileSelector.hintEnter': '回车',
+	'app.universalTerminalProfileSelector.noMatches': '没有匹配的配置',
+
 	'app.universalTerminalSettings.title': '终端设置',
 	'app.universalTerminalSettings.sidebarTitle': '设置',
 	'app.universalTerminalSettings.nav.profilesConnections': '配置与连接',

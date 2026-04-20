@@ -60,7 +60,6 @@ export function findStickyUserIndexForViewport(params: {
 	displayMessages: ChatMessage[];
 	renderedRowTops: Array<{ index: number; top: number; height?: number }>;
 	stickyTopPx: number;
-	viewportHeight: number;
 	latestTurnFocusUserIndex: number | null;
 	latestTurnFocusSpacerPx: number;
 }): number | null {
@@ -68,7 +67,6 @@ export function findStickyUserIndexForViewport(params: {
 		displayMessages,
 		renderedRowTops,
 		stickyTopPx,
-		viewportHeight,
 		latestTurnFocusUserIndex,
 		latestTurnFocusSpacerPx,
 	} = params;
@@ -87,8 +85,14 @@ export function findStickyUserIndexForViewport(params: {
 		latestTurnFocusUserIndex != null &&
 		displayMessages[latestTurnFocusUserIndex]?.role === 'user'
 	) {
-		if (latestRow && latestRow.top < viewportHeight) {
-			return latestRow.top <= stickyBoundaryPx ? latestTurnFocusUserIndex : null;
+		if (latestRow) {
+			if (latestRow.top <= stickyBoundaryPx) {
+				return latestTurnFocusUserIndex;
+			}
+			const latestRowHeight = Math.max(0, latestRow.height ?? 0);
+			if (latestRow.top < stickyBoundaryPx + latestRowHeight) {
+				return null;
+			}
 		}
 	}
 

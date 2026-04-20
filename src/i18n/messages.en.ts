@@ -195,6 +195,15 @@ export const messagesEn: Record<string, string> = {
 	'app.universalTerminalMenu.newWithProfile': 'Open with profile',
 	'app.universalTerminalMenu.defaultSuffix': 'default',
 
+	'app.universalTerminalProfileSelector.title': 'Select profile',
+	'app.universalTerminalProfileSelector.placeholder': 'Select profile or enter an address',
+	'app.universalTerminalProfileSelector.groupRecent': 'Recent',
+	'app.universalTerminalProfileSelector.clearRecent': 'Clear recent profiles',
+	'app.universalTerminalProfileSelector.manageProfiles': 'Manage profiles',
+	'app.universalTerminalProfileSelector.groupUngrouped': 'Ungrouped',
+	'app.universalTerminalProfileSelector.hintEnter': 'Enter',
+	'app.universalTerminalProfileSelector.noMatches': 'No matching profiles',
+
 	'app.universalTerminalSettings.title': 'Terminal settings',
 	'app.universalTerminalSettings.sidebarTitle': 'Settings',
 	'app.universalTerminalSettings.nav.profilesConnections': 'Profiles & connections',

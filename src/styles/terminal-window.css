@@ -147,14 +147,24 @@
 	opacity: 1;
 }
 
-.ref-uterm-tab-add {
+.ref-uterm-tabstrip-tail {
+	-webkit-app-region: no-drag;
+	display: inline-flex;
+	align-items: stretch;
+	flex: 0 0 auto;
+	margin-left: 6px;
+	gap: 2px;
+}
+
+.ref-uterm-tab-add,
+.ref-uterm-tab-profile {
 	-webkit-app-region: no-drag;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	width: 36px;
 	height: 42px;
-	margin-left: 4px;
+	margin-left: 0;
 	border: none;
 	background: transparent;
 	color: var(--void-fg-1);
@@ -162,12 +172,15 @@
 	transition: background 120ms ease, color 120ms ease;
 }
 
-.ref-uterm-tab-add:hover {
+.ref-uterm-tab-add:hover,
+.ref-uterm-tab-profile:hover,
+.ref-uterm-tab-profile.is-active {
 	background: color-mix(in srgb, var(--void-accent-cool) 10%, transparent);
 	color: var(--void-accent-cool);
 }
 
-.ref-uterm-tab-add-icon {
+.ref-uterm-tab-add-icon,
+.ref-uterm-tab-profile-icon {
 	width: 16px;
 	height: 16px;
 }
@@ -1520,6 +1533,168 @@
 .ref-uterm-auth-modal-btn:disabled {
 	opacity: 0.45;
 	cursor: default;
+}
+
+/* Tabby-style profile selector (ng-bootstrap modal + selector list) */
+.ref-uterm-profile-selector-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 165;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 18px;
+	background: color-mix(in srgb, var(--void-bg-0) 44%, transparent);
+	backdrop-filter: blur(10px);
+	animation: ref-modal-backdrop-in 0.2s ease-out both;
+}
+
+.ref-uterm-profile-selector {
+	width: min(640px, calc(100vw - 24px));
+	max-height: min(90vh, 720px);
+	display: flex;
+	flex-direction: column;
+	border-radius: 14px;
+	border: 1px solid color-mix(in srgb, var(--void-border) 76%, transparent);
+	background: color-mix(in srgb, var(--void-bg-1) 98%, transparent);
+	box-shadow: var(--void-shadow-card, 0 18px 48px rgba(0, 0, 0, 0.35));
+	overflow: hidden;
+	animation: ref-modal-sheet-in 0.22s ease-out both;
+}
+
+.ref-uterm-profile-selector-input {
+	width: 100%;
+	box-sizing: border-box;
+	margin: 0;
+	padding: 14px 18px;
+	border: none;
+	border-bottom: 1px solid color-mix(in srgb, var(--void-border) 72%, transparent);
+	border-radius: 0;
+	background: color-mix(in srgb, var(--void-bg-0) 88%, transparent);
+	color: var(--void-fg-0);
+	font: inherit;
+	font-size: 16px;
+	font-weight: 500;
+	outline: none;
+}
+
+.ref-uterm-profile-selector-input::placeholder {
+	color: var(--void-fg-2);
+	font-weight: 400;
+}
+
+.ref-uterm-profile-selector-input:focus {
+	background: color-mix(in srgb, var(--void-bg-0) 94%, transparent);
+}
+
+.ref-uterm-profile-selector-list {
+	flex: 1 1 auto;
+	min-height: 0;
+	max-height: 70vh;
+	overflow: auto;
+	padding: 10px 15px;
+}
+
+.ref-uterm-profile-selector-group {
+	padding: 0 10px;
+	margin: 14px 0 8px;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--void-fg-2);
+}
+
+.ref-uterm-profile-selector-block:first-child .ref-uterm-profile-selector-group {
+	margin-top: 4px;
+}
+
+.ref-uterm-profile-selector-row {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	margin: 2px 0;
+	padding: 9px 12px;
+	border: none;
+	border-radius: 10px;
+	background: transparent;
+	color: var(--void-fg-0);
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+	transition: background 120ms ease, color 120ms ease;
+}
+
+.ref-uterm-profile-selector-row:hover {
+	background: color-mix(in srgb, var(--void-accent-cool) 10%, transparent);
+}
+
+.ref-uterm-profile-selector-row.is-active {
+	background: color-mix(in srgb, var(--void-accent-cool) 16%, transparent);
+	color: var(--void-fg-0);
+}
+
+.ref-uterm-profile-selector-row-ico {
+	display: inline-flex;
+	flex: 0 0 auto;
+	width: 22px;
+	justify-content: center;
+	color: var(--void-accent-cool);
+}
+
+.ref-uterm-profile-selector-row-ico-svg {
+	width: 16px;
+	height: 16px;
+}
+
+.ref-uterm-profile-selector-row-title {
+	flex: 0 1 auto;
+	max-width: 46%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 600;
+}
+
+.ref-uterm-profile-selector-row--action .ref-uterm-profile-selector-row-title {
+	max-width: none;
+	flex: 1 1 auto;
+}
+
+.ref-uterm-profile-selector-row-desc {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	color: var(--void-fg-2);
+}
+
+.ref-uterm-profile-selector-row.is-active .ref-uterm-profile-selector-row-desc {
+	color: var(--void-fg-1);
+}
+
+.ref-uterm-profile-selector-enter-hint {
+	flex: 0 0 auto;
+	margin-left: 4px;
+	padding: 2px 8px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--void-bg-2) 88%, transparent);
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	color: var(--void-fg-2);
+}
+
+.ref-uterm-profile-selector-empty {
+	padding: 24px 18px;
+	font-size: 13px;
+	color: var(--void-fg-2);
+	text-align: center;
 }
 
 .ref-uterm-empty {

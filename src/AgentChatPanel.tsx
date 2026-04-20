@@ -839,20 +839,17 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 		const isAtBottom =
 			distFromBottom <= 16 || viewport.scrollHeight <= viewport.clientHeight + 16;
 		bottomTodoAtBottomRef.current = isAtBottom;
-		const viewportRect = viewport.getBoundingClientRect();
-		const viewportStyle = window.getComputedStyle(viewport);
-		const stickyTopPx = viewportRect.top + (Number.parseFloat(viewportStyle.paddingTop || '0') || 0);
 		const renderedRowTops = Array.from(
 			track.querySelectorAll<HTMLElement>('.ref-msg-row-measure[data-msg-index]')
 		)
 			.map((row) => {
 				const raw = row.dataset.msgIndex;
 				const index = raw ? Number(raw) : Number.NaN;
-				const rect = row.getBoundingClientRect();
+				const height = row.offsetHeight || Math.ceil(row.getBoundingClientRect().height);
 				return {
 					index,
-					top: rect.top - stickyTopPx,
-					height: rect.height,
+					top: row.offsetTop - viewport.scrollTop,
+					height,
 				};
 			})
 			.filter((row) => Number.isFinite(row.index));
@@ -860,7 +857,6 @@ export const AgentChatPanel = memo(function AgentChatPanel({
 			displayMessages,
 			renderedRowTops,
 			stickyTopPx: 0,
-			viewportHeight: viewport.clientHeight,
 			latestTurnFocusUserIndex,
 			latestTurnFocusSpacerPx,
 		});
